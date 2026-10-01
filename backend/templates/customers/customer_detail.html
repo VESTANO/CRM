@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Customer Detail | {{ dataset.name }}{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item"><a href="{% url 'customers:dataset_list' %}">Customer Lists</a></li>
+      <li class="breadcrumb-item"><a href="{% url 'customers:dataset_detail' dataset.id %}">{{ dataset.name }}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Customer Details</li>
+    </ol>
+  </nav>
+
+  <div class="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-2">Customer Details</h1>
+      <p class="text-secondary mb-0">{{ dataset.name }} · {{ record.sheet_name }} row {{ record.row_number }}</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'customers:dataset_detail' dataset.id %}">Back</a>
+  </div>
+
+  <div class="panel mb-4">
+    <h2 class="h5 mb-3">Original Excel Data</h2>
+    <dl class="row mb-0">
+      {% for field in field_rows %}
+        <dt class="col-sm-4">{{ field.label }}</dt>
+        <dd class="col-sm-8">{{ field.value }}</dd>
+      {% endfor %}
+    </dl>
+  </div>
+
+  <div class="panel mb-4">
+    <h2 class="h5 mb-3">CRM Information</h2>
+    <dl class="row mb-0">
+      <dt class="col-sm-4">Response</dt>
+      <dd class="col-sm-8"><span class="badge-response response-{{ record.response }}">{{ record.get_response_display }}</span></dd>
+      <dt class="col-sm-4">Note</dt>
+      <dd class="col-sm-8">{{ record.note|default:"" }}</dd>
+      <dt class="col-sm-4">Created</dt>
+      <dd class="col-sm-8">{{ record.created_at|date:"d M Y, H:i" }}</dd>
+      <dt class="col-sm-4">Updated</dt>
+      <dd class="col-sm-8">{{ record.updated_at|date:"d M Y, H:i" }}</dd>
+    </dl>
+  </div>
+
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-primary" href="{% url 'customers:customer_edit' dataset.id record.id %}">Edit</a>
+    <a class="btn btn-outline-danger" href="{% url 'customers:customer_delete' dataset.id record.id %}">Delete</a>
+    <a class="btn btn-outline-secondary" href="{% url 'customers:dataset_detail' dataset.id %}">Back to Dataset</a>
+  </div>
+{% endblock %}

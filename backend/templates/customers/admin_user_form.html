@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }} | Customer CRM{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:admin_panel' %}">Admin Panel</a></li>
+      {% if managed_user %}
+        <li class="breadcrumb-item"><a href="{% url 'customers:admin_user_detail' managed_user.id %}">{{ managed_user.username }}</a></li>
+      {% endif %}
+      <li class="breadcrumb-item active" aria-current="page">{{ page_title }}</li>
+    </ol>
+  </nav>
+
+  <div class="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-2">{{ page_title }}</h1>
+      <p class="text-secondary mb-0">{{ page_subtitle }}</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% if managed_user %}{% url 'customers:admin_user_detail' managed_user.id %}{% else %}{% url 'customers:admin_panel' %}{% endif %}">Back</a>
+  </div>
+
+  <div class="panel">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {% for field in form %}
+        {% if field.field.widget.input_type == "checkbox" %}
+          <div class="form-check form-switch mb-3">
+            {{ field }}
+            <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {% for error in field.errors %}
+              <div class="text-danger small mt-2">{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="mb-3">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% if field.help_text %}
+              <div class="form-text">{{ field.help_text }}</div>
+            {% endif %}
+            {% for error in field.errors %}
+              <div class="text-danger small mt-2">{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endfor %}
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger">
+          {% for error in form.non_field_errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <button class="btn btn-primary" type="submit">{{ submit_label }}</button>
+      <a class="btn btn-outline-secondary" href="{% if managed_user %}{% url 'customers:admin_user_detail' managed_user.id %}{% else %}{% url 'customers:admin_panel' %}{% endif %}">Cancel</a>
+    </form>
+  </div>
+{% endblock %}

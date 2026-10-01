@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Import Excel | Customer CRM{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Import Excel</li>
+    </ol>
+  </nav>
+
+  <div class="page-header d-flex justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-2">Import Excel</h1>
+      <p class="text-secondary mb-0">
+        Upload a workbook, inspect its structure, then confirm before creating a dataset.
+      </p>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7 col-xl-6">
+      <div class="panel">
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          <div class="upload-step mb-4">
+            <span class="step-number">1</span>
+            <div class="flex-grow-1">
+              <label class="form-label" for="{{ form.dataset_name.id_for_label }}">{{ form.dataset_name.label }}</label>
+              {{ form.dataset_name }}
+              {% if form.dataset_name.help_text %}
+                <div class="form-text">{{ form.dataset_name.help_text }}</div>
+              {% endif %}
+              {% for error in form.dataset_name.errors %}
+                <div class="text-danger small mt-2">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="upload-step mb-4">
+            <span class="step-number">2</span>
+            <div class="flex-grow-1">
+              <label class="form-label" for="{{ form.excel_file.id_for_label }}">{{ form.excel_file.label }}</label>
+              {{ form.excel_file }}
+              {% if form.excel_file.help_text %}
+                <div class="form-text">{{ form.excel_file.help_text }}</div>
+              {% endif %}
+              {% for error in form.excel_file.errors %}
+                <div class="text-danger small mt-2">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+          <button class="btn btn-primary" type="submit">Inspect Excel</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% if inspection %}
+    <hr class="my-5">
+
+    <section>
+      <h2 class="h3 mb-3">Workbook Summary</h2>
+      <dl class="row">
+        <dt class="col-sm-3">Dataset</dt>
+        <dd class="col-sm-9">{{ dataset_name }}</dd>
+
+        <dt class="col-sm-3">Filename</dt>
+        <dd class="col-sm-9">{{ inspection.filename }}</dd>
+
+        <dt class="col-sm-3">Sheets</dt>
+        <dd class="col-sm-9">{{ inspection.sheet_names|join:", " }}</dd>
+      </dl>
+
+      {% for sheet in inspection.sheets %}
+        <div class="sheet-section panel mb-4">
+          <h3 class="h4 mb-3">{{ sheet.name }}</h3>
+
+          <div class="row g-3 mb-3">
+            <div class="col-sm-6">
+              <div class="summary-card compact">
+                <div class="text-secondary small">Rows</div>
+                <div class="fs-5">{{ sheet.rows }}</div>
+              </div>
+            </div>
+            <div class="col-sm-6">
+              <div class="summary-card compact">
+                <div class="text-secondary small">Columns</div>
+                <div class="fs-5">{{ sheet.columns }}</div>
+              </div>
+            </div>
+          </div>
+
+          <h4 class="h6">Column Names</h4>
+          {% if sheet.column_names %}
+            <ol class="column-list">
+              {% for column in sheet.column_names %}
+                <li>{{ column }}</li>
+              {% endfor %}
+            </ol>
+          {% else %}
+            <p class="text-secondary">No columns were detected.</p>
+          {% endif %}
+
+          <h4 class="h6 mt-4">Masked Preview</h4>
+          {% if sheet.preview_rows %}
+            <div class="table-responsive">
+              <table class="table table-sm table-hover align-middle crm-table">
+                <thead class="table-light">
+                  <tr>
+                    {% for header in sheet.preview_headers %}
+                      <th scope="col">{{ header }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in sheet.preview_rows %}
+                    <tr>
+                      {% for value in row %}
+                        <td>{{ value }}</td>
+                      {% endfor %}
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-secondary">No preview rows were found.</p>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+      {% if pending_import_token %}
+        <form method="post" class="d-flex flex-wrap gap-2 mt-4">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="confirm_import">
+          <input type="hidden" name="pending_import_token" value="{{ pending_import_token }}">
+          <button class="btn btn-success btn-lg" type="submit">Confirm Import</button>
+          <a class="btn btn-outline-secondary btn-lg" href="{% url 'customers:import_excel' %}">Cancel</a>
+        </form>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

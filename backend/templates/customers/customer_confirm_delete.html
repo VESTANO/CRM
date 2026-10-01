@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Delete Customer | {{ dataset.name }}{% endblock %}
+
+{% block content %}
+  <div class="delete-panel">
+    <h1 class="h3 mb-3">Are you sure you want to delete this customer?</h1>
+    <p class="text-secondary">This will permanently delete only this customer record from {{ dataset.name }}. The dataset itself will remain.</p>
+
+    <dl class="row">
+      {% for field in field_rows %}
+        <dt class="col-sm-4">{{ field.label }}</dt>
+        <dd class="col-sm-8">{{ field.value }}</dd>
+      {% endfor %}
+    </dl>
+
+    <form method="post" class="d-flex flex-wrap gap-2">
+      {% csrf_token %}
+      <button class="btn btn-danger" type="submit">Delete Customer</button>
+      <a class="btn btn-outline-secondary" href="{% url 'customers:customer_detail' dataset.id record.id %}">Cancel</a>
+    </form>
+  </div>
+{% endblock %}

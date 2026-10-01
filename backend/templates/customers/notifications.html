@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications | Customer CRM{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Notifications</li>
+    </ol>
+  </nav>
+
+  <div class="page-header mb-4">
+    <div>
+      <div class="eyebrow">Reminders</div>
+      <h1 class="h2 mb-2">Notifications</h1>
+      <p class="text-secondary mb-0">Set reminders for upcoming tasks.</p>
+    </div>
+  </div>
+
+  <section class="panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+      <h2 class="h5 mb-0">{% if editing_reminder %}Edit reminder{% else %}Set a reminder{% endif %}</h2>
+      <div class="d-flex align-items-center gap-2">
+        <span class="text-secondary small" id="push-status" role="status"></span>
+        <button class="btn btn-outline-primary btn-sm" type="button" id="enable-push"><i class="bi bi-bell me-1"></i>Enable browser notifications</button>
+        <button class="btn btn-outline-secondary btn-sm d-none" type="button" id="disable-push">Disable</button>
+      </div>
+    </div>
+    <form method="post" class="row g-3 align-items-end" id="reminder-form">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="{% if editing_reminder %}update{% else %}create{% endif %}">
+      {% if editing_reminder %}<input type="hidden" name="reminder_id" value="{{ editing_reminder.id }}">{% endif %}
+      <div class="col-12">
+        <label class="form-label" for="{{ form.text.id_for_label }}">Reminder</label>
+        {{ form.text }}
+        {% for error in form.text.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label" for="{{ form.date.id_for_label }}">Date</label>
+        {{ form.date }}
+        {% for error in form.date.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label" for="{{ form.time.id_for_label }}">Time</label>
+        {{ form.time }}
+        {% for error in form.time.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="col-lg-4 d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit"><i class="bi {% if editing_reminder %}bi-check-lg{% else %}bi-bell{% endif %} me-1"></i>{% if editing_reminder %}Save Changes{% else %}Set Reminder{% endif %}</button>{% if editing_reminder %}<button class="btn btn-outline-secondary" type="submit" name="action" value="cancel_edit">Cancel</button>{% endif %}</div>
+      {% for error in form.non_field_errors %}<div class="col-12"><div class="text-danger small">{{ error }}</div></div>{% endfor %}
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h2 class="h5 mb-0">Your reminders</h2>
+      {% if due_reminders %}<button class="btn btn-outline-primary btn-sm" type="button" id="toggle-due-reminders" aria-expanded="false">Show due reminders</button>{% endif %}
+    </div>
+    {% if reminders %}
+      {% if upcoming_reminders %}<div class="list-group list-group-flush">
+        {% for reminder in upcoming_reminders %}
+          <div class="list-group-item px-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-3" id="reminder-{{ reminder.id }}">
+            <div class="min-w-0">
+              <div class="fw-semibold">{{ reminder.text }}</div>
+              <div class="text-secondary small">{{ reminder.reminder_at|date:"d M Y, H:i" }}</div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <span class="badge text-bg-light">Upcoming</span>
+              <a class="btn btn-outline-primary btn-sm" href="?edit={{ reminder.id }}#reminder-form"><i class="bi bi-pencil me-1" aria-hidden="true"></i>Edit</a>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="reminder_id" value="{{ reminder.id }}">
+                <button class="btn btn-outline-danger btn-sm" type="submit" aria-label="Remove reminder"><i class="bi bi-trash" aria-hidden="true"></i></button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>{% else %}<p class="text-secondary mb-0">No upcoming reminders.</p>{% endif %}
+      {% if due_reminders %}<div class="list-group list-group-flush d-none mt-3" id="due-reminders-list">
+        {% for reminder in due_reminders %}
+          <div class="list-group-item px-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-3" id="reminder-{{ reminder.id }}">
+            <div class="min-w-0"><div class="fw-semibold">{{ reminder.text }}</div><div class="text-secondary small">{{ reminder.reminder_at|date:"d M Y, H:i" }}</div></div>
+            <div class="d-flex align-items-center gap-2"><span class="badge text-bg-warning">Due</span><a class="btn btn-outline-primary btn-sm" href="?edit={{ reminder.id }}#reminder-form"><i class="bi bi-pencil me-1" aria-hidden="true"></i>Edit</a><form method="post">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="reminder_id" value="{{ reminder.id }}"><button class="btn btn-outline-danger btn-sm" type="submit" aria-label="Remove reminder"><i class="bi bi-trash" aria-hidden="true"></i></button></form></div>
+          </div>
+        {% endfor %}
+      </div>{% endif %}
+    {% else %}
+      <div class="empty-state text-center">
+        <h3 class="h5">No reminders yet</h3>
+        <p class="text-secondary mb-0">Your reminders will appear here.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <script>
+    (() => {
+      const dateInput = document.getElementById("{{ form.date.id_for_label }}");
+      const timeInput = document.getElementById("{{ form.time.id_for_label }}");
+      const today = "{{ today }}";
+      const now = "{{ current_time }}";
+      dateInput.min = today;
+      const updateMinTime = () => { timeInput.min = dateInput.value === today ? now : ""; };
+      dateInput.addEventListener("change", updateMinTime);
+      updateMinTime();
+
+      const button = document.getElementById("enable-push");
+      const disableButton = document.getElementById("disable-push");
+      const status = document.getElementById("push-status");
+      const decodeKey = (value) => {
+        const padding = "=".repeat((4 - (value.length % 4)) % 4);
+        const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+        return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      };
+      const csrfToken = document.cookie.split("; ").find((part) => part.startsWith("csrftoken="))?.split("=")[1];
+      const setEnabled = (enabled) => {
+        button.classList.toggle("d-none", enabled || ("Notification" in window && Notification.permission === "denied"));
+        disableButton.classList.toggle("d-none", !enabled);
+        status.textContent = enabled ? "Notifications enabled" : ("Notification" in window && Notification.permission === "denied" ? "Notifications are blocked in browser settings." : "");
+      };
+
+      setEnabled(false);
+      if (!("serviceWorker" in navigator && "PushManager" in window && "Notification" in window)) {
+        button.classList.add("d-none");
+        status.textContent = "Browser notifications are not supported.";
+      }
+      if ("serviceWorker" in navigator && "PushManager" in window) {
+        navigator.serviceWorker.register("/service-worker.js")
+          .then((registration) => registration.pushManager.getSubscription())
+          .then((subscription) => setEnabled(Boolean(subscription)))
+          .catch(() => {});
+      }
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+            throw new Error("This browser does not support push notifications.");
+          }
+          if ((Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission) !== "granted") throw new Error("Notifications are blocked. Change this site's permission in browser settings to enable them.");
+          const configResponse = await fetch("/api/push/config/");
+          const config = await configResponse.json();
+          if (!configResponse.ok) throw new Error(config.detail || "Browser notifications are not configured.");
+          const legacyRegistration = await navigator.serviceWorker.getRegistration("/static/js/");
+          const legacySubscription = await legacyRegistration?.pushManager.getSubscription();
+          if (legacySubscription) {
+            await fetch("/api/push/subscriptions/", {
+              method: "DELETE",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+              body: JSON.stringify({ endpoint: legacySubscription.endpoint }),
+            });
+            await legacySubscription.unsubscribe();
+            await legacyRegistration.unregister();
+          }
+          const registration = await navigator.serviceWorker.register("/service-worker.js");
+          const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeKey(config.publicKey) });
+          const response = await fetch("/api/push/subscriptions/", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+            body: JSON.stringify(subscription.toJSON()),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.detail || "Unable to enable notifications.");
+          setEnabled(true);
+        } catch (error) {
+          button.disabled = false;
+          setEnabled(false);
+          status.textContent = error.message || "Unable to enable browser notifications.";
+          status.classList.add("text-danger");
+        }
+      });
+      disableButton.addEventListener("click", async () => {
+        disableButton.disabled = true;
+        try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          for (const registration of registrations) {
+            const subscription = await registration.pushManager?.getSubscription();
+            if (!subscription) continue;
+            await fetch("/api/push/subscriptions/", {
+              method: "DELETE",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+              body: JSON.stringify({ endpoint: subscription.endpoint }),
+            });
+            await subscription.unsubscribe();
+          }
+          setEnabled(false);
+          status.textContent = "Browser notifications are disabled on this device.";
+        } catch (error) {
+          status.textContent = error.message || "Unable to disable browser notifications.";
+          status.classList.add("text-danger");
+        } finally {
+          disableButton.disabled = false;
+        }
+      });
+      const params = new URLSearchParams(window.location.search);
+      const reminderId = params.get("reminder") || window.location.hash.match(/^#reminder-(\d+)$/)?.[1];
+      const editId = params.get("edit");
+      const dueList = document.getElementById("due-reminders-list");
+      const dueButton = document.getElementById("toggle-due-reminders");
+      if (dueButton && dueList) dueButton.addEventListener("click", () => {
+        const expanded = dueButton.getAttribute("aria-expanded") !== "true";
+        dueButton.setAttribute("aria-expanded", String(expanded));
+        dueButton.textContent = expanded ? "Hide due reminders" : "Show due reminders";
+        dueList.classList.toggle("d-none", !expanded);
+      });
+      if (reminderId) {
+        const dueReminder = document.querySelector(`#due-reminders-list #reminder-${reminderId}`);
+        if (dueReminder && dueList) {
+          dueList.classList.remove("d-none");
+          dueButton?.setAttribute("aria-expanded", "true");
+          if (dueButton) dueButton.textContent = "Hide due reminders";
+        }
+        document.getElementById(`reminder-${reminderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      if (editId && dueList?.querySelector(`#reminder-${editId}`)) {
+        dueList.classList.remove("d-none");
+        dueButton?.setAttribute("aria-expanded", "true");
+        if (dueButton) dueButton.textContent = "Hide due reminders";
+      }
+    })();
+  </script>
+{% endblock %}

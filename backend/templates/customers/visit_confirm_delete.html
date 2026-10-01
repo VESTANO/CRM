@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Delete Visit | Customer CRM{% endblock %}
+
+{% block content %}
+  <div class="delete-panel">
+    <h1 class="h3 mb-3">Delete this client visit?</h1>
+    <p class="text-secondary">This deletes only this visit record. The client record remains unchanged.</p>
+    <dl class="row">
+      <dt class="col-sm-3">Client</dt><dd class="col-sm-9">{{ visit.client_display_name }}</dd>
+      <dt class="col-sm-3">Source</dt><dd class="col-sm-9">{% if visit.customer_id %}{{ visit.customer.dataset.name }}{% else %}Manual Client{% endif %}</dd>
+      <dt class="col-sm-3">Visit Date</dt><dd class="col-sm-9">{{ visit.visit_date|date:"d M Y" }}</dd>
+    </dl>
+    <form method="post" class="d-flex flex-wrap gap-2">
+      {% csrf_token %}
+      <button class="btn btn-danger" type="submit">Delete Visit</button>
+      <a class="btn btn-outline-secondary" href="{% url 'customers:visit_detail' visit.id %}">Cancel</a>
+    </form>
+  </div>
+{% endblock %}

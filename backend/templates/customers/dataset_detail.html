@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+
+{% block title %}{{ dataset.name }} | Customer CRM{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item"><a href="{% url 'customers:dataset_list' %}">Customer Lists</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{{ dataset.name }}</li>
+    </ol>
+  </nav>
+
+  <div class="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-2">{{ dataset.name }}</h1>
+      <p class="text-secondary mb-0">File: {{ dataset.original_filename }}</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 action-bar">
+      <a class="btn btn-success" href="{% url 'customers:dataset_export' dataset.id %}{% if query_string %}?{{ query_string }}{% endif %}"><i class="bi bi-download me-1"></i>Export</a>
+      <a class="btn btn-outline-secondary" href="{% url 'customers:dataset_rename' dataset.id %}"><i class="bi bi-pencil me-1"></i>Rename</a>
+      <a class="btn btn-outline-danger" href="{% url 'customers:dataset_delete' dataset.id %}"><i class="bi bi-trash me-1"></i>Delete</a>
+      <a class="btn btn-outline-secondary" href="{% url 'customers:dataset_list' %}">Back to Customer Lists</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-sm-4">
+      <div class="summary-card compact">
+        <div class="text-secondary small">Customers</div>
+        <div class="fs-4">{{ dataset.customer_count }}</div>
+      </div>
+    </div>
+    <div class="col-sm-4">
+      <div class="summary-card compact">
+        <div class="text-secondary small">Uploaded</div>
+        <div class="fs-6">{{ dataset.uploaded_at|date:"d M Y, H:i" }}</div>
+      </div>
+    </div>
+    <div class="col-sm-4">
+      <div class="summary-card compact">
+        <div class="text-secondary small">Updated</div>
+        <div class="fs-6">{{ dataset.updated_at|date:"d M Y, H:i" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    {% for stat in response_stats %}
+      <div class="col-6 col-md-4 col-xl-2">
+        <div class="summary-card compact">
+          <div class="text-secondary small">{{ stat.label }}</div>
+          <div class="fs-5">{{ stat.count }}</div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if import_summary %}
+    <div class="alert alert-success mb-4" role="alert">
+      <h2 class="h5">Import completed successfully.</h2>
+      <dl class="row mb-0">
+        <dt class="col-sm-3">Dataset</dt>
+        <dd class="col-sm-9">{{ import_summary.dataset_name }}</dd>
+        <dt class="col-sm-3">Rows found</dt>
+        <dd class="col-sm-9">{{ import_summary.rows_found }}</dd>
+        <dt class="col-sm-3">Rows imported</dt>
+        <dd class="col-sm-9">{{ import_summary.rows_imported }}</dd>
+        <dt class="col-sm-3">Rows skipped</dt>
+        <dd class="col-sm-9">{{ import_summary.rows_skipped }}</dd>
+        <dt class="col-sm-3">Errors</dt>
+        <dd class="col-sm-9">{{ import_summary.errors }}</dd>
+      </dl>
+    </div>
+  {% endif %}
+
+  <form method="get" class="panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h2 class="h5 mb-0">Find Customers</h2>
+      {% if active_filters %}
+        <span class="badge text-bg-primary">Filters active</span>
+      {% endif %}
+    </div>
+    <div class="row g-3 align-items-end">
+      <div class="col-lg-6">
+        <label class="form-label" for="customer-search">Search customers</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input class="form-control" id="customer-search" name="q" type="search" value="{{ search_query }}" placeholder="Search customers...">
+        </div>
+      </div>
+      <div class="col-sm-6 col-lg-3">
+        <label class="form-label" for="response-filter">Response</label>
+        <select class="form-select" id="response-filter" name="response">
+          <option value="">All</option>
+          {% for value, label in response_choices %}
+            <option value="{{ value }}"{% if response_filter == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-6 col-lg-3 d-flex gap-2">
+        <button class="btn btn-primary flex-fill" type="submit">Apply</button>
+        <a class="btn btn-outline-secondary flex-fill" href="{% url 'customers:dataset_detail' dataset.id %}">Clear</a>
+      </div>
+    </div>
+  </form>
+
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+    {% if active_filters %}
+      <p class="text-secondary mb-0">Showing {{ filtered_count }} of {{ dataset.customer_count }} customers.</p>
+    {% else %}
+      <p class="text-secondary mb-0">Total Customers: {{ dataset.customer_count }}</p>
+    {% endif %}
+  </div>
+
+  <section>
+    <h2 class="h4 mb-3">Customer Records</h2>
+    {% if dataset.customer_count and filtered_count %}
+      {% for sheet in records_by_sheet %}
+        {% if sheet.records %}
+          <div class="panel p-0 mb-4">
+            <div class="table-panel-header">
+              <div>
+                <h3 class="h5 mb-1">{{ sheet.sheet_name }}</h3>
+                <p class="text-secondary small mb-0">Original Excel columns first, CRM fields last.</p>
+              </div>
+            </div>
+            <div class="table-responsive customer-table-wrapper">
+              <table class="table table-sm table-hover align-middle crm-table mb-0">
+                <thead class="table-light">
+                  <tr>
+                    {% for column in sheet.columns %}
+                      <th class="excel-column" scope="col">{{ column.original_name }}</th>
+                    {% endfor %}
+                    <th class="crm-column response-cell" scope="col">Response</th>
+                    <th class="crm-column note-cell" scope="col">Note</th>
+                    <th class="crm-column actions-cell" scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in sheet.records %}
+                    <tr>
+                      {% for value in item.values %}
+                        <td>{{ value }}</td>
+                      {% endfor %}
+                      <td class="response-cell"><span class="badge-response response-{{ item.record.response }}">{{ item.record.get_response_display }}</span></td>
+                      <td class="note-cell">{{ item.record.note|default:"" }}</td>
+                      <td class="actions-cell">
+                        <div class="btn-group btn-group-sm table-actions" role="group" aria-label="Customer actions">
+                          <a class="btn btn-outline-primary" href="{% url 'customers:customer_detail' dataset.id item.record.id %}"><i class="bi bi-eye me-1"></i>View/Edit</a>
+                          <a class="btn btn-outline-secondary" href="{% url 'customers:customer_edit' dataset.id item.record.id %}"><i class="bi bi-pencil me-1"></i>Edit</a>
+                          <a class="btn btn-outline-danger" href="{% url 'customers:customer_delete' dataset.id item.record.id %}"><i class="bi bi-trash me-1"></i>Delete</a>
+                        </div>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {% endif %}
+      {% endfor %}
+      {% if page_obj.paginator.num_pages > 1 %}
+        <nav aria-label="Customer pagination">
+          <ul class="pagination flex-wrap">
+            {% if page_obj.has_previous %}
+              <li class="page-item"><a class="page-link" href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}">Previous</a></li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Previous</span></li>
+            {% endif %}
+
+            {% for page_number in page_obj.paginator.page_range %}
+              <li class="page-item{% if page_obj.number == page_number %} active{% endif %}">
+                <a class="page-link" href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_number }}">{{ page_number }}</a>
+              </li>
+            {% endfor %}
+
+            {% if page_obj.has_next %}
+              <li class="page-item"><a class="page-link" href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}">Next</a></li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">Next</span></li>
+            {% endif %}
+          </ul>
+        </nav>
+      {% endif %}
+    {% elif dataset.customer_count %}
+      <div class="empty-state">
+        {% if search_query and response_filter %}
+          <p class="mb-0">No customers found matching your search and response filter.</p>
+        {% elif search_query %}
+          <p class="mb-0">No customers found matching your search.</p>
+        {% elif response_filter %}
+          <p class="mb-0">No customers found with this response.</p>
+        {% else %}
+          <p class="mb-0">No customers found.</p>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <p class="mb-0">No customer records were found in this file.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

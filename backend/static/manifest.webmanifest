@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Customer CRM",
+  "short_name": "Customer CRM",
+  "description": "Customer relationship management and reminders",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/static/images/customer-crm.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

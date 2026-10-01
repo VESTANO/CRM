@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}{{ managed_user.username }} | Admin Panel{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:admin_panel' %}">Admin Panel</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{{ managed_user.username }}</li>
+    </ol>
+  </nav>
+
+  <div class="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-2">{{ managed_user.username }}</h1>
+      <p class="text-secondary mb-0">User account, access status, and CRM ownership.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 action-bar">
+      <a class="btn btn-primary" href="{% url 'customers:admin_user_edit' managed_user.id %}">Edit user</a>
+      {% if not managed_user.is_staff and not managed_user.is_superuser %}
+        <a class="btn btn-outline-secondary" href="{% url 'customers:admin_user_password' managed_user.id %}">Reset password</a>
+      {% endif %}
+      <a class="btn btn-outline-secondary" href="{% url 'customers:admin_user_datasets' managed_user.id %}">View datasets</a>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <section class="panel h-100">
+        <h2 class="h5 mb-3">Account information</h2>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Username</dt>
+          <dd class="col-sm-8">{{ managed_user.username }}</dd>
+          <dt class="col-sm-4">Email</dt>
+          <dd class="col-sm-8">{{ managed_user.email|default:"No email" }}</dd>
+          <dt class="col-sm-4">Role</dt>
+          <dd class="col-sm-8">
+            {% if managed_user.is_staff or managed_user.is_superuser %}
+              <span class="badge text-bg-primary">Admin</span>
+            {% else %}
+              <span class="badge text-bg-light">User</span>
+            {% endif %}
+          </dd>
+          <dt class="col-sm-4">Account status</dt>
+          <dd class="col-sm-8">
+            {% if managed_user.is_active %}
+              <span class="badge text-bg-success">Active</span>
+            {% else %}
+              <span class="badge text-bg-secondary">Inactive</span>
+            {% endif %}
+          </dd>
+          <dt class="col-sm-4">Date joined</dt>
+          <dd class="col-sm-8">{{ managed_user.date_joined|date:"d M Y, H:i" }}</dd>
+        </dl>
+      </section>
+    </div>
+    <div class="col-lg-5">
+      <section class="panel h-100">
+        <h2 class="h5 mb-3">CRM ownership</h2>
+        <div class="metric-grid">
+          <div class="summary-card compact">
+            <div class="text-secondary small">Datasets owned</div>
+            <div class="fs-4">{{ managed_user.dataset_count }}</div>
+          </div>
+          <div class="summary-card compact">
+            <div class="text-secondary small">Customers owned</div>
+            <div class="fs-4">{{ managed_user.customer_count }}</div>
+          </div>
+        </div>
+        <form method="post" action="{% url 'customers:admin_user_toggle_active' managed_user.id %}" class="mt-4">
+          {% csrf_token %}
+          {% if managed_user.is_active %}
+            <button class="btn btn-outline-danger w-100" type="submit">Deactivate user</button>
+          {% else %}
+            <button class="btn btn-outline-primary w-100" type="submit">Activate user</button>
+          {% endif %}
+        </form>
+      </section>
+    </div>
+  </div>
+{% endblock %}

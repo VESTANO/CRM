@@ -1,0 +1,5 @@
+@import "../../../backend/static/css/styles.css";
+
+.migration-placeholder {
+  min-height: 220px;
+}

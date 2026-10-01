@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Delete Dataset | Customer CRM{% endblock %}
+
+{% block content %}
+  <div class="delete-panel">
+    <h1 class="h3 mb-3">Are you sure you want to delete this dataset?</h1>
+    <p class="text-secondary mb-4">
+      This will delete {{ dataset.name }} and all {{ dataset.customer_count }} customer records belonging to it.
+      Other datasets will remain untouched.
+    </p>
+
+    <form method="post" class="d-flex flex-wrap gap-2">
+      {% csrf_token %}
+      <button class="btn btn-danger" type="submit">Delete Dataset</button>
+      <a class="btn btn-outline-secondary" href="{% url 'customers:dataset_detail' dataset.id %}">Cancel</a>
+    </form>
+  </div>
+{% endblock %}

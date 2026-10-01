@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | Customer CRM{% endblock %}
+
+{% block content %}
+  <div class="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <div class="text-secondary small mb-1">Dashboard</div>
+      <h1 class="h2 mb-2">CRM Dashboard</h1>
+      <p class="text-secondary mb-0">A simple overview of imported datasets and customer response status.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-primary" href="{% url 'customers:import_excel' %}"><i class="bi bi-plus-lg me-1"></i>Import Excel</a>
+      <a class="btn btn-outline-primary" href="{% url 'customers:dataset_list' %}"><i class="bi bi-list-ul me-1"></i>Customer Lists</a>
+    </div>
+  </div>
+
+  <div class="metric-grid mb-4">
+    <div>
+        <div class="summary-card">
+        <div class="metric-icon"><i class="bi bi-folder2-open"></i></div>
+        <div class="text-secondary small">Datasets</div>
+        <div class="summary-value">{{ total_datasets }}</div>
+      </div>
+    </div>
+    <div>
+        <div class="summary-card">
+        <div class="metric-icon"><i class="bi bi-people"></i></div>
+        <div class="text-secondary small">Total Customers</div>
+        <div class="summary-value">{{ total_customers }}</div>
+      </div>
+    </div>
+    {% for stat in response_stats %}
+      <div>
+        <div class="summary-card">
+          <div class="metric-icon">
+            {% if stat.value == "no_response" %}
+              <i class="bi bi-chat-dots"></i>
+            {% elif stat.value == "interested" %}
+              <i class="bi bi-hand-thumbs-up"></i>
+            {% elif stat.value == "not_interested" %}
+              <i class="bi bi-hand-thumbs-down"></i>
+            {% elif stat.value == "callback" %}
+              <i class="bi bi-telephone"></i>
+            {% elif stat.value == "converted" %}
+              <i class="bi bi-check2-circle"></i>
+            {% else %}
+              <i class="bi bi-tag"></i>
+            {% endif %}
+          </div>
+          <div class="text-secondary small">{{ stat.label }}</div>
+          <div class="summary-value">{{ stat.count }}</div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <section class="panel">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2 class="h4 mb-0">Recent Datasets</h2>
+      {% if show_all_datasets %}
+        <a class="btn btn-outline-secondary btn-sm" href="{% url 'customers:dashboard' %}">View Less</a>
+      {% elif total_datasets > 3 %}
+        <a class="btn btn-outline-primary btn-sm" href="{% url 'customers:dashboard' %}?datasets=all">View All</a>
+      {% endif %}
+    </div>
+    {% if recent_datasets %}
+      <div class="list-group list-group-flush">
+        {% for dataset in recent_datasets %}
+          <a class="list-group-item list-group-item-action recent-dataset-item px-0 py-3" href="{% url 'customers:dataset_detail' dataset.id %}">
+            <span class="recent-dataset-row recent-dataset-name fw-semibold">{{ dataset.name }}</span>
+            <span class="recent-dataset-row recent-dataset-file text-secondary small">{{ dataset.original_filename }}</span>
+            <span class="recent-dataset-row recent-dataset-meta">
+              <span class="recent-dataset-date text-secondary small">{{ dataset.uploaded_at|date:"d M Y" }}</span>
+              <span class="recent-dataset-count badge text-bg-light">{{ dataset.customer_count }} customers</span>
+              <span class="recent-dataset-open btn btn-sm btn-outline-primary">Open</span>
+            </span>
+          </a>
+        {% endfor %}
+      </div>
+      {% if show_all_datasets and dataset_page.paginator.num_pages > 1 %}
+        <div class="d-flex justify-content-between align-items-center mt-3">
+          <span class="text-secondary small">Page {{ dataset_page.number }} of {{ dataset_page.paginator.num_pages }}</span>
+          <div class="d-flex gap-2">
+            {% if dataset_page.has_previous %}<a class="btn btn-outline-secondary btn-sm" href="?datasets=all&amp;page={{ dataset_page.previous_page_number }}">Previous</a>{% else %}<button class="btn btn-outline-secondary btn-sm" type="button" disabled>Previous</button>{% endif %}
+            {% if dataset_page.has_next %}<a class="btn btn-outline-primary btn-sm" href="?datasets=all&amp;page={{ dataset_page.next_page_number }}">Next</a>{% else %}<button class="btn btn-outline-primary btn-sm" type="button" disabled>Next</button>{% endif %}
+          </div>
+        </div>
+      {% endif %}
+    {% else %}
+      <div class="empty-state text-center">
+        <h3 class="h5">No datasets yet</h3>
+        <p class="text-secondary">No customer lists have been imported yet.</p>
+        <a class="btn btn-primary" href="{% url 'customers:import_excel' %}">Import Excel</a>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+      <div>
+        <h2 class="h4 mb-1">Sales Visits</h2>
+        <p class="text-secondary mb-0">Track client visits, meeting status, and expenses.</p>
+      </div>
+      <a class="btn btn-primary" href="{% url 'customers:visit_add' %}"><i class="bi bi-plus-lg me-1"></i>Add Visit</a>
+    </div>
+    <div class="metric-grid">
+      <div class="summary-card compact">
+        <div class="text-secondary small">Total Visits</div>
+        <div class="fs-4 fw-bold">{{ total_visits }}</div>
+      </div>
+      <div class="summary-card compact">
+        <div class="text-secondary small">Today's Visits</div>
+        <div class="fs-4 fw-bold">{{ todays_visits }}</div>
+      </div>
+      <div class="summary-card compact">
+        <div class="text-secondary small">This Month</div>
+        <div class="fs-4 fw-bold">{{ month_visits }}</div>
+      </div>
+      <div class="summary-card compact">
+        <div class="text-secondary small">Total Expenses</div>
+        <div class="fs-4 fw-bold">₹{{ total_visit_expenses|floatformat:2 }}</div>
+      </div>
+    </div>
+  </section>
+{% endblock %}

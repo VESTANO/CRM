@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }} | Customer CRM{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item"><a href="{% url 'customers:sales_list' %}">Sales</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{{ page_title }}</li>
+    </ol>
+  </nav>
+
+  <div class="page-header mb-4">
+    <div>
+      <div class="eyebrow">Sales</div>
+      <h1 class="h2 mb-2">{{ page_title }}</h1>
+      <p class="text-secondary mb-0">{{ page_subtitle }}</p>
+    </div>
+  </div>
+
+  {% if not is_edit %}
+    <div class="row g-3 mb-4">
+      <div class="col-md-6">
+        <a class="summary-card d-block h-100 {% if visit_mode == 'existing' %}border-primary{% endif %}" href="{% url 'customers:visit_add' %}?mode=existing">
+          <div class="d-flex align-items-start gap-3">
+            <span class="metric-icon"><i class="bi bi-table"></i></span>
+            <div>
+              <h2 class="h5 mb-1">Existing Client</h2>
+              <p class="text-secondary mb-0">Select from customers imported through an Excel dataset.</p>
+            </div>
+          </div>
+        </a>
+      </div>
+      <div class="col-md-6">
+        <a class="summary-card d-block h-100 {% if visit_mode == 'manual' %}border-primary{% endif %}" href="{% url 'customers:visit_add' %}?mode=manual">
+          <div class="d-flex align-items-start gap-3">
+            <span class="metric-icon"><i class="bi bi-person-plus"></i></span>
+            <div>
+              <h2 class="h5 mb-1">New / Manual Client</h2>
+              <p class="text-secondary mb-0">Create a client visit without requiring an Excel dataset.</p>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="panel">
+    {% if visit_mode == "existing" %}
+      <form method="get" class="row g-3 mb-4" id="client-filter-form">
+        <input type="hidden" name="mode" value="existing">
+        <div class="col-md-6">
+          <label class="form-label" for="dataset-filter">Dataset / Customer List</label>
+          <select class="form-select" id="dataset-filter" name="dataset">
+            <option value="">Select dataset</option>
+            {% for dataset in form.fields.dataset.queryset %}
+              <option value="{{ dataset.id }}"{% if selected_dataset and selected_dataset.id == dataset.id %} selected{% endif %}>{{ dataset.name }}</option>
+            {% endfor %}
+          </select>
+          {% for error in form.dataset.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="customer-search-filter">Search client</label>
+          <input class="form-control" id="customer-search-filter" name="customer_q" value="{{ customer_search }}" placeholder="Search clients in selected dataset">
+        </div>
+      </form>
+    {% else %}
+      <div class="mb-4">
+        <span class="badge-response response-callback">Manual Client</span>
+        <p class="text-secondary mt-2 mb-0">This visit will create a manually owned client record, separate from Excel-imported customers.</p>
+      </div>
+    {% endif %}
+
+      <form method="post" enctype="multipart/form-data" id="visit-form" data-clients-url="{% url 'customers:sales_clients' %}">
+      {% csrf_token %}
+      <input type="hidden" name="visit_mode" value="{{ visit_mode }}">
+      {% if visit_mode == "existing" %}
+        <input type="hidden" id="visit-dataset-input" name="dataset" value="{% if selected_dataset %}{{ selected_dataset.id }}{% endif %}">
+      {% endif %}
+      <div class="row g-3">
+        {% if visit_mode == "existing" %}
+          <div class="col-md-6">
+            <label class="form-label" for="{{ form.customer.id_for_label }}">{{ form.customer.label }}</label>
+            {{ form.customer }}
+            <div class="form-text" id="client-select-help">Select a dataset to load clients. Search narrows the list automatically.</div>
+            {% for error in form.customer.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+          </div>
+          <div class="d-none">{{ form.customer_search }}</div>
+        {% else %}
+          <div class="col-md-6">
+            <label class="form-label" for="{{ form.client_name.id_for_label }}">Client Name</label>
+            {{ form.client_name }}
+            {% for error in form.client_name.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="{{ form.phone.id_for_label }}">Phone</label>
+            {{ form.phone }}
+            {% for error in form.phone.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="{{ form.email.id_for_label }}">Email</label>
+            {{ form.email }}
+            {% for error in form.email.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="{{ form.company.id_for_label }}">Company</label>
+            {{ form.company }}
+            {% for error in form.company.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="{{ form.client_location.id_for_label }}">Client Location</label>
+            {{ form.client_location }}
+            {% for error in form.client_location.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+          </div>
+        {% endif %}
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.visit_date.id_for_label }}">Visit Date</label>
+          {{ form.visit_date }}
+          {% for error in form.visit_date.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.meeting_time.id_for_label }}">Meeting Time</label>
+          {{ form.meeting_time }}
+          {% for error in form.meeting_time.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="{{ form.location.id_for_label }}">Location</label>
+          {{ form.location }}
+          {% for error in form.location.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="{{ form.expense.id_for_label }}">Expense</label>
+          {{ form.expense }}
+          {% for error in form.expense.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="{{ form.status.id_for_label }}">Status</label>
+          {{ form.status }}
+          {% for error in form.status.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.note.id_for_label }}">Note</label>
+          {{ form.note }}
+          {% for error in form.note.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.images.id_for_label }}">Visit Images</label>
+          {{ form.images }}
+          <div class="form-text">Add up to 10 images, 10 MB each. You can select files in more than one batch.</div>
+          <ul class="visit-image-selection list-unstyled mt-2 mb-0" id="visit-image-selection"></ul>
+          {% for error in form.images.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-2 mt-4">
+        <button class="btn btn-primary" type="submit">{{ submit_label }}</button>
+        <a class="btn btn-outline-secondary" href="{% url 'customers:sales_list' %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+
+  <script>
+  (() => {
+    const input = document.getElementById("id_images");
+    const list = document.getElementById("visit-image-selection");
+    if (!input || !list || typeof DataTransfer === "undefined") return;
+
+    let selectedFiles = [];
+    const renderFiles = () => {
+      const transfer = new DataTransfer();
+      list.replaceChildren();
+      selectedFiles.forEach((file, index) => {
+        transfer.items.add(file);
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        const remove = document.createElement("button");
+        name.textContent = file.name;
+        remove.className = "btn-close";
+        remove.type = "button";
+        remove.setAttribute("aria-label", `Remove ${file.name}`);
+        remove.addEventListener("click", () => {
+          selectedFiles = selectedFiles.filter((_, currentIndex) => currentIndex !== index);
+          renderFiles();
+        });
+        item.append(name, remove);
+        list.append(item);
+      });
+      input.files = transfer.files;
+    };
+
+    input.addEventListener("change", () => {
+      const known = new Set(selectedFiles.map(file => `${file.name}:${file.size}:${file.lastModified}`));
+      for (const file of input.files) {
+        const key = `${file.name}:${file.size}:${file.lastModified}`;
+        if (!known.has(key)) {
+          selectedFiles.push(file);
+          known.add(key);
+        }
+      }
+      renderFiles();
+    });
+  })();
+  </script>
+
+  {% if visit_mode == "existing" %}
+    <script>
+    (() => {
+      const filterForm = document.getElementById("client-filter-form");
+      const visitForm = document.getElementById("visit-form");
+      const datasetSelect = document.getElementById("dataset-filter");
+      const datasetInput = document.getElementById("visit-dataset-input");
+      const searchInput = document.getElementById("customer-search-filter");
+      const hiddenSearchInput = document.getElementById("id_customer_search");
+      const customerSelect = document.getElementById("id_customer");
+      const helpText = document.getElementById("client-select-help");
+
+      if (!filterForm || !visitForm || !datasetSelect || !datasetInput || !searchInput || !hiddenSearchInput || !customerSelect) {
+        return;
+      }
+
+      const clientsUrl = visitForm.getAttribute("data-clients-url");
+      let activeRequest = 0;
+      let searchTimer = null;
+
+      const replaceCustomers = (clients, selectedValue = "") => {
+        customerSelect.innerHTML = "";
+        customerSelect.add(new Option("Select client", ""));
+
+        clients.forEach((client) => {
+          const option = new Option(client.label, client.id);
+          option.dataset.sheetName = client.sheet_name;
+          option.dataset.rowNumber = client.row_number;
+          customerSelect.add(option);
+        });
+
+        customerSelect.value = clients.some((client) => String(client.id) === String(selectedValue)) ? String(selectedValue) : "";
+        customerSelect.disabled = clients.length === 0;
+        helpText.textContent = clients.length
+          ? "Client list updates automatically from the selected dataset and search."
+          : "No clients found for the selected dataset and search.";
+      };
+
+      const clearCustomers = (message = "Select a dataset to load clients. Search narrows the list automatically.") => {
+        customerSelect.innerHTML = "";
+        customerSelect.add(new Option("Select a dataset first", ""));
+        customerSelect.value = "";
+        customerSelect.disabled = true;
+        helpText.textContent = message;
+      };
+
+      const requestClients = (url) => new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("GET", url, true);
+        request.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+        request.onreadystatechange = () => {
+          if (request.readyState !== XMLHttpRequest.DONE) {
+            return;
+          }
+
+          if (request.status < 200 || request.status >= 300) {
+            reject(new Error("Unable to load clients."));
+            return;
+          }
+
+          try {
+            resolve(JSON.parse(request.responseText));
+          } catch (error) {
+            reject(error);
+          }
+        };
+        request.onerror = () => reject(new Error("Unable to load clients."));
+        request.send();
+      });
+
+      const loadCustomers = async ({ preserveSelection = true } = {}) => {
+        const datasetId = datasetSelect.value;
+        const query = searchInput.value.trim();
+        datasetInput.value = datasetId;
+        hiddenSearchInput.value = query;
+
+        if (!datasetId) {
+          clearCustomers();
+          return;
+        }
+
+        const selectedValue = preserveSelection ? customerSelect.value : "";
+        const requestId = ++activeRequest;
+        customerSelect.disabled = true;
+        helpText.textContent = "Loading clients...";
+
+        const params = new URLSearchParams({ dataset: datasetId, q: query });
+        try {
+          const data = await requestClients(`${clientsUrl}?${params.toString()}`);
+          if (requestId !== activeRequest) {
+            return;
+          }
+          replaceCustomers(data.clients || [], selectedValue);
+        } catch (error) {
+          if (requestId !== activeRequest) {
+            return;
+          }
+          clearCustomers("Unable to load clients. Please try again.");
+        }
+      };
+
+      filterForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        loadCustomers({ preserveSelection: false });
+      });
+
+      datasetSelect.addEventListener("change", () => {
+        loadCustomers({ preserveSelection: false });
+      });
+
+      searchInput.addEventListener("input", () => {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(() => {
+          loadCustomers();
+        }, 250);
+      });
+
+      loadCustomers();
+    })();
+    </script>
+  {% endif %}
+{% endblock %}

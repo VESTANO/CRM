@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Login | Customer CRM{% endblock %}
+
+{% block content %}
+  <div class="row justify-content-center login-shell">
+    <div class="col-sm-10 col-md-7 col-lg-5">
+      <div class="panel login-card">
+        <div class="text-center mb-4">
+          <div class="brand-mark mx-auto mb-3">C</div>
+          <h1 class="h3 mb-1">Customer CRM</h1>
+          <p class="text-secondary mb-0">Sign in to manage customer datasets.</p>
+        </div>
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">
+            {% for error in form.non_field_errors %}
+              <div>{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.username.id_for_label }}">Username</label>
+            <input class="form-control" id="{{ form.username.id_for_label }}" name="{{ form.username.html_name }}" type="text" value="{{ form.username.value|default:'' }}" autocomplete="username" required autofocus>
+            {% for error in form.username.errors %}
+              <div class="text-danger small mt-2">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.password.id_for_label }}">Password</label>
+            <input class="form-control" id="{{ form.password.id_for_label }}" name="{{ form.password.html_name }}" type="password" autocomplete="current-password" required>
+            {% for error in form.password.errors %}
+              <div class="text-danger small mt-2">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Login</button>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}

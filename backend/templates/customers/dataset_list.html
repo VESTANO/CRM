@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Customer Lists | Customer CRM{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Customer Lists</li>
+    </ol>
+  </nav>
+
+  <div class="page-header d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-2">Customer Lists</h1>
+      <p class="text-secondary mb-0">Each uploaded Excel file is stored as an independent dataset.</p>
+    </div>
+    <a class="btn btn-primary" href="{% url 'customers:import_excel' %}"><i class="bi bi-plus-lg me-1"></i>Import Excel</a>
+  </div>
+
+  {% if datasets %}
+    <div class="table-responsive panel p-0 responsive-table">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Dataset</th>
+            {% if request.user.is_staff or request.user.is_superuser %}
+              <th scope="col">Owner</th>
+            {% endif %}
+            <th scope="col">File</th>
+            <th scope="col">Customers</th>
+            <th scope="col">Uploaded</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dataset in datasets %}
+            <tr>
+              <td data-label="Dataset">
+                <div class="fw-semibold">{{ dataset.name }}</div>
+              </td>
+              {% if request.user.is_staff or request.user.is_superuser %}
+                <td data-label="Owner">{{ dataset.owner.username }}</td>
+              {% endif %}
+              <td class="text-secondary" data-label="File">{{ dataset.original_filename }}</td>
+              <td data-label="Customers"><span class="badge text-bg-light">{{ dataset.customer_count }}</span></td>
+              <td data-label="Uploaded">{{ dataset.uploaded_at|date:"d M Y, H:i" }}</td>
+              <td data-label="Actions">
+                <div class="btn-group btn-group-sm dataset-actions" role="group" aria-label="Dataset actions">
+                  <a class="btn btn-outline-primary" href="{% url 'customers:dataset_detail' dataset.id %}"><i class="bi bi-box-arrow-up-right me-1"></i>Open</a>
+                  <a class="btn btn-outline-secondary" href="{% url 'customers:dataset_rename' dataset.id %}"><i class="bi bi-pencil me-1"></i>Rename</a>
+                  <a class="btn btn-outline-danger" href="{% url 'customers:dataset_delete' dataset.id %}"><i class="bi bi-trash me-1"></i>Delete</a>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if datasets.paginator.num_pages > 1 %}
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <span class="text-secondary small">Page {{ datasets.number }} of {{ datasets.paginator.num_pages }}</span>
+        <div class="d-flex gap-2">
+          {% if datasets.has_previous %}<a class="btn btn-outline-secondary btn-sm" href="?page={{ datasets.previous_page_number }}">Previous</a>{% else %}<button class="btn btn-outline-secondary btn-sm" type="button" disabled>Previous</button>{% endif %}
+          {% if datasets.has_next %}<a class="btn btn-outline-primary btn-sm" href="?page={{ datasets.next_page_number }}">Next</a>{% else %}<button class="btn btn-outline-primary btn-sm" type="button" disabled>Next</button>{% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="empty-state">
+      <p class="mb-3">No customer datasets have been created yet.</p>
+      <a class="btn btn-primary" href="{% url 'customers:import_excel' %}">Import Excel</a>
+    </div>
+  {% endif %}
+{% endblock %}

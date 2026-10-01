@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Customer | {{ dataset.name }}{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item"><a href="{% url 'customers:dataset_detail' dataset.id %}">{{ dataset.name }}</a></li>
+      <li class="breadcrumb-item"><a href="{% url 'customers:customer_detail' dataset.id record.id %}">Customer Details</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Edit</li>
+    </ol>
+  </nav>
+
+  <div class="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h1 class="h2 mb-2">Edit Customer</h1>
+      <p class="text-secondary mb-0">{{ dataset.name }} · CRM fields only</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'customers:customer_detail' dataset.id record.id %}">Back</a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-5">
+      <div class="panel">
+        <form method="post" novalidate>
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.response.id_for_label }}">Response</label>
+            {{ form.response }}
+            {% for error in form.response.errors %}
+              <div class="text-danger small mt-2">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.note.id_for_label }}">Note</label>
+            {{ form.note }}
+            {% for error in form.note.errors %}
+              <div class="text-danger small mt-2">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-outline-secondary" href="{% url 'customers:customer_detail' dataset.id record.id %}">Cancel</a>
+        </form>
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <div class="panel bg-light">
+        <h2 class="h5 mb-3">Original Excel Data</h2>
+        <dl class="row mb-0">
+          {% for field in field_rows %}
+            <dt class="col-sm-4">{{ field.label }}</dt>
+            <dd class="col-sm-8">{{ field.value }}</dd>
+          {% endfor %}
+        </dl>
+      </div>
+    </div>
+  </div>
+{% endblock %}

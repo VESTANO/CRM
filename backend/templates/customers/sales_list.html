@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Sales | Customer CRM{% endblock %}
+
+{% block content %}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{% url 'customers:dashboard' %}">Dashboard</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Sales</li>
+    </ol>
+  </nav>
+
+  <div class="page-header mb-4">
+    <div>
+      <div class="eyebrow">Sales</div>
+      <h1 class="h2 mb-2">Client Visits</h1>
+      <p class="text-secondary mb-0">Manage client visits for customers in accessible datasets.</p>
+    </div>
+    <div class="action-bar d-flex flex-wrap gap-2">
+      <a class="btn btn-primary" href="{% url 'customers:visit_add' %}"><i class="bi bi-plus-lg me-1"></i>Add Client Visit</a>
+    </div>
+  </div>
+
+  <form method="get" class="panel mb-4">
+    <div class="row g-3 align-items-end">
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label" for="visit-status-filter">Status</label>
+        <select class="form-select" id="visit-status-filter" name="status">
+          <option value="">All statuses</option>
+          {% for value, label in status_choices %}
+            <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-6 col-lg-3">
+        <label class="form-label" for="visit-date-from">From date</label>
+        <input class="form-control" id="visit-date-from" type="date" name="date_from" value="{{ date_from }}">
+      </div>
+      <div class="col-sm-6 col-lg-3">
+        <label class="form-label" for="visit-date-to">To date</label>
+        <input class="form-control" id="visit-date-to" type="date" name="date_to" value="{{ date_to }}">
+      </div>
+      <div class="col-sm-6 col-lg-2 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Filter</button>
+        {% if filters_active %}<a class="btn btn-outline-secondary" href="{% url 'customers:sales_list' %}">Clear</a>{% endif %}
+      </div>
+    </div>
+    {% if filters_active %}<p class="text-secondary small mb-0 mt-3">Showing {{ filtered_visit_count }} of {{ total_visits }} visits.</p>{% endif %}
+  </form>
+
+  {% if visits %}
+    <div class="table-responsive panel p-0 responsive-table">
+      <table class="table table-hover align-middle mb-0 sales-visits-table">
+        <thead class="table-light">
+          <tr>
+            <th>Client</th>
+            <th>Dataset / Source</th>
+            <th>Visit Date</th>
+            <th>Meeting Time</th>
+            <th>Location</th>
+            <th>Expense</th>
+            <th>Status</th>
+            <th>Note</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for visit in visits %}
+            <tr>
+              <td data-label="Client">{{ visit.client_display_name }}</td>
+              <td data-label="Dataset / Source">
+                {% if visit.customer_id %}
+                  {{ visit.customer.dataset.name }}
+                {% else %}
+                  <span class="badge-response response-callback">Manual Client</span>
+                {% endif %}
+              </td>
+              <td data-label="Visit Date">{{ visit.visit_date|date:"d M Y" }}</td>
+              <td data-label="Meeting Time">{{ visit.meeting_time|time:"H:i" }}</td>
+              <td data-label="Location">{{ visit.location }}</td>
+              <td data-label="Expense">₹{{ visit.expense|floatformat:2 }}</td>
+              <td data-label="Status"><span class="badge-response visit-status-{{ visit.status }}">{{ visit.get_status_display }}</span></td>
+              <td data-label="Note" class="note-cell"><span class="sales-note-value">{{ visit.note|default:"" }}</span></td>
+              <td data-label="Actions">
+                <div class="btn-group btn-group-sm sales-actions" role="group" aria-label="Visit actions">
+                  <a class="btn btn-outline-primary" href="{% url 'customers:visit_detail' visit.id %}">View</a>
+                  <a class="btn btn-outline-secondary" href="{% url 'customers:visit_edit' visit.id %}">Edit</a>
+                  <a class="btn btn-outline-danger" href="{% url 'customers:visit_delete' visit.id %}">Delete</a>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if visits.paginator.num_pages > 1 %}
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <span class="text-secondary small">Page {{ visits.number }} of {{ visits.paginator.num_pages }}</span>
+        <div class="d-flex gap-2">
+          {% if visits.has_previous %}<a class="btn btn-outline-secondary btn-sm" href="?status={{ status_filter|urlencode }}&amp;date_from={{ date_from|urlencode }}&amp;date_to={{ date_to|urlencode }}&amp;page={{ visits.previous_page_number }}">Previous</a>{% else %}<button class="btn btn-outline-secondary btn-sm" type="button" disabled>Previous</button>{% endif %}
+          {% if visits.has_next %}<a class="btn btn-outline-primary btn-sm" href="?status={{ status_filter|urlencode }}&amp;date_from={{ date_from|urlencode }}&amp;date_to={{ date_to|urlencode }}&amp;page={{ visits.next_page_number }}">Next</a>{% else %}<button class="btn btn-outline-primary btn-sm" type="button" disabled>Next</button>{% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="empty-state text-center">
+      {% if filters_active %}
+        <h2 class="h5">No visits match these filters</h2>
+        <p class="text-secondary">Try changing the status or date range.</p>
+        <a class="btn btn-outline-secondary" href="{% url 'customers:sales_list' %}">Clear filters</a>
+      {% else %}
+        <h2 class="h5">No client visits yet</h2>
+        <p class="text-secondary">Create your first client visit after importing a customer dataset.</p>
+        <a class="btn btn-primary" href="{% url 'customers:visit_add' %}">Add Client Visit</a>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}
