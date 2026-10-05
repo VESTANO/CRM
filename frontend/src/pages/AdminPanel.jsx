@@ -324,17 +324,17 @@ export default function AdminPanel() {
                       {user.is_admin ? (
                         <span className="text-secondary small">Admin user</span>
                       ) : (
-                        <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}/tasks`}>
+                        <a className="btn btn-outline-primary btn-sm" href={`/admin-panel/users/${user.id}/tasks`}>
                           View Tasks
-                        </Link>
+                        </a>
                       )}
                     </td>
                     <td data-label="Date joined">{formatDateTime(user.date_joined)}</td>
                     <td data-label="Actions">
                       <div className="btn-group btn-group-sm table-actions">
-                        <Link className="btn btn-outline-primary" to={`/admin-panel/users/${user.id}`}>View</Link>
-                        <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
-                        <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
+                        <a className="btn btn-outline-primary" href={`/admin-panel/users/${user.id}`}>View</a>
+                        <a className="btn btn-outline-secondary" href={`/admin-panel/users/${user.id}/edit`}>Edit</a>
+                        <a className="btn btn-outline-secondary" href={`/admin-panel/users/${user.id}/datasets`}>Datasets</a>
                         {!user.is_admin && (
                           <>
                             <button

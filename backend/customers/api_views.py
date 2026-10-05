@@ -845,15 +845,18 @@ class UserTargetListView(APIView):
 class AdminTargetView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def dispatch(self, request, *args, **kwargs):
+    def check_admin(self, request):
         if not admin_only(request):
             return Response(
                 {"detail": "Administrator access required."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        return super().dispatch(request, *args, **kwargs)
+        return None
 
     def post(self, request):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         user_id = request.data.get("userId")
         month_value = request.data.get("month")
         target_value = request.data.get("target")
@@ -909,6 +912,9 @@ class AdminTargetView(APIView):
         return Response(get_sales_target_payload(target), status=status.HTTP_200_OK)
 
     def get(self, request):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         targets = (
             SalesTarget.objects
             .select_related("user")
@@ -921,6 +927,9 @@ class AdminTargetView(APIView):
         ])
 
     def patch(self, request, target_id):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         target = get_object_or_404(
             SalesTarget,
             pk=target_id,
@@ -986,23 +995,32 @@ class AdminUserView(APIView):
     def get_user(self, user_id):
         return get_object_or_404(User.objects.annotate(dataset_count=Count("datasets", distinct=True), customer_count=Count("datasets__records", distinct=True)), pk=user_id)
 
-    def dispatch(self, request, *args, **kwargs):
+    def check_admin(self, request):
         if not admin_only(request):
             return Response({"detail": "Administrator access required."}, status=status.HTTP_403_FORBIDDEN)
-        return super().dispatch(request, *args, **kwargs)
+        return None
 
     def get(self, request, user_id=None):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         if user_id is None:
             users = User.objects.annotate(dataset_count=Count("datasets", distinct=True), customer_count=Count("datasets__records", distinct=True)).order_by("username")
             return Response({"results": [admin_user_payload(user) for user in users]})
         return Response(admin_user_payload(self.get_user(user_id)))
 
     def post(self, request, user_id=None):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         form = AdminUserCreateForm(request.data)
         if not form.is_valid(): return Response({"errors": serialize_form_errors(form)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(admin_user_payload(form.save()), status=status.HTTP_201_CREATED)
 
     def patch(self, request, user_id):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         user = self.get_user(user_id)
         form = AdminUserEditForm(request.data, instance=user)
         if user == request.user and request.data.get("is_active") in (False, "false", "0"):
@@ -1014,11 +1032,15 @@ class AdminUserView(APIView):
 class AdminUserActionView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def dispatch(self, request, *args, **kwargs):
-        if not admin_only(request): return Response({"detail": "Administrator access required."}, status=status.HTTP_403_FORBIDDEN)
-        return super().dispatch(request, *args, **kwargs)
+    def check_admin(self, request):
+        if not admin_only(request):
+            return Response({"detail": "Administrator access required."}, status=status.HTTP_403_FORBIDDEN)
+        return None
 
     def post(self, request, user_id, action):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         user = get_object_or_404(User, pk=user_id)
         if action == "toggle-active":
             if user == request.user: return Response({"detail": "You cannot change your own active status here."}, status=400)
@@ -1035,8 +1057,15 @@ class AdminUserActionView(APIView):
 class AdminUserDatasetsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def check_admin(self, request):
+        if not admin_only(request):
+            return Response({"detail": "Administrator access required."}, status=status.HTTP_403_FORBIDDEN)
+        return None
+
     def get(self, request, user_id):
-        if not admin_only(request): return Response({"detail": "Administrator access required."}, status=403)
+        denied = self.check_admin(request)
+        if denied:
+            return denied
         user = get_object_or_404(User, pk=user_id)
         datasets = user.datasets.annotate(customer_count=Count("records")).order_by("-uploaded_at")
         return Response({"user": admin_user_payload(user), "results": DatasetListSerializer(datasets, many=True).data})

@@ -2138,6 +2138,44 @@ class APIFoundationTests(TestCase):
         self.client.force_login(self.user_one)
         self.assertEqual(self.client.get(reverse("customers_api:admin_summary")).status_code, 403)
 
+    def test_admin_user_detail_api_loads_user_for_view_page(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse("customers_api:admin_user_detail", args=[self.user_one.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], self.user_one.id)
+        self.assertEqual(response.json()["username"], self.user_one.username)
+
+    def test_admin_navigation_api_endpoints_load_without_redirect_errors(self):
+        self.client.force_login(self.admin)
+
+        checks = [
+            self.client.get(reverse("customers_api:admin_summary")),
+            self.client.get(reverse("customers_api:admin_user_list")),
+            self.client.get(reverse("customers_api:admin_user_detail", args=[self.user_one.id])),
+            self.client.get(reverse("customers_api:admin_user_datasets", args=[self.user_one.id])),
+            self.client.get(reverse("customers_api:admin_task_list"), {"userId": self.user_one.id}),
+            self.client.get(reverse("customers_api:admin-targets")),
+        ]
+        for response in checks:
+            self.assertEqual(response.status_code, 200)
+
+        action_response = self.client.post(
+            reverse("customers_api:admin_user_action", args=[self.user_one.id, "toggle-active"]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(action_response.status_code, 200)
+
+        self.client.force_login(self.user_one)
+        forbidden_response = self.client.post(
+            reverse("customers_api:admin_user_action", args=[self.user_two.id, "toggle-active"]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(forbidden_response.status_code, 403)
+
     def test_admin_target_api_assigns_target_and_reports_progress_warning(self):
         today = timezone.localdate()
         month = today.replace(day=1)
