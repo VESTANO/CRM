@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { dashboardApi, datasetsApi } from "../services/api.js";
+import { dashboardApi, datasetsApi, targetsApi } from "../services/api.js";
 import { formatCurrency, formatDate } from "../utils/formatters.js";
+import AnimatedNumber from "../components/AnimatedNumber.jsx";
 
 const responseIcons = {
   no_response: "bi-chat-dots",
@@ -18,6 +19,7 @@ export default function Dashboard() {
   const [datasetPage, setDatasetPage] = useState(1);
   const [datasetError, setDatasetError] = useState("");
   const [loadingDatasets, setLoadingDatasets] = useState(false);
+  const [targets, setTargets] = useState(null);
   const datasetsExpanded = allDatasets !== null;
   const datasets = datasetsExpanded ? allDatasets : dashboard?.recentDatasets || [];
   const pageCount = Math.ceil(datasets.length / 5);
@@ -26,9 +28,11 @@ export default function Dashboard() {
     : datasets;
 
   useEffect(() => {
-    dashboardApi
-      .summary()
-      .then(({ data }) => setDashboard(data))
+    Promise.all([dashboardApi.summary(), targetsApi.list()])
+      .then(([dashboardResponse, targetsResponse]) => {
+        setDashboard(dashboardResponse.data);
+        setTargets(targetsResponse.data.results);
+      })
       .catch(() => setError("Unable to load dashboard data."));
   }, []);
 
@@ -87,6 +91,30 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {targets?.length > 0 && (
+        <section className="panel mb-4">
+          <h2 className="h4 mb-1">Monthly Targets</h2>
+          <p className="text-secondary small mb-3">Targets assigned by admin for previous, current, and upcoming months.</p>
+          <div className="d-grid gap-3">
+            {targets.map((target) => (
+              <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 border-top pt-3" key={target.id}>
+                <div>
+                  <div className="fw-semibold">{target.monthLabel}</div>
+                  <div className="text-secondary small">{target.converted} of {target.target} converted ({target.percentage}%)</div>
+                </div>
+                <div className="d-flex flex-wrap gap-2">
+                  <span className={`badge text-bg-${target.statusColor}`}>Target: <AnimatedNumber value={target.target} /></span>
+                  <span className="badge text-bg-success">Converted: <AnimatedNumber value={target.converted} /></span>
+                  <span className={`badge text-bg-${target.target - target.converted > 0 ? "warning" : "success"}`}>
+                    Remaining: <AnimatedNumber value={Math.max(target.target - target.converted, 0)} />
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="panel">
         <div className="d-flex justify-content-between align-items-center mb-3">
           <h2 className="h4 mb-0">Recent Datasets</h2>
@@ -111,7 +139,7 @@ export default function Dashboard() {
                 </span>
                 <span className="recent-dataset-row recent-dataset-meta">
                   <span className="recent-dataset-date text-secondary small">{formatDate(dataset.uploaded_at)}</span>
-                  <span className="recent-dataset-count badge text-bg-light">{dataset.customer_count} customers</span>
+                  <span className="recent-dataset-count badge text-bg-light"><AnimatedNumber value={dataset.customer_count} /> customers</span>
                   <span className="recent-dataset-open btn btn-sm btn-outline-primary">Open</span>
                 </span>
               </Link>
@@ -160,7 +188,7 @@ function MetricCard({ icon, label, value }) {
       <div className="summary-card">
         <div className="metric-icon"><i className={`bi ${icon}`} /></div>
         <div className="text-secondary small">{label}</div>
-        <div className="summary-value">{value}</div>
+        <div className="summary-value"><AnimatedNumber value={value} /></div>
       </div>
     </div>
   );
@@ -170,7 +198,7 @@ function SmallMetric({ label, value }) {
   return (
     <div className="summary-card compact">
       <div className="text-secondary small">{label}</div>
-      <div className="fs-4 fw-bold">{value}</div>
+      <div className={`fs-4 fw-bold ${label.includes("Expenses") ? "summary-value-currency" : ""}`}><AnimatedNumber value={value} /></div>
     </div>
   );
 }

@@ -12,12 +12,14 @@ import DatasetList from "./pages/DatasetList.jsx";
 import DatasetManagement from "./pages/DatasetManagement.jsx";
 import ImportExcel from "./pages/ImportExcel.jsx";
 import Notifications from "./pages/Notifications.jsx";
+import Reports from "./pages/Reports.jsx";
 import Login from "./pages/Login.jsx";
 import Sales from "./pages/Sales.jsx";
 import VisitForm from "./pages/VisitForm.jsx";
 import VisitDetail from "./pages/VisitDetail.jsx";
 import VisitDelete from "./pages/VisitDelete.jsx";
 import AdminPanel from "./pages/AdminPanel.jsx";
+import AdminTasks from "./pages/AdminTasks.jsx";
 import AdminUserDetail from "./pages/AdminUserDetail.jsx";
 import AdminUserForm from "./pages/AdminUserForm.jsx";
 import AdminUserPassword from "./pages/AdminUserPassword.jsx";
@@ -50,17 +52,20 @@ export default function App() {
             <Route path="customers/:id" element={<CustomerDetail />} />
             <Route path="import" element={<ImportExcel />} />
             <Route path="notifications" element={<Notifications />} />
+            <Route path="reports" element={<Reports />} />
             <Route path="sales" element={<Sales />} />
             <Route path="sales/visits/add" element={<VisitForm />} />
             <Route path="sales/visits/:visitId" element={<VisitDetail />} />
             <Route path="sales/visits/:visitId/edit" element={<VisitForm />} />
             <Route path="sales/visits/:visitId/delete" element={<VisitDelete />} />
             <Route path="admin-panel" element={<AdminRoute><AdminPanel /></AdminRoute>} />
+            <Route path="admin-panel/tasks" element={<AdminRoute><AdminTasks /></AdminRoute>} />
             <Route path="admin-panel/users/add" element={<AdminRoute><AdminUserForm /></AdminRoute>} />
             <Route path="admin-panel/users/:userId" element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
             <Route path="admin-panel/users/:userId/edit" element={<AdminRoute><AdminUserForm /></AdminRoute>} />
             <Route path="admin-panel/users/:userId/password" element={<AdminRoute><AdminUserPassword /></AdminRoute>} />
             <Route path="admin-panel/users/:userId/datasets" element={<AdminRoute><AdminUserDatasets /></AdminRoute>} />
+            <Route path="admin-panel/users/:userId/tasks" element={<AdminRoute><AdminTasks /></AdminRoute>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -3,7 +3,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import CustomerRecord, Dataset, ManualClient, Reminder, Visit, VisitImage
+from .models import AssignedTask, CustomerRecord, Dataset, ManualClient, Reminder, SalesTarget, Visit, VisitImage
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -20,6 +20,9 @@ class UserSerializer(serializers.ModelSerializer):
 class DatasetListSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source="owner.username", read_only=True)
     customer_count = serializers.IntegerField(read_only=True)
+    target = serializers.SerializerMethodField()
+    converted_count = serializers.SerializerMethodField()
+    remaining_target = serializers.SerializerMethodField()
 
     class Meta:
         model = Dataset
@@ -29,9 +32,48 @@ class DatasetListSerializer(serializers.ModelSerializer):
             "original_filename",
             "owner_username",
             "customer_count",
+            "target",
+            "converted_count",
+            "remaining_target",
             "uploaded_at",
             "updated_at",
         ]
+
+    def get_target_obj(self, obj):
+        if hasattr(obj, "_sales_target_cache"):
+            return obj._sales_target_cache
+        current_month = timezone.localdate().replace(day=1)
+        obj._sales_target_cache = SalesTarget.objects.filter(
+            user=obj.owner,
+            month=current_month,
+        ).first()
+        return obj._sales_target_cache
+
+    def get_target(self, obj):
+        target = self.get_target_obj(obj)
+        return target.target if target else None
+
+    def get_converted_count(self, obj):
+        if hasattr(obj, "_converted_count_cache"):
+            return obj._converted_count_cache
+        current_month = timezone.localdate().replace(day=1)
+        if current_month.month == 12:
+            next_month = current_month.replace(year=current_month.year + 1, month=1, day=1)
+        else:
+            next_month = current_month.replace(month=current_month.month + 1, day=1)
+        obj._converted_count_cache = Visit.objects.filter(
+            customer__dataset__owner=obj.owner,
+            status=Visit.STATUS_CONVERTED,
+            visit_date__gte=current_month,
+            visit_date__lt=next_month,
+        ).count()
+        return obj._converted_count_cache
+
+    def get_remaining_target(self, obj):
+        target = self.get_target_obj(obj)
+        if not target:
+            return None
+        return max(target.target - self.get_converted_count(obj), 0)
 
 
 class CustomerRecordSerializer(serializers.ModelSerializer):
@@ -71,6 +113,42 @@ class ReminderSerializer(serializers.ModelSerializer):
     def validate_reminder_at(self, value):
         if value <= timezone.now():
             raise serializers.ValidationError("Choose a future date and time.")
+        return value
+
+
+class AssignedTaskSerializer(serializers.ModelSerializer):
+    assignee_username = serializers.CharField(source="assignee.username", read_only=True)
+    assigned_by_username = serializers.CharField(source="assigned_by.username", read_only=True, allow_null=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = AssignedTask
+        fields = [
+            "id",
+            "assignee",
+            "assignee_username",
+            "assigned_by_username",
+            "title",
+            "note",
+            "due_at",
+            "status",
+            "status_label",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "assignee_username",
+            "assigned_by_username",
+            "status_label",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate_title(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Enter a task.")
         return value
 
 

@@ -9,7 +9,7 @@ from django.utils.decorators import method_decorator
 from django.utils.dateparse import parse_date
 from django.views.decorators.csrf import csrf_protect
 from django.core.paginator import Paginator
-from django.db.models import Count, Prefetch, Sum
+from django.db.models import Count, Prefetch, Q, Sum
 from django.middleware.csrf import get_token
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -21,6 +21,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .api_serializers import (
+    AssignedTaskSerializer,
     CustomerRecordSerializer,
     DatasetListSerializer,
     ReminderSerializer,
@@ -38,7 +39,7 @@ from .forms import (
     save_visit_images,
     VisitForm,
 )
-from .models import CustomerRecord, Dataset, DatasetColumn, PushSubscription, Reminder, Visit, VisitImage
+from .models import AssignedTask, CustomerRecord, Dataset, DatasetColumn, PushSubscription, Reminder, SalesTarget, Visit, VisitImage
 from .views import (
     build_records_by_sheet,
     build_dataset_export_workbook,
@@ -682,6 +683,83 @@ class ReminderDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class AssignedTaskListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tasks = AssignedTask.objects.filter(assignee=request.user).select_related("assignee", "assigned_by")
+        return Response({"results": AssignedTaskSerializer(tasks, many=True).data})
+
+
+class AssignedTaskDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, task_id):
+        task = get_object_or_404(AssignedTask, pk=task_id, assignee=request.user)
+        status_value = request.data.get("status")
+        if status_value not in dict(AssignedTask.STATUS_CHOICES):
+            return Response({"detail": "Choose a valid task status."}, status=status.HTTP_400_BAD_REQUEST)
+        task.status = status_value
+        task.save(update_fields=["status", "updated_at"])
+        return Response(AssignedTaskSerializer(task).data)
+
+
+class AdminTaskView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def check_admin(self, request):
+        if not admin_only(request):
+            return Response({"detail": "Administrator access required."}, status=status.HTTP_403_FORBIDDEN)
+        return None
+
+    def get(self, request):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
+        tasks = AssignedTask.objects.select_related("assignee", "assigned_by")
+        user_id = request.query_params.get("userId")
+        if user_id:
+            tasks = tasks.filter(assignee_id=user_id)
+        return Response({"results": AssignedTaskSerializer(tasks, many=True).data})
+
+    def post(self, request):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
+        assignee_id = request.data.get("assignee")
+        assignee = get_object_or_404(User, pk=assignee_id)
+        if assignee.is_staff or assignee.is_superuser:
+            return Response(
+                {"detail": "Tasks can only be assigned to normal users."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = AssignedTaskSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        task = serializer.save(assigned_by=request.user)
+        return Response(AssignedTaskSerializer(task).data, status=status.HTTP_201_CREATED)
+
+
+class AdminTaskDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def check_admin(self, request):
+        if not admin_only(request):
+            return Response({"detail": "Administrator access required."}, status=status.HTTP_403_FORBIDDEN)
+        return None
+
+    def patch(self, request, task_id):
+        denied = self.check_admin(request)
+        if denied:
+            return denied
+        task = get_object_or_404(AssignedTask, pk=task_id)
+        serializer = AssignedTaskSerializer(task, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response({"errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        task = serializer.save()
+        return Response(AssignedTaskSerializer(task).data)
+
+
 class SalesSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -696,6 +774,179 @@ class SalesSummaryView(APIView):
         })
 
 
+def get_sales_target_percentage(target):
+    if target.month.month == 12:
+        next_month = target.month.replace(year=target.month.year + 1, month=1, day=1)
+    else:
+        next_month = target.month.replace(month=target.month.month + 1, day=1)
+
+    converted_count = Visit.objects.filter(
+        Q(customer__dataset__owner=target.user) | Q(manual_client__owner=target.user),
+        status=Visit.STATUS_CONVERTED,
+        visit_date__gte=target.month,
+        visit_date__lt=next_month,
+    ).count()
+    percentage = round((converted_count / target.target) * 100) if target.target else 0
+
+    return converted_count, percentage
+
+
+def get_sales_target_payload(target):
+    converted_count, percentage = get_sales_target_percentage(target)
+    if percentage <= 30:
+        status_color = "danger"
+    elif percentage <= 70:
+        status_color = "primary"
+    else:
+        status_color = "success"
+
+    low_target_count = 0
+    for user_target in target.user.sales_targets.all():
+        target_percentage = percentage if user_target.pk == target.pk else get_sales_target_percentage(user_target)[1]
+        if target_percentage <= 30:
+            low_target_count += 1
+
+    return {
+        "id": target.id,
+        "userId": target.user_id,
+        "username": target.user.username,
+        "month": target.month.isoformat()[:7],
+        "monthLabel": target.month.strftime("%B %Y"),
+        "datasetId": None,
+        "datasetName": "",
+        "target": target.target,
+        "converted": converted_count,
+        "percentage": percentage,
+        "statusColor": status_color,
+        "lowTargetCount": low_target_count,
+        "needsWarning": low_target_count >= 3,
+        "warningMessage": (
+            f"{target.user.username} has already failed to achieve at least 30% of the assigned target "
+            f"{low_target_count} times. Schedule a meeting and review this user's continuation."
+            if low_target_count >= 3
+            else ""
+        ),
+    }
+
+
+class UserTargetListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        targets = SalesTarget.objects.filter(user=request.user).select_related("user")
+        return Response({
+            "results": [
+                get_sales_target_payload(target)
+                for target in targets
+            ]
+        })
+
+
+class AdminTargetView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def dispatch(self, request, *args, **kwargs):
+        if not admin_only(request):
+            return Response(
+                {"detail": "Administrator access required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().dispatch(request, *args, **kwargs)
+
+    def post(self, request):
+        user_id = request.data.get("userId")
+        month_value = request.data.get("month")
+        target_value = request.data.get("target")
+
+        if not month_value:
+            return Response(
+                {"detail": "Select a month for this target."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not user_id:
+            return Response(
+                {"detail": "Select a sales user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = get_object_or_404(User, pk=user_id)
+        target_month = parse_date(f"{month_value}-01" if len(str(month_value)) == 7 else str(month_value))
+        if not target_month:
+            return Response(
+                {"detail": "Choose a valid target month."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        target_month = target_month.replace(day=1)
+
+        # Admin users cannot receive a sales target.
+        if user.is_staff or user.is_superuser:
+            return Response(
+                {"detail": "Targets can only be assigned to sales users."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            target_value = int(target_value)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Target must be a positive whole number."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if target_value <= 0:
+            return Response(
+                {"detail": "Target must be greater than zero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target, created = SalesTarget.objects.update_or_create(
+            user=user,
+            month=target_month,
+            defaults={"target": target_value, "dataset": None},
+        )
+
+        return Response(get_sales_target_payload(target), status=status.HTTP_200_OK)
+
+    def get(self, request):
+        targets = (
+            SalesTarget.objects
+            .select_related("user")
+            .prefetch_related("user__sales_targets")
+        )
+
+        return Response([
+            get_sales_target_payload(target)
+            for target in targets
+        ])
+
+    def patch(self, request, target_id):
+        target = get_object_or_404(
+            SalesTarget,
+            pk=target_id,
+        )
+
+        target_value = request.data.get("target")
+
+        try:
+            target_value = int(target_value)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Target must be a positive whole number."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if target_value <= 0:
+            return Response(
+                {"detail": "Target must be greater than zero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target.target = target_value
+        target.save(update_fields=["target"])
+
+        target = SalesTarget.objects.select_related("user").prefetch_related("user__sales_targets").get(pk=target.pk)
+        return Response(get_sales_target_payload(target))
 class AdminSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 

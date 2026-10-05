@@ -7,10 +7,10 @@
   "scope": "/",
   "display": "standalone",
   "background_color": "#f4f6fb",
-  "theme_color": "#2563eb",
+  "theme_color": "#b8d1ec",
   "icons": [
     {
-      "src": "/static/images/customer-crm.svg",
+      "src": "/static/images/customer-crm.svg?v=2",
       "sizes": "192x192 512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"

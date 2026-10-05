@@ -101,6 +101,15 @@ export const remindersApi = {
   removePush: (endpoint, csrfToken) => apiClient.delete("/push/subscriptions/", { ...csrfHeaders(csrfToken), data: { endpoint } }),
 };
 
+export const tasksApi = {
+  list: () => apiClient.get("/tasks/"),
+  update: (taskId, payload, csrfToken) => apiClient.patch(`/tasks/${taskId}/`, payload, csrfHeaders(csrfToken)),
+};
+
+export const targetsApi = {
+  list: () => apiClient.get("/targets/"),
+};
+
 export const salesApi = {
   list: (params = {}) => apiClient.get("/sales/visits/", { params }),
   summary: () => apiClient.get("/sales/summary/"),
@@ -127,4 +136,21 @@ export const adminApi = {
   update: (userId, payload, csrfToken) => apiClient.patch(`/admin/users/${userId}/`, payload, csrfHeaders(csrfToken)),
   action: (userId, action, payload, csrfToken) => apiClient.post(`/admin/users/${userId}/${action}/`, payload, csrfHeaders(csrfToken)),
   datasets: (userId) => apiClient.get(`/admin/users/${userId}/datasets/`),
+  tasks: (params = {}) => apiClient.get("/admin/tasks/", { params }),
+  createTask: (payload, csrfToken) => apiClient.post("/admin/tasks/", payload, csrfHeaders(csrfToken)),
+  updateTask: (taskId, payload, csrfToken) => apiClient.patch(`/admin/tasks/${taskId}/`, payload, csrfHeaders(csrfToken)),
+  targets: (params = {}) => apiClient.get("/admin/targets/", { params }),
+  saveTarget: (payload, csrfToken) =>
+    apiClient.post(
+      "/admin/targets/",
+      payload,
+      csrfHeaders(csrfToken)
+    ),
+
+  updateTarget: (targetId, payload, csrfToken) =>
+    apiClient.patch(
+      `/admin/targets/${targetId}/`,
+      payload,
+      csrfHeaders(csrfToken)
+    ),
 };

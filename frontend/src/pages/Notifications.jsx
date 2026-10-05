@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { remindersApi } from "../services/api.js";
+import { remindersApi, tasksApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
 
@@ -25,6 +25,7 @@ function decodeApplicationKey(value) {
 export default function Notifications() {
   const { csrfToken } = useAuth();
   const [reminders, setReminders] = useState(null);
+  const [tasks, setTasks] = useState(null);
   const [values, setValues] = useState({ text: "", date: "", time: "" });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -40,13 +41,20 @@ export default function Notifications() {
   const minTime = values.date === today ? localTimeValue(new Date(now.getTime() + 60_000)) : undefined;
   const dueReminders = reminders?.filter((reminder) => new Date(reminder.reminder_at).getTime() <= Date.now()) || [];
   const upcomingReminders = reminders?.filter((reminder) => new Date(reminder.reminder_at).getTime() > Date.now()) || [];
+  const pendingTasks = tasks?.filter((task) => task.status === "pending") || [];
+  const completedTasks = tasks?.filter((task) => task.status === "done") || [];
 
   const loadReminders = () => remindersApi.list()
     .then(({ data }) => setReminders(data.results))
     .catch(() => setError("Unable to load reminders."));
 
+  const loadTasks = () => tasksApi.list()
+    .then(({ data }) => setTasks(data.results))
+    .catch(() => setError("Unable to load assigned tasks."));
+
   useEffect(() => {
     loadReminders();
+    loadTasks();
     const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
     setPushSupported(supported);
     if (!supported) return;
@@ -174,9 +182,22 @@ export default function Notifications() {
     }
   };
 
+  const completeTask = async (taskId) => {
+    setError("");
+    setMessage("");
+    try {
+      await tasksApi.update(taskId, { status: "done" }, csrfToken);
+      setMessage("Task marked as completed.");
+      await loadTasks();
+      window.dispatchEvent(new Event("crm:tasks-updated"));
+    } catch {
+      setError("Unable to update task.");
+    }
+  };
+
   return <>
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active" aria-current="page">Notifications</li></ol></nav>
-    <div className="page-header mb-4"><div><div className="eyebrow">Reminders</div><h1 className="h2 mb-2">Notifications</h1><p className="text-secondary mb-0">Set reminders for upcoming tasks.</p></div></div>
+    <div className="page-header mb-4"><div><div className="eyebrow">Notifications</div><h1 className="h2 mb-2">Notifications</h1><p className="text-secondary mb-0">Set reminders and review tasks assigned by admin.</p></div></div>
 
     {error && <div className="alert alert-danger" role="alert">{error}</div>}
     <TimedAlert message={message} />
@@ -189,6 +210,56 @@ export default function Notifications() {
         <div className="col-sm-6 col-lg-4"><label className="form-label" htmlFor="reminder-time">Time</label><input id="reminder-time" className="form-control" type="time" min={minTime} value={values.time} onChange={(event) => setValues((current) => ({ ...current, time: event.target.value }))} required /></div>
         <div className="col-lg-4 d-flex flex-wrap gap-2"><button className="btn btn-primary" type="submit" disabled={saving}><i className={`bi ${editingReminder ? "bi-check-lg" : "bi-bell"} me-1`} />{saving ? "Saving..." : editingReminder ? "Save Changes" : "Set Reminder"}</button>{editingReminder && <button className="btn btn-outline-secondary" type="button" onClick={cancelEdit}>Cancel</button>}</div>
       </form>
+    </section>
+
+    <section className="panel mb-4">
+      <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <h2 className="h5 mb-0">Task notifications</h2>
+        {pendingTasks.length > 0 ? (
+          <span className="badge text-bg-danger">
+            <i className="bi bi-bell-fill me-1" />
+            {pendingTasks.length} new
+          </span>
+        ) : (
+          <span className="badge text-bg-light">No new tasks</span>
+        )}
+      </div>
+      {tasks === null ? <div className="text-secondary">Loading assigned tasks...</div> : tasks.length ? (
+        <div className="list-group list-group-flush">
+          {pendingTasks.map((task) => (
+            <div className="list-group-item px-0 py-3 d-flex flex-wrap justify-content-between align-items-start gap-3" key={task.id}>
+              <div className="min-w-0">
+                <div className="fw-semibold">
+                  <span className="badge text-bg-danger me-2">New</span>
+                  {task.title}
+                </div>
+                {task.note && <div className="text-secondary small mt-1">{task.note}</div>}
+                <div className="text-secondary small mt-1">
+                  {task.assigned_by_username ? `Assigned by ${task.assigned_by_username}` : "Assigned by admin"}
+                  {task.due_at ? ` · Due ${formatReminderDate(task.due_at)}` : ""}
+                </div>
+              </div>
+              <button className="btn btn-outline-success btn-sm" type="button" onClick={() => completeTask(task.id)}>
+                <i className="bi bi-check2 me-1" />
+                Mark Done
+              </button>
+            </div>
+          ))}
+          {completedTasks.map((task) => (
+            <div className="list-group-item px-0 py-3 d-flex flex-wrap justify-content-between align-items-start gap-3" key={task.id}>
+              <div className="min-w-0">
+                <div className="fw-semibold text-secondary">{task.title}</div>
+                {task.note && <div className="text-secondary small mt-1">{task.note}</div>}
+                <div className="text-secondary small mt-1">
+                  Completed
+                  {task.due_at ? ` · Due ${formatReminderDate(task.due_at)}` : " · No deadline"}
+                </div>
+              </div>
+              <span className="badge text-bg-success">Completed</span>
+            </div>
+          ))}
+        </div>
+      ) : <div className="empty-state text-center"><h3 className="h5">No assigned tasks</h3><p className="text-secondary mb-0">Tasks assigned by admin will appear here.</p></div>}
     </section>
 
     <section className="panel">

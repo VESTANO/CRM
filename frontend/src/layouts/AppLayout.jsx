@@ -1,18 +1,50 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Offcanvas } from "bootstrap";
 import { useAuth } from "../hooks/useAuth.jsx";
+import { tasksApi } from "../services/api.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
   { to: "/datasets", label: "Customer Lists", icon: "bi-people" },
   { to: "/sales", label: "Sales", icon: "bi-briefcase" },
   { to: "/import", label: "Import Excel", icon: "bi-cloud-arrow-up" },
-  { to: "/notifications", label: "Reminder", icon: "bi-alarm" },
+  { to: "/notifications", label: "Notifications", icon: "bi-bell" },
+  { to: "/reports", label: "Reports", icon: "bi-bar-chart-line" },
 ];
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
+  const [pendingTaskCount, setPendingTaskCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
   const roleLabel = user?.is_admin ? "Admin" : "User";
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadPendingTasks = () => {
+      tasksApi.list()
+        .then(({ data }) => {
+          if (!isMounted) return;
+          setPendingTaskCount(data.results.filter((task) => task.status === "pending").length);
+        })
+        .catch(() => {
+          if (isMounted) setPendingTaskCount(0);
+        });
+    };
+
+    loadPendingTasks();
+    const intervalId = window.setInterval(loadPendingTasks, 30000);
+    window.addEventListener("crm:tasks-updated", loadPendingTasks);
+    window.addEventListener("focus", loadPendingTasks);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("crm:tasks-updated", loadPendingTasks);
+      window.removeEventListener("focus", loadPendingTasks);
+    };
+  }, []);
 
   return (
     <>
@@ -35,7 +67,7 @@ export default function AppLayout() {
             <span className="brand-mark">C</span>
             <span>Customer CRM</span>
           </NavLink>
-          <Navigation user={user} />
+          <Navigation user={user} pendingTaskCount={pendingTaskCount} />
         </div>
         <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} />
       </aside>
@@ -46,7 +78,7 @@ export default function AppLayout() {
           <button type="button" className="btn-close" data-bs-dismiss="offcanvas" aria-label="Close" />
         </div>
         <div className="offcanvas-body d-flex flex-column">
-          <Navigation user={user} mobile />
+          <Navigation user={user} mobile pendingTaskCount={pendingTaskCount} />
           <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} mobile />
         </div>
       </div>
@@ -60,7 +92,22 @@ export default function AppLayout() {
   );
 }
 
-function Navigation({ user, mobile = false }) {
+function Navigation({ user, mobile = false, pendingTaskCount = 0 }) {
+  const navigate = useNavigate();
+
+  const handleNavigation = (event, path) => {
+    if (!mobile) return;
+
+    event.preventDefault();
+    const menu = document.getElementById("mobileNav");
+    menu.addEventListener("hidden.bs.offcanvas", () => {
+      document.querySelectorAll(".offcanvas-backdrop").forEach((backdrop) => backdrop.remove());
+      document.body.classList.remove("modal-open");
+      navigate(path);
+    }, { once: true });
+    Offcanvas.getOrCreateInstance(menu).hide();
+  };
+
   return (
     <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>
       {navItems.map((item) => (
@@ -72,12 +119,15 @@ function Navigation({ user, mobile = false }) {
         ) : (
           <NavLink
             key={item.to}
-            className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
+            className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""} ${item.to === "/notifications" && pendingTaskCount > 0 ? "has-alert" : ""}`}
             to={item.to}
-            data-bs-dismiss={mobile ? "offcanvas" : undefined}
+            onClick={(event) => handleNavigation(event, item.to)}
           >
             <i className={`bi ${item.icon}`} />
             <span>{item.label}</span>
+            {item.to === "/notifications" && pendingTaskCount > 0 && (
+              <span className="sidebar-alert-badge ms-auto">{pendingTaskCount}</span>
+            )}
           </NavLink>
         )
       ))}
@@ -85,7 +135,7 @@ function Navigation({ user, mobile = false }) {
         <NavLink
           className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
           to="/admin-panel"
-          data-bs-dismiss={mobile ? "offcanvas" : undefined}
+          onClick={(event) => handleNavigation(event, "/admin-panel")}
         >
           <i className="bi bi-shield-lock" />
           <span>Admin Panel</span>

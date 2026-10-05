@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { datasetsApi } from "../services/api.js";
+import { datasetsApi, targetsApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDateTime } from "../utils/formatters.js";
+import AnimatedNumber from "../components/AnimatedNumber.jsx";
 
 export default function DatasetList() {
   const { user } = useAuth();
   const [datasets, setDatasets] = useState(null);
+  const [targets, setTargets] = useState(null);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const showOwner = Boolean(user?.is_admin);
@@ -14,9 +16,11 @@ export default function DatasetList() {
   const visibleDatasets = datasets?.slice((page - 1) * 5, page * 5) || [];
 
   useEffect(() => {
-    datasetsApi
-      .list()
-      .then(({ data }) => setDatasets(data.results))
+    Promise.all([datasetsApi.list(), targetsApi.list()])
+      .then(([datasetsResponse, targetsResponse]) => {
+        setDatasets(datasetsResponse.data.results);
+        setTargets(targetsResponse.data.results);
+      })
       .catch(() => setError("Unable to load customer lists."));
   }, []);
 
@@ -41,49 +45,86 @@ export default function DatasetList() {
         <Link className="btn btn-primary" to="/import"><i className="bi bi-plus-lg me-1" />Import Excel</Link>
       </div>
 
+      {targets?.length > 0 && (
+        <section className="panel mb-4">
+          <h2 className="h5 mb-1">Monthly Targets</h2>
+          <p className="text-secondary small mb-3">Targets are based on converted sales visits for each assigned month.</p>
+          <div className="d-grid gap-3">
+            {targets.map((target) => (
+              <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 border-top pt-3" key={target.id}>
+                <div>
+                  <div className="fw-semibold">{target.monthLabel}</div>
+                  <div className="text-secondary small">{target.converted} of {target.target} converted ({target.percentage}%)</div>
+                </div>
+                <div className="d-flex flex-wrap gap-2">
+                  <span className={`badge text-bg-${target.statusColor}`}>Target: <AnimatedNumber value={target.target} /></span>
+                  <span className="badge text-bg-success">Converted: <AnimatedNumber value={target.converted} /></span>
+                  <span className={`badge text-bg-${target.target - target.converted > 0 ? "warning" : "success"}`}>
+                    Remaining: <AnimatedNumber value={Math.max(target.target - target.converted, 0)} />
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {targets?.length === 0 && datasets !== null && (
+        <section className="panel mb-4">
+          <div className="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+              <h2 className="h5 mb-1">Monthly Targets</h2>
+              <p className="text-secondary small mb-0">No monthly targets have been assigned yet.</p>
+            </div>
+          </div>
+        </section>
+      )}
+
       {datasets === null ? (
         <div className="panel">Loading customer lists...</div>
       ) : datasets.length ? (
-        <div className="table-responsive panel p-0 responsive-table">
-          <table className="table table-hover align-middle mb-0">
-            <thead className="table-light">
-              <tr>
-                <th scope="col">Dataset</th>
-                {showOwner && <th scope="col">Owner</th>}
-                <th scope="col">File</th>
-                <th scope="col">Customers</th>
-                <th scope="col">Uploaded</th>
-                <th scope="col">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleDatasets.map((dataset) => (
-                <tr key={dataset.id}>
-                  <td data-label="Dataset">
-                    <div className="fw-semibold">{dataset.name}</div>
-                  </td>
-                  {showOwner && <td data-label="Owner">{dataset.owner_username}</td>}
-                  <td className="text-secondary" data-label="File">{dataset.original_filename}</td>
-                  <td data-label="Customers"><span className="badge text-bg-light">{dataset.customer_count}</span></td>
-                  <td data-label="Uploaded">{formatDateTime(dataset.uploaded_at)}</td>
-                  <td data-label="Actions">
-                    <div className="btn-group btn-group-sm dataset-actions" role="group" aria-label="Dataset actions">
-                      <Link className="btn btn-outline-primary" to={`/datasets/${dataset.id}`}>
-                        <i className="bi bi-box-arrow-up-right me-1" />Open
-                      </Link>
-                      <Link className="btn btn-outline-secondary" to={`/datasets/${dataset.id}/rename`}>
-                        <i className="bi bi-pencil me-1" />Rename
-                      </Link>
-                      <Link className="btn btn-outline-danger" to={`/datasets/${dataset.id}/delete`}>
-                        <i className="bi bi-trash me-1" />Delete
-                      </Link>
-                    </div>
-                  </td>
+        <>
+          <div className="table-responsive panel p-0 responsive-table">
+            <table className="table table-hover align-middle mb-0">
+              <thead className="table-light">
+                <tr>
+                  <th scope="col">Dataset</th>
+                  {showOwner && <th scope="col">Owner</th>}
+                  <th scope="col">File</th>
+                  <th scope="col">Customers</th>
+                  <th scope="col">Uploaded</th>
+                  <th scope="col">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {visibleDatasets.map((dataset) => (
+                  <tr key={dataset.id}>
+                    <td data-label="Dataset">
+                      <div className="fw-semibold">{dataset.name}</div>
+                    </td>
+                    {showOwner && <td data-label="Owner">{dataset.owner_username}</td>}
+                    <td className="text-secondary" data-label="File">{dataset.original_filename}</td>
+                    <td data-label="Customers"><span className="badge text-bg-light"><AnimatedNumber value={dataset.customer_count} /></span></td>
+                    <td data-label="Uploaded">{formatDateTime(dataset.uploaded_at)}</td>
+                    <td data-label="Actions">
+                      <div className="btn-group btn-group-sm dataset-actions" role="group" aria-label="Dataset actions">
+                        <Link className="btn btn-outline-primary" to={`/datasets/${dataset.id}`}>
+                          <i className="bi bi-box-arrow-up-right me-1" />Open
+                        </Link>
+                        <Link className="btn btn-outline-secondary" to={`/datasets/${dataset.id}/rename`}>
+                          <i className="bi bi-pencil me-1" />Rename
+                        </Link>
+                        <Link className="btn btn-outline-danger" to={`/datasets/${dataset.id}/delete`}>
+                          <i className="bi bi-trash me-1" />Delete
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       ) : (
         <div className="empty-state">
           <p className="mb-3">No customer datasets have been created yet.</p>

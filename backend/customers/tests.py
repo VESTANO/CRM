@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 from openpyxl import Workbook, load_workbook
 
-from .models import CustomerRecord, Dataset, DatasetColumn, ManualClient, Reminder, Visit
+from .models import AssignedTask, CustomerRecord, Dataset, DatasetColumn, ManualClient, Reminder, SalesTarget, Visit
 
 
 class ExcelInspectionTests(TestCase):
@@ -1598,6 +1598,72 @@ class APIFoundationTests(TestCase):
         reminder.refresh_from_db()
         self.assertEqual(reminder.text, "Edited reminder")
 
+    def test_admin_can_assign_task_and_user_can_list_it(self):
+        self.client.force_login(self.admin)
+        due_at = timezone.now() + timedelta(days=1)
+
+        response = self.client.post(
+            reverse("customers_api:admin_task_list"),
+            data=json.dumps({
+                "assignee": self.user_one.id,
+                "title": "Call converted leads",
+                "note": "Check the hottest customers first.",
+                "due_at": due_at.isoformat(),
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["title"], "Call converted leads")
+        self.assertEqual(response.json()["assignee_username"], "apiuserone")
+
+        self.client.force_login(self.user_one)
+        list_response = self.client.get(reverse("customers_api:task_list"))
+
+        self.assertEqual(list_response.status_code, 200)
+        tasks = list_response.json()["results"]
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["title"], "Call converted leads")
+        self.assertEqual(tasks[0]["assigned_by_username"], "apiadmin")
+
+    def test_user_can_only_update_own_task_status(self):
+        own_task = AssignedTask.objects.create(
+            assignee=self.user_one,
+            assigned_by=self.admin,
+            title="Own task",
+        )
+        other_task = AssignedTask.objects.create(
+            assignee=self.user_two,
+            assigned_by=self.admin,
+            title="Other task",
+        )
+        self.client.force_login(self.user_one)
+
+        response = self.client.patch(
+            reverse("customers_api:task_detail", args=[own_task.id]),
+            data=json.dumps({"status": "done"}),
+            content_type="application/json",
+        )
+        denied = self.client.patch(
+            reverse("customers_api:task_detail", args=[other_task.id]),
+            data=json.dumps({"status": "done"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(denied.status_code, 404)
+        own_task.refresh_from_db()
+        other_task.refresh_from_db()
+        self.assertEqual(own_task.status, "done")
+        self.assertEqual(other_task.status, "pending")
+
+    def test_normal_user_cannot_access_admin_tasks_api(self):
+        self.client.force_login(self.user_one)
+
+        response = self.client.get(reverse("customers_api:admin_task_list"))
+
+        self.assertEqual(response.status_code, 403)
+
     def test_react_login_api_rejects_invalid_and_inactive_users(self):
         self.client.logout()
         response = self.client.post(
@@ -1646,6 +1712,28 @@ class APIFoundationTests(TestCase):
         dataset_names = [dataset["name"] for dataset in response.json()["results"]]
         self.assertIn("API User One Customers", dataset_names)
         self.assertIn("API User Two Customers", dataset_names)
+
+    def test_dataset_api_includes_assigned_target_and_remaining_count(self):
+        record = self.user_one_dataset.records.get()
+        SalesTarget.objects.create(user=self.user_one, month=timezone.localdate().replace(day=1), target=10)
+        for index in range(3):
+            Visit.objects.create(
+                customer=record,
+                visit_date=timezone.localdate(),
+                meeting_time=time(10 + index, 0),
+                location="Kochi",
+                expense=Decimal("0.00"),
+                status=Visit.STATUS_CONVERTED,
+            )
+        self.client.force_login(self.user_one)
+
+        response = self.client.get(reverse("customers_api:dataset_list"))
+
+        self.assertEqual(response.status_code, 200)
+        dataset = response.json()["results"][0]
+        self.assertEqual(dataset["target"], 10)
+        self.assertEqual(dataset["converted_count"], 3)
+        self.assertEqual(dataset["remaining_target"], 7)
 
     def test_dataset_detail_api_blocks_other_users_dataset(self):
         self.client.force_login(self.user_one)
@@ -2049,6 +2137,129 @@ class APIFoundationTests(TestCase):
         self.assertEqual(self.client.get(reverse("customers_api:admin_summary")).status_code, 200)
         self.client.force_login(self.user_one)
         self.assertEqual(self.client.get(reverse("customers_api:admin_summary")).status_code, 403)
+
+    def test_admin_target_api_assigns_target_and_reports_progress_warning(self):
+        today = timezone.localdate()
+        month = today.replace(day=1)
+        previous_month = (month - timedelta(days=1)).replace(day=1)
+        older_month = (previous_month - timedelta(days=1)).replace(day=1)
+        record = self.user_one_dataset.records.get()
+
+        SalesTarget.objects.create(user=self.user_one, month=previous_month, target=10)
+        SalesTarget.objects.create(user=self.user_one, month=older_month, target=10)
+        for index in range(3):
+            Visit.objects.create(
+                customer=record,
+                visit_date=today,
+                meeting_time=time(10 + index, 0),
+                location="Kochi",
+                expense=Decimal("0.00"),
+                status=Visit.STATUS_CONVERTED,
+            )
+
+        self.client.force_login(self.admin)
+        create_response = self.client.post(
+            reverse("customers_api:admin-targets"),
+            data=json.dumps({
+                "userId": self.user_one.id,
+                "month": month.isoformat()[:7],
+                "target": 10,
+            }),
+            content_type="application/json",
+        )
+        list_response = self.client.get(reverse("customers_api:admin-targets"))
+
+        self.assertEqual(create_response.status_code, 200)
+        payload = next(
+            item for item in list_response.json()
+            if item["month"] == month.isoformat()[:7]
+        )
+        self.assertEqual(payload["userId"], self.user_one.id)
+        self.assertEqual(payload["month"], month.isoformat()[:7])
+        self.assertEqual(payload["monthLabel"], month.strftime("%B %Y"))
+        self.assertEqual(payload["target"], 10)
+        self.assertEqual(payload["converted"], 3)
+        self.assertEqual(payload["percentage"], 30)
+        self.assertEqual(payload["statusColor"], "danger")
+        self.assertEqual(payload["lowTargetCount"], 3)
+        self.assertTrue(payload["needsWarning"])
+        self.assertIn("failed to achieve at least 30%", payload["warningMessage"])
+
+    def test_admin_target_api_assigns_target_to_selected_user_month(self):
+        self.client.force_login(self.admin)
+        month = timezone.localdate().replace(day=1)
+
+        create_response = self.client.post(
+            reverse("customers_api:admin-targets"),
+            data=json.dumps({
+                "userId": self.user_two.id,
+                "month": month.isoformat()[:7],
+                "target": 15,
+            }),
+            content_type="application/json",
+        )
+        list_response = self.client.get(reverse("customers_api:admin-targets"))
+
+        self.assertEqual(create_response.status_code, 200)
+        self.assertEqual(create_response.json()["month"], month.isoformat()[:7])
+        self.assertEqual(create_response.json()["monthLabel"], month.strftime("%B %Y"))
+        self.assertEqual(len(list_response.json()), 1)
+        self.assertEqual(list_response.json()[0]["userId"], self.user_two.id)
+
+    def test_admin_target_api_rejects_invalid_month(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("customers_api:admin-targets"),
+            data=json.dumps({
+                "userId": self.user_one.id,
+                "month": "not-a-month",
+                "target": 15,
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_target_api_lists_only_user_monthly_targets(self):
+        current_month = timezone.localdate().replace(day=1)
+        previous_month = (current_month - timedelta(days=1)).replace(day=1)
+        next_month = (
+            current_month.replace(year=current_month.year + 1, month=1, day=1)
+            if current_month.month == 12
+            else current_month.replace(month=current_month.month + 1, day=1)
+        )
+        SalesTarget.objects.create(user=self.user_one, month=previous_month, target=5)
+        SalesTarget.objects.create(user=self.user_one, month=current_month, target=10)
+        SalesTarget.objects.create(user=self.user_one, month=next_month, target=15)
+        SalesTarget.objects.create(user=self.user_two, month=current_month, target=99)
+        self.client.force_login(self.user_one)
+
+        response = self.client.get(reverse("customers_api:target_list"))
+
+        self.assertEqual(response.status_code, 200)
+        targets = response.json()["results"]
+        self.assertEqual(len(targets), 3)
+        self.assertEqual(
+            {target["month"] for target in targets},
+            {
+                previous_month.isoformat()[:7],
+                current_month.isoformat()[:7],
+                next_month.isoformat()[:7],
+            },
+        )
+        self.assertNotIn(99, {target["target"] for target in targets})
+
+    def test_admin_user_datasets_api_is_not_captured_by_action_route(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(
+            reverse("customers_api:admin_user_datasets", args=[self.user_one.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"]["id"], self.user_one.id)
+        self.assertEqual(len(response.json()["results"]), 1)
 
 
 def import_dataset(client, dataset_name, filename, headers, rows):

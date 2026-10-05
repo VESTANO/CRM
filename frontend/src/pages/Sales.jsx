@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { salesApi } from "../services/api.js";
 import { formatDate, formatCurrency } from "../utils/formatters.js";
+import AnimatedNumber from "../components/AnimatedNumber.jsx";
 
 const statuses = [
   ["healthy", "Healthy"],
@@ -64,7 +65,7 @@ export default function Sales() {
   return <>
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active">Sales</li></ol></nav>
     <div className="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4"><div><div className="eyebrow">Sales</div><h1 className="h2 mb-2">Client Visits</h1><p className="text-secondary mb-0">Manage client visits for customers in accessible datasets.</p></div><Link className="btn btn-primary" to="/sales/visits/add"><i className="bi bi-plus-lg me-1" />Add Client Visit</Link></div>
-    {summary && <div className="metric-grid mb-4">{[["Total Visits", summary.totalVisits, "bi-calendar2-check"],["Today's Visits", summary.todaysVisits, "bi-calendar-day"],["This Month", summary.monthVisits, "bi-calendar3"],["Visit Expenses", formatCurrency(summary.totalVisitExpenses), "bi-cash-stack"]].map(([label,value,icon]) => <div className="summary-card" key={label}><span className="metric-icon"><i className={`bi ${icon}`} /></span><div className="text-secondary small">{label}</div><div className="summary-value">{value}</div></div>)}</div>}
+    {summary && <div className="metric-grid mb-4">{[["Total Visits", summary.totalVisits, "bi-calendar2-check"],["Today's Visits", summary.todaysVisits, "bi-calendar-day"],["This Month", summary.monthVisits, "bi-calendar3"],["Visit Expenses", formatCurrency(summary.totalVisitExpenses), "bi-cash-stack"]].map(([label,value,icon]) => <div className="summary-card" key={label}><span className="metric-icon"><i className={`bi ${icon}`} /></span><div className="text-secondary small">{label}</div><div className={`summary-value ${label === "Visit Expenses" ? "summary-value-currency" : ""}`}><AnimatedNumber value={value} /></div></div>)}</div>}
 
     <form className="panel mb-4" onSubmit={applyFilters}>
       <div className="row g-3 align-items-end">
@@ -73,7 +74,7 @@ export default function Sales() {
         <div className="col-sm-6 col-lg-3"><label className="form-label" htmlFor="visit-date-to">To date</label><input className="form-control" id="visit-date-to" type="date" name="date_to" value={filters.date_to} onChange={changeFilter} /></div>
         <div className="col-sm-6 col-lg-2 d-flex gap-2"><button className="btn btn-primary" type="submit">Filter</button>{filtersActive && <Link className="btn btn-outline-secondary" to="/sales">Clear</Link>}</div>
       </div>
-      {filtersActive && <p className="text-secondary small mb-0 mt-3">Showing {visits.length} matching visits.</p>}
+      {filtersActive && <p className="text-secondary small mb-0 mt-3">Showing <AnimatedNumber value={visits.length} /> matching visits.</p>}
     </form>
 
     {visits.length ? <>

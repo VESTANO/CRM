@@ -236,6 +236,41 @@ class Reminder(models.Model):
         return self.reminder_at <= timezone.now()
 
 
+class AssignedTask(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_DONE = "done"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_DONE, "Done"),
+    ]
+
+    assignee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="assigned_tasks",
+    )
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="created_tasks",
+        blank=True,
+        null=True,
+    )
+    title = models.CharField(max_length=255)
+    note = models.TextField(blank=True)
+    due_at = models.DateTimeField(blank=True, null=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["status", "due_at", "-created_at"]
+
+    def __str__(self):
+        return f"{self.title} -> {self.assignee}"
+
+
 class PushSubscription(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -258,3 +293,30 @@ def delete_visit_image_file(sender, instance, **kwargs):
         storage = instance.image.storage
         image_name = instance.image.name
         transaction.on_commit(lambda: storage.delete(image_name))
+class SalesTarget(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sales_targets",
+    )
+    dataset = models.ForeignKey(
+        Dataset,
+        on_delete=models.CASCADE,
+        related_name="sales_targets",
+        blank=True,
+        null=True,
+    )
+    month = models.DateField()
+    target = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ["-month", "user__username"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "month"],
+                name="unique_sales_target_user_month",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.month:%B %Y} - {self.target}"
