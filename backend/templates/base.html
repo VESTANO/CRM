@@ -31,7 +31,8 @@
               <a class="sidebar-link {% if current_url == 'dataset_list' or current_url == 'dataset_detail' %}active{% endif %}" href="{% url 'customers:dataset_list' %}"><i class="bi bi-people"></i><span>Customer Lists</span></a>
               <a class="sidebar-link {% if current_url == 'sales_list' or current_url == 'visit_add' or current_url == 'visit_detail' or current_url == 'visit_edit' or current_url == 'visit_delete' %}active{% endif %}" href="{% url 'customers:sales_list' %}"><i class="bi bi-briefcase"></i><span>Sales</span></a>
               <a class="sidebar-link {% if current_url == 'import_excel' %}active{% endif %}" href="{% url 'customers:import_excel' %}"><i class="bi bi-cloud-arrow-up"></i><span>Import Excel</span></a>
-              <a class="sidebar-link {% if current_url == 'notifications' %}active{% endif %}" href="{% url 'customers:notifications' %}"><i class="bi bi-alarm"></i><span>Reminder</span></a>
+              <a class="sidebar-link {% if current_url == 'reminders' %}active{% endif %}" href="{% url 'customers:reminders' %}"><i class="bi bi-alarm"></i><span>Reminders</span></a>
+              <a class="sidebar-link {% if current_url == 'notifications' %}active{% endif %}" href="{% url 'customers:notifications' %}"><i class="bi bi-bell"></i><span>Notifications</span></a>
               {% if request.user.is_staff or request.user.is_superuser %}
                 <a class="sidebar-link {% if current_url == 'admin_panel' or current_url == 'admin_user_add' or current_url == 'admin_user_detail' or current_url == 'admin_user_edit' or current_url == 'admin_user_password' or current_url == 'admin_user_datasets' %}active{% endif %}" href="{% url 'customers:admin_panel' %}"><i class="bi bi-shield-lock"></i><span>Admin Panel</span></a>
               {% endif %}
@@ -64,7 +65,8 @@
               <a class="sidebar-link {% if current_url == 'dataset_list' or current_url == 'dataset_detail' %}active{% endif %}" href="{% url 'customers:dataset_list' %}"><i class="bi bi-people"></i><span>Customer Lists</span></a>
               <a class="sidebar-link {% if current_url == 'sales_list' or current_url == 'visit_add' or current_url == 'visit_detail' or current_url == 'visit_edit' or current_url == 'visit_delete' %}active{% endif %}" href="{% url 'customers:sales_list' %}"><i class="bi bi-briefcase"></i><span>Sales</span></a>
               <a class="sidebar-link {% if current_url == 'import_excel' %}active{% endif %}" href="{% url 'customers:import_excel' %}"><i class="bi bi-cloud-arrow-up"></i><span>Import Excel</span></a>
-              <a class="sidebar-link {% if current_url == 'notifications' %}active{% endif %}" href="{% url 'customers:notifications' %}"><i class="bi bi-alarm"></i><span>Reminder</span></a>
+              <a class="sidebar-link {% if current_url == 'reminders' %}active{% endif %}" href="{% url 'customers:reminders' %}"><i class="bi bi-alarm"></i><span>Reminders</span></a>
+              <a class="sidebar-link {% if current_url == 'notifications' %}active{% endif %}" href="{% url 'customers:notifications' %}"><i class="bi bi-bell"></i><span>Notifications</span></a>
               {% if request.user.is_staff or request.user.is_superuser %}
                 <a class="sidebar-link {% if current_url == 'admin_panel' or current_url == 'admin_user_add' or current_url == 'admin_user_detail' or current_url == 'admin_user_edit' or current_url == 'admin_user_password' or current_url == 'admin_user_datasets' %}active{% endif %}" href="{% url 'customers:admin_panel' %}"><i class="bi bi-shield-lock"></i><span>Admin Panel</span></a>
               {% endif %}

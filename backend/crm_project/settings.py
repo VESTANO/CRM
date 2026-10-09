@@ -106,6 +106,14 @@ MEDIA_ROOT = BASE_DIR / "media"
 WEBPUSH_VAPID_PUBLIC_KEY = os.environ.get("WEBPUSH_VAPID_PUBLIC_KEY", "")
 WEBPUSH_VAPID_PRIVATE_KEY = os.environ.get("WEBPUSH_VAPID_PRIVATE_KEY", "")
 WEBPUSH_VAPID_SUBJECT = os.environ.get("WEBPUSH_VAPID_SUBJECT", "mailto:admin@example.com")
+QZ_TRAY_CERTIFICATE_PATH = Path(os.environ.get(
+    "QZ_TRAY_CERTIFICATE_PATH",
+    BASE_DIR / "tmp" / "qz-tray" / "digital-certificate.txt",
+))
+QZ_TRAY_PRIVATE_KEY_PATH = Path(os.environ.get(
+    "QZ_TRAY_PRIVATE_KEY_PATH",
+    BASE_DIR / "tmp" / "qz-tray" / "private-key.pem",
+))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

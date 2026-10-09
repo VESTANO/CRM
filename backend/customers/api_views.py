@@ -1,5 +1,6 @@
 import io
 import mimetypes
+import base64
 import zipfile
 
 from django.contrib.auth import authenticate, login, logout
@@ -19,6 +20,8 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from .api_serializers import (
     AssignedTaskSerializer,
@@ -131,6 +134,49 @@ class LogoutView(APIView):
     def post(self, request):
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class QzCertificateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        certificate_path = settings.QZ_TRAY_CERTIFICATE_PATH
+        if not certificate_path.exists():
+            return Response(
+                {"detail": "QZ Tray certificate is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return HttpResponse(certificate_path.read_text(encoding="utf-8"), content_type="text/plain")
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class QzSignatureView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        message = request.data.get("request", "")
+        private_key_path = settings.QZ_TRAY_PRIVATE_KEY_PATH
+        if not message:
+            return Response(
+                {"detail": "Missing QZ request to sign."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not private_key_path.exists():
+            return Response(
+                {"detail": "QZ Tray private key is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        private_key = serialization.load_pem_private_key(
+            private_key_path.read_bytes(),
+            password=None,
+        )
+        signature = private_key.sign(
+            message.encode("utf-8"),
+            padding.PKCS1v15(),
+            hashes.SHA512(),
+        )
+        return Response({"signature": base64.b64encode(signature).decode("ascii")})
 
 
 class DashboardView(APIView):

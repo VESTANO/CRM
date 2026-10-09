@@ -1580,11 +1580,11 @@ class APIFoundationTests(TestCase):
             text="Original reminder",
             reminder_at=timezone.now() + timedelta(days=1),
         )
-        edit_page = self.client.get(reverse("customers:notifications"), {"edit": reminder.id})
+        edit_page = self.client.get(reverse("customers:reminders"), {"edit": reminder.id})
         self.assertContains(edit_page, "Edit reminder")
         target = timezone.localtime(timezone.now() + timedelta(days=3))
         response = self.client.post(
-            reverse("customers:notifications"),
+            reverse("customers:reminders"),
             {
                 "action": "update",
                 "reminder_id": reminder.id,
@@ -1594,7 +1594,7 @@ class APIFoundationTests(TestCase):
             },
         )
 
-        self.assertRedirects(response, reverse("customers:notifications"))
+        self.assertRedirects(response, reverse("customers:reminders"))
         reminder.refresh_from_db()
         self.assertEqual(reminder.text, "Edited reminder")
 

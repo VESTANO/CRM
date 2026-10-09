@@ -9,8 +9,10 @@ const navItems = [
   { to: "/datasets", label: "Customer Lists", icon: "bi-people" },
   { to: "/sales", label: "Sales", icon: "bi-briefcase" },
   { to: "/import", label: "Import Excel", icon: "bi-cloud-arrow-up" },
+  { to: "/reminders", label: "Reminders", icon: "bi-alarm" },
   { to: "/notifications", label: "Notifications", icon: "bi-bell" },
   { to: "/reports", label: "Reports", icon: "bi-bar-chart-line" },
+  { to: "/bill-print", label: "Bill Print", icon: "bi-printer" },
 ];
 
 export default function AppLayout() {

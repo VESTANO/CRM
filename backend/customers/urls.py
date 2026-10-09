@@ -27,6 +27,7 @@ urlpatterns = [
         name="admin_user_datasets",
     ),
     path("sales/", views.sales_list, name="sales_list"),
+    path("reminders/", views.reminders, name="reminders"),
     path("notifications/", views.notifications, name="notifications"),
     path("sales/clients/", views.sales_clients, name="sales_clients"),
     path("sales/visits/add/", views.visit_add, name="visit_add"),

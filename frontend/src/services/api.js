@@ -91,10 +91,10 @@ export const importApi = {
 };
 
 export const remindersApi = {
-  list: () => apiClient.get("/notifications/"),
-  create: (payload, csrfToken) => apiClient.post("/notifications/", payload, csrfHeaders(csrfToken)),
-  update: (reminderId, payload, csrfToken) => apiClient.patch(`/notifications/${reminderId}/`, payload, csrfHeaders(csrfToken)),
-  remove: (reminderId, csrfToken) => apiClient.delete(`/notifications/${reminderId}/`, csrfHeaders(csrfToken)),
+  list: () => apiClient.get("/reminders/"),
+  create: (payload, csrfToken) => apiClient.post("/reminders/", payload, csrfHeaders(csrfToken)),
+  update: (reminderId, payload, csrfToken) => apiClient.patch(`/reminders/${reminderId}/`, payload, csrfHeaders(csrfToken)),
+  remove: (reminderId, csrfToken) => apiClient.delete(`/reminders/${reminderId}/`, csrfHeaders(csrfToken)),
   pushConfig: () => apiClient.get("/push/config/"),
   pushStatus: () => apiClient.get("/push/subscriptions/"),
   subscribePush: (subscription, csrfToken) => apiClient.post("/push/subscriptions/", subscription, csrfHeaders(csrfToken)),

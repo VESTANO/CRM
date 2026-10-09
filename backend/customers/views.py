@@ -33,7 +33,7 @@ from .forms import (
     save_visit_images,
     VisitForm,
 )
-from .models import CustomerRecord, Dataset, DatasetColumn, ManualClient, Reminder, Visit
+from .models import AssignedTask, CustomerRecord, Dataset, DatasetColumn, ManualClient, Reminder, Visit
 
 
 EMAIL_PATTERN = re.compile(r"([A-Z0-9._%+-]+)@([A-Z0-9.-]+\.[A-Z]{2,})", re.IGNORECASE)
@@ -138,7 +138,7 @@ def sales_list(request):
 
 
 @login_required
-def notifications(request):
+def reminders(request):
     editing_reminder = None
     edit_id = request.GET.get("edit", "") if request.method == "GET" else (
         request.POST.get("reminder_id", "") if request.POST.get("action") == "update" else ""
@@ -153,7 +153,7 @@ def notifications(request):
     if request.method == "POST":
         action = request.POST.get("action", "create")
         if action == "cancel_edit":
-            return redirect("customers:notifications")
+            return redirect("customers:reminders")
         if action == "delete":
             try:
                 reminder_id = int(request.POST.get("reminder_id", ""))
@@ -162,7 +162,7 @@ def notifications(request):
             if reminder_id is not None:
                 Reminder.objects.filter(pk=reminder_id, owner=request.user).delete()
             messages.success(request, "Reminder removed.")
-            return redirect("customers:notifications")
+            return redirect("customers:reminders")
         if form.is_valid():
             if action == "update":
                 try:
@@ -175,7 +175,7 @@ def notifications(request):
             else:
                 form.save(request.user)
                 messages.success(request, "Reminder set successfully.")
-            return redirect("customers:notifications")
+            return redirect("customers:reminders")
 
     now = timezone.localtime()
     reminders = list(Reminder.objects.filter(owner=request.user))
@@ -183,7 +183,7 @@ def notifications(request):
     upcoming_reminders = [reminder for reminder in reminders if not reminder.is_due]
     return render(
         request,
-        "customers/notifications.html",
+        "customers/reminders.html",
         {
             "form": form,
             "editing_reminder": editing_reminder,
@@ -192,6 +192,36 @@ def notifications(request):
             "upcoming_reminders": upcoming_reminders,
             "today": now.date().isoformat(),
             "current_time": now.strftime("%H:%M"),
+        },
+    )
+
+
+@login_required
+def notifications(request):
+    if request.method == "GET" and ("reminder" in request.GET or "edit" in request.GET):
+        query = request.META.get("QUERY_STRING", "")
+        target = "customers:reminders"
+        if query:
+            return redirect(f"{redirect(target).url}?{query}")
+        return redirect(target)
+
+    if request.method == "POST" and request.POST.get("action") == "complete_task":
+        task_id = request.POST.get("task_id", "")
+        if task_id.isdigit():
+            AssignedTask.objects.filter(pk=task_id, assignee=request.user).update(status=AssignedTask.STATUS_DONE)
+            messages.success(request, "Task marked as completed.")
+        return redirect("customers:notifications")
+
+    tasks = list(AssignedTask.objects.filter(assignee=request.user).select_related("assigned_by"))
+    pending_tasks = [task for task in tasks if task.status == AssignedTask.STATUS_PENDING]
+    completed_tasks = [task for task in tasks if task.status == AssignedTask.STATUS_DONE]
+    return render(
+        request,
+        "customers/notifications.html",
+        {
+            "tasks": tasks,
+            "pending_tasks": pending_tasks,
+            "completed_tasks": completed_tasks,
         },
     )
 

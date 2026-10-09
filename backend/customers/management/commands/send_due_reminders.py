@@ -46,7 +46,7 @@ class Command(BaseCommand):
             payload = json.dumps({
                 "title": "Customer CRM | Reminder",
                 "body": f"{reminder.text} ({reminder_time})",
-                "url": f"/notifications/?reminder={reminder.pk}#reminder-{reminder.pk}",
+                "url": f"/reminders/?reminder={reminder.pk}#reminder-{reminder.pk}",
                 "tag": f"crm-reminder-{reminder.pk}",
                 "reminderId": reminder.pk,
             })

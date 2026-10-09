@@ -12,13 +12,13 @@ self.addEventListener("push", (event) => {
     badge: "/static/images/customer-crm.svg",
     tag: payload.tag || (payload.reminderId ? `crm-reminder-${payload.reminderId}` : "crm-reminder"),
     renotify: false,
-    data: { url: payload.url || "/notifications/" },
+    data: { url: payload.url || "/reminders/" },
   }));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = new URL(event.notification.data?.url || "/notifications/", self.location.origin).href;
+  const target = new URL(event.notification.data?.url || "/reminders/", self.location.origin).href;
   event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
     const existing = windows.find((client) => client.url.startsWith(self.location.origin));
     if (existing) {

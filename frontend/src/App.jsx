@@ -12,7 +12,9 @@ import DatasetList from "./pages/DatasetList.jsx";
 import DatasetManagement from "./pages/DatasetManagement.jsx";
 import ImportExcel from "./pages/ImportExcel.jsx";
 import Notifications from "./pages/Notifications.jsx";
+import Reminders from "./pages/Reminders.jsx";
 import Reports from "./pages/Reports.jsx";
+import BillPrint from "./pages/BillPrint.jsx";
 import Login from "./pages/Login.jsx";
 import Sales from "./pages/Sales.jsx";
 import VisitForm from "./pages/VisitForm.jsx";
@@ -51,8 +53,10 @@ export default function App() {
             <Route path="customers" element={<DatasetList />} />
             <Route path="customers/:id" element={<CustomerDetail />} />
             <Route path="import" element={<ImportExcel />} />
+            <Route path="reminders" element={<Reminders />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="bill-print" element={<BillPrint />} />
             <Route path="sales" element={<Sales />} />
             <Route path="sales/visits/add" element={<VisitForm />} />
             <Route path="sales/visits/:visitId" element={<VisitDetail />} />
