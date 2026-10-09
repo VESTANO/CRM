@@ -134,6 +134,17 @@ export function calculateDraftTotal(draft) {
   return Math.max(quantity * unitPrice + tax - discount, 0).toFixed(2);
 }
 
+export function isLikelyBillPrinter(printerName) {
+  const normalizedName = normalizeValue(printerName).toLowerCase();
+  return normalizedName.includes("essae") || normalizedName.includes("pr-55") || normalizedName.includes("pr55");
+}
+
+export function suggestedBillPrinter(printers) {
+  return printers.find((printer) => printer === BILL_PRINTER_NAME)
+    || printers.find((printer) => isLikelyBillPrinter(printer))
+    || "";
+}
+
 function escapeHtml(value) {
   return normalizeValue(value)
     .replace(/&/g, "&amp;")
@@ -209,8 +220,18 @@ export async function findBillPrinter() {
   return qz.printers.find(BILL_PRINTER_NAME);
 }
 
-export async function printBill(bill) {
-  const printer = await findBillPrinter();
+export async function listPrinters() {
+  await ensureConnected();
+  const printers = await qz.printers.find();
+  return Array.isArray(printers) ? printers : [printers].filter(Boolean);
+}
+
+export async function printBill(bill, printerName = BILL_PRINTER_NAME) {
+  const requestedPrinter = normalizeValue(printerName);
+  if (!requestedPrinter) {
+    throw new Error("Select a printer before printing.");
+  }
+  const printer = await qz.printers.find(requestedPrinter);
   const config = qz.configs.create(printer, {
     jobName: `${bill.reference} Bill`,
     units: "mm",

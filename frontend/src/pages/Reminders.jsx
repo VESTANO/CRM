@@ -37,6 +37,7 @@ export default function Reminders() {
   const [editingReminder, setEditingReminder] = useState(null);
   const [nowTick, setNowTick] = useState(Date.now());
   const notifiedDueReminders = useRef(new Set());
+  const initializedDueReminders = useRef(false);
   const now = new Date(nowTick);
   const today = localDateValue(now);
   const minTime = values.date === today ? localTimeValue(new Date(now.getTime() + 60_000)) : undefined;
@@ -71,6 +72,12 @@ export default function Reminders() {
   }, []);
 
   useEffect(() => {
+    if (reminders === null) return;
+    if (!initializedDueReminders.current) {
+      dueReminders.forEach((reminder) => notifiedDueReminders.current.add(reminder.id));
+      initializedDueReminders.current = true;
+      return;
+    }
     if (!dueReminders.length) return;
     const newlyDue = dueReminders.filter((reminder) => !notifiedDueReminders.current.has(reminder.id));
     if (!newlyDue.length) return;
