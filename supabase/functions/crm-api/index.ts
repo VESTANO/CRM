@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { matchAttendanceProfile } from "../_shared/attendance-identity.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -375,6 +376,37 @@ async function authenticate(request: Request): Promise<Context> {
   return { user: authData.user, profile };
 }
 
+async function startAttendanceSession(ctx: Context) {
+  const url = Deno.env.get("ATTENDANCE_SUPABASE_URL") || "https://lorrfeyiqgdfxdjqnpmn.supabase.co";
+  const key = Deno.env.get("ATTENDANCE_SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!key) fail(503, "Attendance single login needs server configuration. Ask an administrator to configure the attendance connection.");
+  const attendance = createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+  });
+  const username = String(ctx.profile.employee_id || "").trim();
+  if (!username) fail(403, "Your CRM account has no username to match with attendance.");
+  // Escape LIKE metacharacters: a username must never match other employees.
+  const pattern = username.replace(/[\\%_]/g, "\\$&");
+  const [{ data: crmProfiles, error: crmError }, { data: profiles, error: profileError }] = await Promise.all([
+    adminClient.from("profiles").select("id,employee_id,active").ilike("employee_id", pattern).limit(2),
+    attendance.from("profiles").select("id,employee_id,email,active").ilike("employee_id", pattern).limit(2),
+  ]);
+  checkDb(crmError); checkDb(profileError);
+  const crmMatch = matchAttendanceProfile(username, crmProfiles || []);
+  if (!crmMatch || crmMatch.id !== ctx.user.id) fail(403, "Your CRM username is ambiguous. Ask an administrator to make it unique.");
+  const profile = matchAttendanceProfile(username, profiles || []);
+  if (!profile) fail(403, "No unique active attendance account matches your CRM username. Ask an administrator to make the CRM username and attendance employee ID match.");
+  const { data: account, error: accountError } = await attendance.auth.admin.getUserById(profile.id);
+  if (accountError || !account.user?.email) fail(403, "The matching attendance account needs an administrator to correct its login details.");
+  const { data: generated, error: generateError } = await attendance.auth.admin.generateLink({ type: "magiclink", email: account.user.email });
+  if (generateError || generated.user?.id !== profile.id || !generated.properties?.hashed_token) fail(503, "Unable to open attendance. Try again shortly.");
+  const { data: verified, error: verifyError } = await attendance.auth.verifyOtp({ token_hash: generated.properties.hashed_token, type: "email" });
+  if (verifyError || !verified.session || verified.user?.id !== profile.id) fail(503, "Unable to open attendance. Try again shortly.");
+  const response = json(200, { access_token: verified.session.access_token, refresh_token: verified.session.refresh_token });
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
 function userPayload(profile: any, extras: any = {}) {
   const role = String(profile.role || "employee");
   const admin = isAdminRole(role);
@@ -733,6 +765,7 @@ async function serializeVisit(visit: any, includeFields = false) {
       return await Promise.all((r.data || []).map(async (item: any) => {
         const signed = await adminClient.storage.from("crm-visit-images").createSignedUrl(item.storage_path, 3600);
         checkDb(signed.error);
+        if (!signed.data) fail(502, "Unable to create the visit image URL.");
         return { id: item.id, url: signed.data.signedUrl, original_name: item.original_name, uploaded_at: item.uploaded_at };
       }));
     }),
@@ -1073,10 +1106,14 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
     };
     if (previous?.manual_client_id) {
       const { data, error } = await adminClient.from("crm_manual_clients").update(clientValues).eq("id", previous.manual_client_id).select("id").single();
-      checkDb(error); manualClientId = data.id;
+      checkDb(error);
+      if (!data) fail(502, "Unable to save the client.");
+      manualClientId = data.id;
     } else {
       const { data, error } = await adminClient.from("crm_manual_clients").insert(clientValues).select("id").single();
-      checkDb(error); manualClientId = data.id;
+      checkDb(error);
+      if (!data) fail(502, "Unable to save the client.");
+      manualClientId = data.id;
     }
   } else {
     const dataset = await accessibleDataset(ctx, body.dataset);
@@ -1135,7 +1172,7 @@ async function createImportedDataset(ctx: Context, body: any) {
   const inspection = body.inspection || {};
   if (!datasetName || datasetName.length > 255) fail(400, "Enter a dataset name up to 255 characters.", { errors: { dataset_name: ["Enter a dataset name up to 255 characters."] } });
   if (!Array.isArray(inspection.sheets) || !inspection.sheets.length) fail(400, "No workbook sheets were found.");
-  const filename = valueString(inspection.filename || body.filename || "workbook.xlsx").split(/[\\/]/).pop().slice(0, 255);
+  const filename = (valueString(inspection.filename || body.filename || "workbook.xlsx").split(/[\\/]/).pop() || "workbook.xlsx").slice(0, 255);
   const { data: dataset, error: datasetError } = await adminClient.from("crm_datasets").insert({
     owner_id: ctx.user.id, name: datasetName, original_filename: filename,
   }).select("*").single();
@@ -1455,13 +1492,40 @@ async function adminUserById(id: string) {
 async function handleAdmin(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any) {
   requireAdmin(ctx);
   if (parts[1] === "summary" && method === "GET") {
-    const [profiles, datasets, customers] = await Promise.all([
+    const [profiles, datasets, customers, authUsers] = await Promise.all([
       fetchAll(() => adminClient.from("profiles").select("*").order("employee_id")),
       accessibleDatasets(ctx),
-      fetchAll(() => adminClient.from("crm_customer_records").select("id")),
+      fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id")),
+      allAuthUsers(),
     ]);
-    const userRows = await Promise.all(profiles.map(profileWithCounts));
-    return json(200, {
+    // Build all user and dataset counts from the three bulk queries above.
+    // The former implementation made two extra database requests per user,
+    // then repeated those requests for the recent-users section.
+    const profilesById = new Map(profiles.map((profile: any) => [profile.id, profile]));
+    const accountCreatedAt = new Map(authUsers.map((account: any) => [account.id, account.created_at]));
+    const datasetCounts = new Map<string, number>();
+    const customerCountsByDataset = new Map<number, number>();
+    const customerCountsByUser = new Map<string, number>();
+    for (const dataset of datasets) datasetCounts.set(dataset.owner_id, (datasetCounts.get(dataset.owner_id) || 0) + 1);
+    for (const customer of customers) customerCountsByDataset.set(customer.dataset_id, (customerCountsByDataset.get(customer.dataset_id) || 0) + 1);
+    for (const dataset of datasets) {
+      customerCountsByUser.set(dataset.owner_id, (customerCountsByUser.get(dataset.owner_id) || 0) + (customerCountsByDataset.get(dataset.id) || 0));
+    }
+    const userRows = profiles.map((profile: any) => userPayload(profile, {
+      dataset_count: datasetCounts.get(profile.id) || 0,
+      customer_count: customerCountsByUser.get(profile.id) || 0,
+      // Profile timestamps may be retained from the old CRM migration. The
+      // authentication account timestamp is the real CRM-account creation
+      // time used by the admin table and "Recently created users" list.
+      date_joined: accountCreatedAt.get(profile.id) || profile.created_at,
+    }));
+    const recentDatasets = datasets.slice(0, 5).map((dataset: any) => ({
+      id: dataset.id,
+      name: dataset.name,
+      owner_username: profilesById.get(dataset.owner_id)?.employee_id || profilesById.get(dataset.owner_id)?.name || "Unknown user",
+      customer_count: customerCountsByDataset.get(dataset.id) || 0,
+    }));
+    const response = json(200, {
       metrics: {
         totalUsers: profiles.length,
         activeUsers: profiles.filter((item: any) => item.active).length,
@@ -1469,9 +1533,12 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         totalCustomers: customers.length,
       },
       users: userRows,
-      recentDatasets: await Promise.all(datasets.slice(0, 5).map(serializeDataset)),
-      recentUsers: await Promise.all([...profiles].sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 5).map(profileWithCounts)),
+      recentDatasets,
+      recentUsers: [...userRows].sort((a: any, b: any) => String(b.date_joined).localeCompare(String(a.date_joined))).slice(0, 5),
     });
+    // Admin dashboards must always reflect account changes made moments ago.
+    response.headers.set("Cache-Control", "no-store, max-age=0");
+    return response;
   }
   if (parts[1] === "users") {
     if (parts.length === 2 && method === "GET") {
@@ -1497,6 +1564,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         user_metadata: { employee_id: username, name: username },
       });
       checkDb(createError);
+      if (!created.user) fail(502, "Unable to create the user account.");
       let { data: profile, error: readError } = await adminClient.from("profiles").select("*").eq("id", created.user.id).maybeSingle();
       checkDb(readError);
       if (!profile) {
@@ -1519,6 +1587,9 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         const email = body.email === undefined ? target.email : valueString(body.email).toLowerCase();
         const active = body.is_active === undefined ? target.active : Boolean(body.is_active);
         if (!username || username.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "Enter a valid username and email.", { errors: { username: ["Enter a valid username and email."], email: ["Enter a valid username and email."] } });
+        const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).neq("id", target.id).maybeSingle();
+        checkDb(duplicate.error);
+        if (duplicate.data) fail(400, "A user with that username or email already exists.", { errors: { username: ["A user with that username or email already exists."], email: ["A user with that username or email already exists."] } });
         if (email !== target.email) {
           const { error } = await adminClient.auth.admin.updateUserById(target.id, { email, email_confirm: true });
           checkDb(error);
@@ -1818,6 +1889,9 @@ Deno.serve(async (request: Request) => {
       return await migrateLegacyData(request, body);
     }
     const ctx = await authenticate(request);
+    if (request.method === "POST" && apiPath.replace(/^\/+|\/+$/g, "") === "auth/attendance-session") {
+      return await startAttendanceSession(ctx);
+    }
     const { values, files } = await requestBody(request);
     return await routeApi(ctx, request, apiPath, queryParams(url), values, files);
   } catch (error) {

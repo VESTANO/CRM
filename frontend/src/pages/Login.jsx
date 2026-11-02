@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import PasswordInput from "../components/PasswordInput.jsx";
+import { dashboardApi, targetsApi } from "../services/api.js";
 
 export default function Login() {
   const { isAuthenticated, login } = useAuth();
@@ -9,7 +10,6 @@ export default function Login() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
 
   if (isAuthenticated) return <Navigate to="/dashboard" replace />;
 
@@ -19,7 +19,21 @@ export default function Login() {
     setIsSubmitting(true);
     try {
       await login(form);
-      navigate(location.state?.from?.pathname || "/dashboard", { replace: true });
+      // Keep the user on the sign-in screen while the first dashboard request
+      // finishes, then open an already-populated CRM dashboard.
+      const [dashboardResponse, targetsResponse] = await Promise.all([
+        dashboardApi.summary(),
+        targetsApi.list(),
+      ]);
+      // A CRM sign-in always begins at the CRM dashboard. Attendance is an
+      // optional workspace reached from the sidebar after sign-in.
+      navigate("/dashboard", {
+        replace: true,
+        state: {
+          preloadedDashboard: dashboardResponse.data,
+          preloadedTargets: targetsResponse.data.results,
+        },
+      });
     } catch (err) {
       setError(err.response?.data?.detail || "Invalid username or password.");
     } finally {
@@ -50,7 +64,7 @@ export default function Login() {
           <div className="login-card-mark">V</div>
           <div className="eyebrow">WELCOME BACK</div>
           <h1>Sign in</h1>
-          <p className="login-intro">Use your CRM username or email to continue.</p>
+          <p className="login-intro">Sign in once for CRM and attendance.</p>
 
           {error && <div className="alert alert-danger" role="alert">{error}</div>}
 

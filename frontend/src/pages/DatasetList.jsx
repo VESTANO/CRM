@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { datasetsApi, targetsApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
+import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
 export default function DatasetList() {
   const { user } = useAuth();
@@ -15,7 +16,7 @@ export default function DatasetList() {
   const pageCount = Math.ceil((datasets?.length || 0) / 5);
   const visibleDatasets = datasets?.slice((page - 1) * 5, page * 5) || [];
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([datasetsApi.list(), targetsApi.list()])
       .then(([datasetsResponse, targetsResponse]) => {
         setDatasets(datasetsResponse.data.results);
@@ -24,8 +25,10 @@ export default function DatasetList() {
       .catch(() => setError("Unable to load customer lists."));
   }, []);
 
+  useEffect(() => { load(); }, [load]);
+
   if (error) {
-    return <div className="alert alert-danger">{error}</div>;
+    return <RequestError message={error} onRetry={load} />;
   }
 
   return (
@@ -81,7 +84,7 @@ export default function DatasetList() {
       )}
 
       {datasets === null ? (
-        <div className="panel">Loading customer lists...</div>
+        <LoadingPanel label="Loading customer lists" />
       ) : datasets.length ? (
         <>
           <div className="table-responsive panel p-0 responsive-table">

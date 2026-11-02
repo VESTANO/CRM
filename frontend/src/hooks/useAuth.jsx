@@ -2,7 +2,17 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authApi } from "../services/api.js";
 import { crmSupabase } from "../services/crmSupabase.js";
 
+import { attendanceSupabase, runAttendanceAuthTask } from "../services/attendanceSupabase.js";
+
 const AuthContext = createContext(null);
+const AUTH_TIMEOUT_MS = 15_000;
+
+function withTimeout(promise) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => window.setTimeout(() => reject(new Error("CRM session check timed out.")), AUTH_TIMEOUT_MS)),
+  ]);
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -10,11 +20,15 @@ export function AuthProvider({ children }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshSession = async () => {
-    const { data } = await authApi.session();
-    setUser(data.user);
-    setCsrfToken(data.csrfToken || "");
-    setIsLoading(false);
-    return data;
+    try {
+      const { data } = await withTimeout(authApi.session());
+      setUser(data.user);
+      setCsrfToken(data.csrfToken || "");
+      return data;
+    } finally {
+      // Route guards must always resolve, including when Supabase is offline.
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -22,7 +36,10 @@ export function AuthProvider({ children }) {
       setUser(null);
       setIsLoading(false);
     });
-    const expireSession = () => { setUser(null); setCsrfToken(""); };
+    const expireSession = () => {
+      setUser(null); setCsrfToken("");
+      runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" })).catch(() => {});
+    };
     window.addEventListener("crm:session-expired", expireSession);
     const { data: authListener } = crmSupabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT" || !session) {

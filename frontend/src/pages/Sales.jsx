@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { salesApi } from "../services/api.js";
 import { formatDate, formatCurrency } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
+import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
 const statuses = [
   ["healthy", "Healthy"],
@@ -21,7 +22,7 @@ export default function Sales() {
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
 
-  useEffect(() => {
+  const loadVisits = useCallback(() => {
     const params = new URLSearchParams(filterKey);
     setFilters({
       status: params.get("status") || "",
@@ -35,6 +36,8 @@ export default function Sales() {
       .then((response) => setVisits(response.data.results))
       .catch(() => setError("Unable to load client visits."));
   }, [filterKey]);
+
+  useEffect(() => { loadVisits(); }, [loadVisits]);
 
   useEffect(() => {
     salesApi.summary()
@@ -71,13 +74,13 @@ export default function Sales() {
   const filtersActive = Boolean(filterKey);
   const pageCount = Math.ceil((visits?.length || 0) / 5);
   const visibleVisits = visits?.slice((page - 1) * 5, page * 5) || [];
-  if (error) return <div className="alert alert-danger">{error}</div>;
-  if (!visits) return <div className="panel">Loading client visits...</div>;
+  if (error) return <RequestError message={error} onRetry={loadVisits} />;
+  if (!visits) return <LoadingPanel label="Loading client visits" />;
 
   return <>
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active">Sales</li></ol></nav>
     <div className="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4"><div><div className="eyebrow">Sales</div><h1 className="h2 mb-2">Client Visits</h1><p className="text-secondary mb-0">Manage client visits for customers in accessible datasets.</p></div><Link className="btn btn-primary" to="/sales/visits/add"><i className="bi bi-plus-lg me-1" />Add Client Visit</Link></div>
-    {summary && <div className="metric-grid mb-4">{[["Total Visits", summary.totalVisits, "bi-calendar2-check"],["Today's Visits", summary.todaysVisits, "bi-calendar-day"],["This Month", summary.monthVisits, "bi-calendar3"],["Visit Expenses", formatCurrency(summary.totalVisitExpenses), "bi-cash-stack"]].map(([label,value,icon]) => <div className="summary-card" key={label}><span className="metric-icon"><i className={`bi ${icon}`} /></span><div className="text-secondary small">{label}</div><div className={`summary-value ${label === "Visit Expenses" ? "summary-value-currency" : ""}`}><AnimatedNumber value={value} /></div></div>)}</div>}
+    {summary && <div className="metric-grid mb-4">{[["Total Visits", summary.totalVisits, "bi-calendar2-check"],["Today's Visits", summary.todaysVisits, "bi-calendar-day"],["This Month", summary.monthVisits, "bi-calendar3"],["Visit Expenses", formatCurrency(summary.totalVisitExpenses), "bi-cash-stack"]].map(([label,value,icon]) => <div className={`summary-card ${label === "Visit Expenses" ? "sales-expense-card" : ""}`} key={label}><span className="metric-icon"><i className={`bi ${icon}`} /></span><div className="text-secondary small">{label}</div><div className={`summary-value ${label === "Visit Expenses" ? "summary-value-currency" : ""}`}><AnimatedNumber value={value} /></div></div>)}</div>}
 
     <form className="panel mb-4" onSubmit={applyFilters}>
       <div className="row g-3 align-items-end">

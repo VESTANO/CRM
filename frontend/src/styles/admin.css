@@ -1,0 +1,169 @@
+/* Admin tables stay tables at every breakpoint. Keep scrolling inside the
+   panel instead of mixing the legacy mobile cards with table-cell layouts. */
+.app-main.is-admin .responsive-table {
+  background: #fff;
+  border: 1px solid var(--luxe-sand);
+  border-radius: 18px;
+  box-shadow: 0 8px 28px rgba(23, 43, 58, 0.045);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-main.is-admin .table-responsive {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  overscroll-behavior-x: contain;
+  scrollbar-width: auto;
+  scrollbar-color: var(--luxe-taupe) #f5f1e9;
+}
+
+.app-main.is-admin .table-responsive:focus-visible {
+  outline: 3px solid var(--luxe-wine);
+  outline-offset: -3px;
+}
+
+.app-main.is-admin .responsive-table .table-responsive > table {
+  display: table !important;
+  width: 100% !important;
+  min-width: 760px !important;
+  table-layout: auto !important;
+}
+
+.app-main.is-admin .responsive-table thead { display: table-header-group !important; }
+.app-main.is-admin .responsive-table tbody { display: table-row-group !important; }
+.app-main.is-admin .responsive-table tr {
+  display: table-row !important;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 0;
+}
+
+.app-main.is-admin .responsive-table .table > :not(caption) > * > * {
+  display: table-cell !important;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--luxe-sand);
+  text-align: left;
+  vertical-align: middle;
+  line-height: 1.5;
+  width: auto;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
+.app-main.is-admin .responsive-table tbody td::before { content: none; display: none; }
+.app-main.is-admin .responsive-table tbody td > * { max-width: none; }
+.app-main.is-admin .responsive-table tbody tr:last-child td { border-bottom: 0; }
+.app-main.is-admin .responsive-table thead th { white-space: nowrap; }
+.app-main.is-admin .responsive-table .badge { line-height: 1.4; white-space: nowrap; }
+
+.app-main.is-admin .responsive-table .table-responsive > .admin-users-table { min-width: 1560px !important; }
+.app-main.is-admin .admin-users-table th:nth-child(1) { min-width: 140px; }
+.app-main.is-admin .admin-users-table th:nth-child(2) { min-width: 165px; }
+.app-main.is-admin .admin-users-table th:nth-child(3) { min-width: 250px; }
+.app-main.is-admin .admin-users-table th:nth-child(4),
+.app-main.is-admin .admin-users-table th:nth-child(5) { min-width: 105px; }
+.app-main.is-admin .admin-users-table th:nth-child(6) { min-width: 240px; }
+.app-main.is-admin .admin-users-table th:nth-child(7) { min-width: 145px; }
+.app-main.is-admin .admin-users-table th:nth-child(8) { min-width: 200px; }
+.app-main.is-admin .admin-users-table th:nth-child(9) { min-width: 285px; }
+.app-main.is-admin .admin-users-table td:nth-child(3),
+.app-main.is-admin .admin-users-table td:nth-child(8) { white-space: nowrap; }
+
+.app-main.is-admin .responsive-table td[data-label="Actions"] .table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem !important;
+  width: 250px;
+  min-width: 250px;
+  max-width: none;
+  margin: 0;
+}
+
+.app-main.is-admin .responsive-table .table-actions .btn {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 36px;
+  margin: 0 !important;
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px !important;
+  white-space: nowrap;
+}
+
+.app-main.is-admin .responsive-table .table-responsive > .admin-tasks-table { min-width: 1060px !important; }
+.app-main.is-admin .admin-tasks-table th:nth-child(2),
+.app-main.is-admin .admin-tasks-table th:nth-child(3) { min-width: 260px; }
+.app-main.is-admin .admin-tasks-table td:nth-child(2),
+.app-main.is-admin .admin-tasks-table td:nth-child(3) { max-width: 380px; overflow-wrap: anywhere; }
+.app-main.is-admin .admin-tasks-table th:nth-child(4) { min-width: 200px; }
+.app-main.is-admin .admin-datasets-table th:first-child { min-width: 260px; }
+.app-main.is-admin .admin-datasets-table td:first-child { overflow-wrap: anywhere; }
+.app-main.is-admin .admin-datasets-table th:nth-child(3) { min-width: 200px; }
+.app-main.is-admin .admin-datasets-table th:last-child { min-width: 170px; }
+
+.app-main.is-admin .table-scroll-hint {
+  margin: 0;
+  padding: 0.25rem 1.25rem 1rem;
+  color: #405565;
+  font-size: 0.8rem;
+}
+
+.app-main.is-admin .table-pagination {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--luxe-sand);
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.app-main.is-admin .page-header { align-items: flex-start; }
+.app-main.is-admin .page-header:not(.d-flex) { display: block; }
+.app-main.is-admin .page-header > div:first-child { min-width: 0; }
+.app-main.is-admin .page-header > .btn { align-self: flex-start; flex-shrink: 0; }
+.app-main.is-admin .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  line-height: 1.4;
+  min-height: 42px;
+}
+.app-main.is-admin .btn > i { flex-shrink: 0; margin: 0 !important; }
+.app-main.is-admin .page-header .btn { white-space: nowrap; }
+.app-main.is-admin .admin-form-panel { max-width: 760px; }
+.app-main.is-admin .admin-form-panel .input-group { flex-wrap: nowrap; }
+.app-main.is-admin .admin-form-panel .input-group .form-control { border-left: 1px solid var(--luxe-sand); }
+.app-main.is-admin .admin-form-panel .input-group .btn { flex: 0 0 46px; }
+.app-main.is-admin .admin-form-panel .form-check { display: flex; align-items: center; gap: 0.75rem; padding-left: 0; }
+.app-main.is-admin .admin-form-panel .form-check-input { float: none; flex-shrink: 0; margin: 0; }
+.app-main.is-admin .content-wrap .admin-info-row {
+  --bs-gutter-y: 0;
+  margin-bottom: 1rem;
+  row-gap: 0.35rem;
+}
+.app-main.is-admin .admin-info-row dd { margin-bottom: 0; overflow-wrap: anywhere; }
+.app-main.is-admin .modal-body { padding: 1.5rem; }
+.app-main.is-admin .modal-footer { gap: 0.5rem; padding: 1rem 1.5rem; }
+.app-main.is-admin .modal-footer > * { margin: 0; }
+
+@media (max-width: 767.98px) {
+  .app-main.is-admin .page-header > .btn { margin-top: 1rem; }
+  .app-main.is-admin .page-header > .d-flex { align-items: stretch; }
+  .app-main.is-admin .responsive-table .table > :not(caption) > * > * { padding: 1rem 1.25rem; }
+  .app-main.is-admin .table-scroll-hint { display: block; }
+}
+
+@media (max-width: 991.98px) {
+  .app-main.is-admin .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 399.98px) {
+  .app-main.is-admin .workspace-breadcrumb > span:last-child { display: none; }
+  .app-main.is-admin .workspace-breadcrumb > i { display: none; }
+  .app-main.is-admin .page-header > .d-flex .btn,
+  .app-main.is-admin .admin-form-panel form > .d-flex .btn { flex: 1 1 100%; }
+}

@@ -96,7 +96,7 @@ export default function AdminUserDetail() {
 
 function Info({ label, value }) {
   return (
-    <dl className="row mb-2">
+    <dl className="row admin-info-row">
       <dt className="col-sm-4">{label}</dt>
       <dd className="col-sm-8">{value}</dd>
     </dl>

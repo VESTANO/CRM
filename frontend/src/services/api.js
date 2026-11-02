@@ -1,12 +1,28 @@
 import axios from "axios";
-import * as XLSX from "xlsx";
 import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./crmSupabase.js";
+
+import { attendanceSupabase, runAttendanceAuthTask } from "./attendanceSupabase.js";
 
 const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
+const getCache = new Map();
+const GET_CACHE_TTL = 30_000;
+export const API_TIMEOUT_MS = 15_000;
+
+// XLSX is a large dependency.  It is only needed while importing or exporting a
+// workbook, so keep it out of the application shell and normal page loads.
+let xlsxModule;
+function loadXlsx() {
+  xlsxModule ??= import("xlsx");
+  return xlsxModule;
+}
 
 export const apiClient = axios.create({
   baseURL: crmApiUrl,
+  // Never leave a page in a pending state because a network connection or an
+  // Edge Function stopped responding. Page-level error handling receives a
+  // normal rejected request after this limit.
+  timeout: API_TIMEOUT_MS,
   withCredentials: false,
   headers: {
     apikey: CRM_SUPABASE_PUBLISHABLE_KEY,
@@ -15,6 +31,34 @@ export const apiClient = axios.create({
 });
 
 const csrfHeaders = () => ({});
+
+function cacheKey(url, params = {}) {
+  const query = Object.entries(params || {})
+    .filter(([, value]) => value !== undefined)
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join("&");
+  return `${url}?${query}`;
+}
+
+function cachedGet(url, config = {}, maxAge = GET_CACHE_TTL) {
+  const key = cacheKey(url, config.params);
+  const cached = getCache.get(key);
+  const now = Date.now();
+  if (cached?.response && now - cached.createdAt < maxAge) return Promise.resolve(cached.response);
+  if (cached?.request) return cached.request;
+  const request = apiClient.get(url, config)
+    .then((response) => {
+      getCache.set(key, { response, createdAt: Date.now() });
+      return response;
+    })
+    .catch((error) => {
+      getCache.delete(key);
+      throw error;
+    });
+  getCache.set(key, { request, createdAt: now });
+  return request;
+}
 
 const multipartHeaders = () => ({
   headers: {
@@ -101,6 +145,7 @@ export const authApi = {
   },
   logout: async () => {
     const { error } = await crmSupabase.auth.signOut();
+    await runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" }));
     if (error) throw error;
     return { data: { ok: true } };
   },
@@ -125,18 +170,18 @@ function maskImportValue(value) {
 }
 
 export const overtimeApi = {
-  list: () => apiClient.get("/overtime/"),
+  list: () => cachedGet("/overtime/"),
   create: (payload, csrfToken) => apiClient.post("/overtime/", payload, csrfHeaders(csrfToken)),
   review: (requestId, action, payload, csrfToken) => apiClient.post(`/overtime/${requestId}/${action}/`, payload, csrfHeaders(csrfToken)),
 };
 
 export const dashboardApi = {
-  summary: () => apiClient.get("/dashboard/"),
+  summary: () => cachedGet("/dashboard/"),
 };
 
 export const datasetsApi = {
-  list: () => apiClient.get("/datasets/"),
-  detail: (datasetId, params = {}) => apiClient.get(`/datasets/${datasetId}/`, { params }),
+  list: () => cachedGet("/datasets/"),
+  detail: (datasetId, params = {}) => cachedGet(`/datasets/${datasetId}/`, { params }),
   rename: (datasetId, name, csrfToken) => (
     apiClient.patch(`/datasets/${datasetId}/manage/`, { name }, csrfHeaders(csrfToken))
   ),
@@ -145,6 +190,7 @@ export const datasetsApi = {
   ),
   export: async (datasetId, params = {}) => {
     const { data } = await apiClient.get(`/datasets/${datasetId}/export/`, { params });
+    const XLSX = await loadXlsx();
     const workbook = XLSX.utils.book_new();
     const usedNames = new Set();
     for (const sheet of data.sheets || []) {
@@ -166,10 +212,19 @@ export const datasetsApi = {
 };
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (String(response.config.method || "get").toLowerCase() !== "get") getCache.clear();
+    return response;
+  },
   async (error) => {
+    if (error.code === "ECONNABORTED" || /timeout/i.test(String(error.message || ""))) {
+      error.response ??= { status: 408, data: { detail: "The CRM request took too long. Please retry." } };
+    } else if (!error.response) {
+      error.response = { status: 0, data: { detail: "The CRM service is unreachable. Check your connection and retry." } };
+    }
     if (error.response?.status === 401 && typeof window !== "undefined") {
-      await crmSupabase.auth.signOut();
+      // Do not delay every failed API request on a secondary sign-out call.
+      void crmSupabase.auth.signOut().catch(() => {});
       window.dispatchEvent(new Event("crm:session-expired"));
     }
     return Promise.reject(error);
@@ -177,9 +232,9 @@ apiClient.interceptors.response.use(
 );
 
 export const customersApi = {
-  list: (params = {}) => apiClient.get("/customers/", { params }),
-  detail: (datasetId, recordId) => apiClient.get(`/datasets/${datasetId}/customers/${recordId}/`),
-  detailById: (recordId) => apiClient.get(`/customers/${recordId}/`),
+  list: (params = {}) => cachedGet("/customers/", { params }),
+  detail: (datasetId, recordId) => cachedGet(`/datasets/${datasetId}/customers/${recordId}/`),
+  detailById: (recordId) => cachedGet(`/customers/${recordId}/`),
   update: (datasetId, recordId, data, csrfToken) => (
     apiClient.patch(`/datasets/${datasetId}/customers/${recordId}/`, data, csrfHeaders(csrfToken))
   ),
@@ -189,7 +244,7 @@ export const customersApi = {
 };
 
 export const callbacksApi = {
-  list: (params = {}) => apiClient.get("/callbacks/", { params }),
+  list: (params = {}) => cachedGet("/callbacks/", { params }),
   complete: (recordId, response, csrfToken) => (
     apiClient.post(`/callbacks/${recordId}/complete/`, { response }, csrfHeaders(csrfToken))
   ),
@@ -205,6 +260,7 @@ export const importApi = {
     if (file.size > 20 * 1024 * 1024) throw apiError("The workbook must be 20 MB or smaller.");
     let workbook;
     try {
+      const XLSX = await loadXlsx();
       workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
     } catch {
       throw apiError("The uploaded file is not a readable .xlsx workbook.");
@@ -276,7 +332,7 @@ export const importApi = {
 };
 
 export const remindersApi = {
-  list: () => apiClient.get("/reminders/"),
+  list: () => cachedGet("/reminders/"),
   create: (payload, csrfToken) => apiClient.post("/reminders/", payload, csrfHeaders(csrfToken)),
   update: (reminderId, payload, csrfToken) => apiClient.patch(`/reminders/${reminderId}/`, payload, csrfHeaders(csrfToken)),
   remove: (reminderId, csrfToken) => apiClient.delete(`/reminders/${reminderId}/`, csrfHeaders(csrfToken)),
@@ -287,19 +343,19 @@ export const remindersApi = {
 };
 
 export const tasksApi = {
-  list: () => apiClient.get("/tasks/"),
+  list: () => cachedGet("/tasks/"),
   update: (taskId, payload, csrfToken) => apiClient.patch(`/tasks/${taskId}/`, payload, csrfHeaders(csrfToken)),
 };
 
 export const targetsApi = {
-  list: () => apiClient.get("/targets/"),
+  list: () => cachedGet("/targets/"),
 };
 
 export const salesApi = {
-  list: (params = {}) => apiClient.get("/sales/visits/", { params }),
-  summary: () => apiClient.get("/sales/summary/"),
-  clients: (datasetId, query = "") => apiClient.get("/sales/clients/", { params: { dataset: datasetId, q: query } }),
-  detail: (visitId) => apiClient.get(`/sales/visits/${visitId}/`),
+  list: (params = {}) => cachedGet("/sales/visits/", { params }),
+  summary: () => cachedGet("/sales/summary/"),
+  clients: (datasetId, query = "") => cachedGet("/sales/clients/", { params: { dataset: datasetId, q: query } }),
+  detail: (visitId) => cachedGet(`/sales/visits/${visitId}/`),
   create: (payload, csrfToken) => apiClient.post(
     "/sales/visits/",
     payload,
@@ -314,14 +370,16 @@ export const salesApi = {
 };
 
 export const adminApi = {
+  // Administrative data must be current on every visit; it is deliberately
+  // not served from the short-lived navigation cache.
   summary: () => apiClient.get("/admin/summary/"),
-  listUsers: () => apiClient.get("/admin/users/"),
+  listUsers: () => cachedGet("/admin/users/"),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),
-  detail: (userId) => apiClient.get(`/admin/users/${userId}/`),
+  detail: (userId) => cachedGet(`/admin/users/${userId}/`),
   update: (userId, payload, csrfToken) => apiClient.patch(`/admin/users/${userId}/`, payload, csrfHeaders(csrfToken)),
   action: (userId, action, payload, csrfToken) => apiClient.post(`/admin/users/${userId}/${action}/`, payload, csrfHeaders(csrfToken)),
-  datasets: (userId) => apiClient.get(`/admin/users/${userId}/datasets/`),
-  tasks: (params = {}) => apiClient.get("/admin/tasks/", { params }),
+  datasets: (userId) => cachedGet(`/admin/users/${userId}/datasets/`),
+  tasks: (params = {}) => cachedGet("/admin/tasks/", { params }),
   createTask: (payload, csrfToken) => apiClient.post("/admin/tasks/", payload, csrfHeaders(csrfToken)),
   updateTask: (taskId, payload, csrfToken) => apiClient.patch(`/admin/tasks/${taskId}/`, payload, csrfHeaders(csrfToken)),
   targets: (params = {}) => apiClient.get("/admin/targets/", { params }),
@@ -339,3 +397,16 @@ export const adminApi = {
       csrfHeaders(csrfToken)
     ),
 };
+
+// Warm normal sidebar destinations after the first screen has painted. These
+// requests share the same cache as the pages, so the next navigation renders
+// from already-available data rather than showing another loading panel.
+export function warmNavigationData(isAdmin = false) {
+  const requests = [
+    dashboardApi.summary(), targetsApi.list(), datasetsApi.list(), customersApi.list({ page: 1 }),
+    callbacksApi.list({ preset: "today", date: "", sort: "asc" }), remindersApi.list(),
+    tasksApi.list(), salesApi.list(), salesApi.summary(),
+  ];
+  if (isAdmin) requests.push(adminApi.tasks());
+  return Promise.allSettled(requests);
+}

@@ -1,41 +1,44 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { attendanceSupabase, getAttendanceSession, signInAttendance } from "../services/attendanceSupabase.js";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { apiClient } from "../services/api.js";
+import { attendanceSupabase, getAttendanceSession, runAttendanceAuthTask } from "../services/attendanceSupabase.js";
+import { useAuth } from "./useAuth.jsx";
 
 const AttendanceAuthContext = createContext(null);
 
 export function AttendanceAuthProvider({ children }) {
-  const [session, setSession] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [permission, setPermission] = useState(null);
+  const { user } = useAuth();
+  const [access, setAccess] = useState({ session: null, profile: null, permission: null });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const restore = async () => {
+  const generation = useRef(0);
+  const restore = useCallback(async () => {
+    const request = ++generation.current;
+    setAccess({ session: null, profile: null, permission: null });
+    setIsLoading(true); setError("");
     try {
-      const restored = await getAttendanceSession();
-      setSession(restored.session); setProfile(restored.profile); setPermission(restored.permission); setError("");
+      if (!user?.id) return;
+      await runAttendanceAuthTask(async () => {
+        if (request !== generation.current) return;
+        await attendanceSupabase.auth.signOut({ scope: "local" });
+        const { data } = await apiClient.post("/auth/attendance-session/", {});
+        if (request !== generation.current) return;
+        const { error: sessionError } = await attendanceSupabase.auth.setSession(data);
+        if (sessionError) throw sessionError;
+        const restored = await getAttendanceSession();
+        if (request === generation.current) setAccess(restored);
+        else await attendanceSupabase.auth.signOut({ scope: "local" });
+      });
     } catch (restoreError) {
-      setSession(null); setProfile(null); setPermission(null); setError(restoreError.message);
-    } finally { setIsLoading(false); }
-  };
-
+      if (request === generation.current) setError(restoreError.response?.data?.detail || restoreError.message || "Unable to open attendance.");
+    } finally {
+      if (request === generation.current) setIsLoading(false);
+    }
+  }, [user?.id]);
   useEffect(() => {
     restore();
-    const { data: listener } = attendanceSupabase.auth.onAuthStateChange((event, nextSession) => {
-      if (event === "SIGNED_OUT") { setSession(null); setProfile(null); setPermission(null); return; }
-      if (nextSession) setSession(nextSession);
-    });
-    return () => listener.subscription.unsubscribe();
-  }, []);
-
-  const login = async (identity, password) => {
-    setIsLoading(true); setError("");
-    try { const result = await signInAttendance(identity, password); setSession(result.session); setProfile(result.profile); setPermission(result.permission); if (!result.permission.allowed) throw new Error(result.permission.message); return result; }
-    catch (loginError) { setError(loginError.message); throw loginError; }
-    finally { setIsLoading(false); }
-  };
-  const logout = async () => { await attendanceSupabase.auth.signOut(); setSession(null); setProfile(null); setPermission(null); };
-  const value = useMemo(() => ({ session, profile, permission, isLoading, error, login, logout, restore }), [session, profile, permission, isLoading, error]);
+    return () => { generation.current += 1; };
+  }, [restore]);
+  const value = useMemo(() => ({ ...access, isLoading, error, restore }), [access, isLoading, error, restore]);
   return <AttendanceAuthContext.Provider value={value}>{children}</AttendanceAuthContext.Provider>;
 }
 

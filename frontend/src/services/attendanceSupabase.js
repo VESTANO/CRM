@@ -6,7 +6,7 @@ export const ATTENDANCE_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Mh4xVEoQFpooP
 export const attendanceSupabase = createClient(
   ATTENDANCE_SUPABASE_URL,
   ATTENDANCE_SUPABASE_PUBLISHABLE_KEY,
-  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } },
+  { auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: false } },
 );
 
 const readError = (error, fallback) => error?.message || fallback;
@@ -26,20 +26,12 @@ export async function resolveAttendanceProfile(session) {
   return mapProfile(data);
 }
 
-export async function signInAttendance(identity, password) {
-  const enteredIdentity = String(identity || "").trim();
-  let loginEmail = enteredIdentity.includes("@") ? enteredIdentity : "";
-  if (!loginEmail) {
-    const { data: resolvedEmail, error: resolveError } = await attendanceSupabase.rpc("resolve_login_email", { identity: enteredIdentity });
-    if (resolveError) throw new Error(readError(resolveError, "Unable to resolve the attendance login."));
-    loginEmail = resolvedEmail || "";
-  }
-  if (!loginEmail) throw new Error("That attendance employee ID/email is not registered.");
-  const { data, error } = await attendanceSupabase.auth.signInWithPassword({ email: loginEmail, password });
-  if (error) throw new Error(readError(error, "Invalid attendance password or inactive attendance account."));
-  const profile = await resolveAttendanceProfile(data.session);
-  const permission = await verifyAttendanceRead(profile);
-  return { session: data.session, profile, permission };
+// Session changes are serialized to prevent a late request from undoing logout.
+let authQueue = Promise.resolve();
+export function runAttendanceAuthTask(task) {
+  const result = authQueue.then(task, task);
+  authQueue = result.catch(() => {});
+  return result;
 }
 
 export async function getAttendanceSession() {

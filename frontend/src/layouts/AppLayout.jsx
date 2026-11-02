@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Offcanvas } from "bootstrap";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
-import { callbacksApi, tasksApi } from "../services/api.js";
+import { callbacksApi, tasksApi, warmNavigationData } from "../services/api.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -60,18 +60,36 @@ export default function AppLayout() {
         });
     };
 
-    loadPendingTasks();
+    // These badges are helpful, but they should not compete with the first
+    // screen's data request.  Defer them slightly so navigation paints first.
+    const firstLoadTimer = window.setTimeout(loadPendingTasks, 400);
     const intervalId = window.setInterval(loadPendingTasks, 30000);
     window.addEventListener("crm:tasks-updated", loadPendingTasks);
     window.addEventListener("focus", loadPendingTasks);
 
     return () => {
       isMounted = false;
+      window.clearTimeout(firstLoadTimer);
       window.clearInterval(intervalId);
       window.removeEventListener("crm:tasks-updated", loadPendingTasks);
       window.removeEventListener("focus", loadPendingTasks);
     };
   }, []);
+
+  useEffect(() => {
+    // Do this only once the visible route has had a chance to load.
+    const warm = () => {
+      warmNavigationData(Boolean(user?.is_admin));
+      if (user?.is_admin) import("../pages/AdminPanel.jsx");
+    };
+    const idleId = "requestIdleCallback" in window
+      ? window.requestIdleCallback(warm, { timeout: 1800 })
+      : window.setTimeout(warm, 900);
+    return () => {
+      if ("cancelIdleCallback" in window) window.cancelIdleCallback(idleId);
+      else window.clearTimeout(idleId);
+    };
+  }, [user?.is_admin]);
 
   useEffect(() => {
     let isMounted = true;
@@ -86,13 +104,14 @@ export default function AppLayout() {
         });
     };
 
-    loadTodayCallbacks();
+    const firstLoadTimer = window.setTimeout(loadTodayCallbacks, 500);
     const intervalId = window.setInterval(loadTodayCallbacks, 30000);
     window.addEventListener("crm:callbacks-updated", loadTodayCallbacks);
     window.addEventListener("focus", loadTodayCallbacks);
 
     return () => {
       isMounted = false;
+      window.clearTimeout(firstLoadTimer);
       window.clearInterval(intervalId);
       window.removeEventListener("crm:callbacks-updated", loadTodayCallbacks);
       window.removeEventListener("focus", loadTodayCallbacks);
@@ -140,7 +159,7 @@ export default function AppLayout() {
         </div>
       </div>
 
-      <main className={`app-main ${isDashboard ? "is-dashboard" : ""}`}>
+      <main className={`app-main ${isDashboard ? "is-dashboard" : ""} ${location.pathname.startsWith("/admin-panel") ? "is-admin" : ""}`}>
         <div className="workspace-topbar">
           <div className="workspace-breadcrumb">
             <span className="workspace-brand-label">VESTANO / CRM</span>

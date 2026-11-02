@@ -13,6 +13,21 @@ export default defineConfig(({ command, mode }) => {
   build: {
     outDir: isPagesBuild ? "dist" : "../backend/static/frontend",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Keep long-lived libraries in stable, cacheable files.  A deployment
+        // that changes one CRM screen no longer makes browsers redownload all
+        // of React, Supabase, Bootstrap and the application shell.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("xlsx")) return "xlsx";
+          if (id.includes("@supabase")) return "supabase";
+          if (id.includes("react") || id.includes("scheduler")) return "react";
+          if (id.includes("bootstrap")) return "bootstrap";
+          if (id.includes("axios")) return "axios";
+        },
+      },
+    },
   },
   server: {
     host: devHost,

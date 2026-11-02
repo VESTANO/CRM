@@ -1,5 +1,28 @@
 # Attendance in the CRM
 
+## Supabase frontend: one login
+
+Sign in using the existing CRM credentials. The server matches the authenticated
+CRM profile's `employee_id` (its username) to the attendance profile's
+`employee_id` (its login username), ignoring case. Emails and display names do
+not need to match. Duplicate matches, inactive accounts, and missing matches
+are denied; the attendance page explains the issue without another login form.
+CRM logout clears the attendance session too.
+
+The two Supabase projects require a trusted server connection. Set
+`ATTENDANCE_SUPABASE_SERVICE_ROLE_KEY` in the CRM project's Edge Function
+secrets to the attendance project's service-role key, then deploy `crm-api`.
+Never expose that key in frontend variables. `ATTENDANCE_SUPABASE_URL` defaults
+to `https://lorrfeyiqgdfxdjqnpmn.supabase.co`. Deploy the updated frontend after
+the function. No new database migration is required.
+
+`POST /api/auth/attendance-session/` validates the CRM token and active CRM
+profile, looks up the unique attendance username, and issues a session for that
+existing attendance user. Existing attendance roles and policies still apply.
+No passwords are copied, changed, or requested a second time.
+
+## Django attendance backup
+
 Attendance is a native React page at `/attendance`, available in the existing
 CRM sidebar on desktop and mobile. `/api/attendance/` uses the CRM session;
 there is no separate attendance login or Supabase dependency.

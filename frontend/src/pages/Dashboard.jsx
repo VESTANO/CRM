@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { dashboardApi, datasetsApi, targetsApi } from "../services/api.js";
 import { formatCurrency, formatDate } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
+import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
 const responseIcons = {
   no_response: "bi-chat-dots",
@@ -13,13 +14,14 @@ const responseIcons = {
 };
 
 export default function Dashboard() {
-  const [dashboard, setDashboard] = useState(null);
+  const location = useLocation();
+  const [dashboard, setDashboard] = useState(() => location.state?.preloadedDashboard || null);
   const [error, setError] = useState("");
   const [allDatasets, setAllDatasets] = useState(null);
   const [datasetPage, setDatasetPage] = useState(1);
   const [datasetError, setDatasetError] = useState("");
   const [loadingDatasets, setLoadingDatasets] = useState(false);
-  const [targets, setTargets] = useState(null);
+  const [targets, setTargets] = useState(() => location.state?.preloadedTargets || null);
   const datasetsExpanded = allDatasets !== null;
   const datasets = datasetsExpanded ? allDatasets : dashboard?.recentDatasets || [];
   const pageCount = Math.ceil(datasets.length / 5);
@@ -27,7 +29,7 @@ export default function Dashboard() {
     ? datasets.slice((datasetPage - 1) * 5, datasetPage * 5)
     : datasets;
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([dashboardApi.summary(), targetsApi.list()])
       .then(([dashboardResponse, targetsResponse]) => {
         setDashboard(dashboardResponse.data);
@@ -35,6 +37,8 @@ export default function Dashboard() {
       })
       .catch(() => setError("Unable to load dashboard data."));
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const showAllDatasets = async () => {
     setLoadingDatasets(true);
@@ -56,12 +60,10 @@ export default function Dashboard() {
     setDatasetError("");
   };
 
-  if (error) {
-    return <div className="alert alert-danger">{error}</div>;
-  }
+  if (error) return <RequestError message={error} onRetry={load} />;
 
   if (!dashboard) {
-    return <div className="panel">Loading dashboard...</div>;
+    return <LoadingPanel label="Loading dashboard" />;
   }
 
   return (

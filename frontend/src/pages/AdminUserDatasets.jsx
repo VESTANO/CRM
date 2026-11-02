@@ -12,9 +12,8 @@ export default function AdminUserDatasets() {
     setData(null);
     setError("");
 
-    adminApi
-      .datasets(userId)
-      .then((response) => setData(response.data))
+    Promise.all([adminApi.datasets(userId), adminApi.detail(userId)])
+      .then(([response, userResponse]) => setData({ ...response.data, user: userResponse.data }))
       .catch((requestError) => {
         const detail = requestError.response?.data?.detail;
         setError(
@@ -67,8 +66,9 @@ export default function AdminUserDatasets() {
 
       {datasets.length ? (
         <section className="panel p-0 responsive-table">
-          <div className="table-responsive">
-            <table className="table table-hover align-middle mb-0">
+          <p className="table-scroll-hint pt-3">Scroll horizontally to see all dataset details.</p>
+          <div className="table-responsive" tabIndex={0} role="region" aria-label="User datasets table, scroll horizontally to see all columns">
+            <table className="table table-hover align-middle mb-0 admin-datasets-table">
               <thead className="table-light">
                 <tr>
                   <th>Dataset Name</th>

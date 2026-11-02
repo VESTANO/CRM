@@ -30,7 +30,7 @@ td:has(.btn-success[disabled]) {
   .responsive-table .table-responsive > table {
     display: table !important;
     min-width: 720px !important;
-    width: 720px !important;
+    width: max-content !important;
     table-layout: auto !important;
   }
 
@@ -53,6 +53,57 @@ td:has(.btn-success[disabled]) {
 
   .responsive-table .table-responsive {
     overflow-x: auto !important;
+  }
+
+  /* The React frontend uses scrollable tables. Remove every part of the
+     inherited card layout so labels and buttons do not collide in cells. */
+  .content-wrap .responsive-table {
+    background: #fff;
+    border: 1px solid var(--crm-border);
+    border-radius: 15px;
+    box-shadow: none;
+    min-width: 0;
+  }
+
+  .content-wrap .responsive-table tbody tr {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .content-wrap .responsive-table .table > :not(caption) > * > * {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--crm-border);
+    text-align: left;
+    vertical-align: middle;
+    width: auto;
+    min-width: 120px;
+    overflow-wrap: normal;
+  }
+
+  .content-wrap .responsive-table tbody td::before { content: none; display: none; }
+  .content-wrap .responsive-table tbody td > * { max-width: none; }
+  .content-wrap .responsive-table thead th { white-space: nowrap; }
+  .content-wrap .responsive-table td[data-label="File"] { min-width: 240px; }
+  .content-wrap .responsive-table td[data-label="Uploaded"],
+  .content-wrap .responsive-table td[data-label="Visit Date"] { min-width: 180px; white-space: nowrap; }
+  .content-wrap .responsive-table td[data-label="Actions"] { min-width: 280px; }
+  .content-wrap .responsive-table td[data-label="Actions"] :is(.dataset-actions, .table-actions) {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    max-width: none;
+    width: max-content;
+    margin: 0;
+    gap: 0.5rem !important;
+  }
+  .content-wrap .responsive-table td[data-label="Actions"] :is(.dataset-actions, .table-actions) .btn {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    white-space: nowrap;
   }
 
   .responsive-table:not(:has(td[data-label])) table {
@@ -187,3 +238,11 @@ td:has(.btn-success[disabled]) {
 .migration-placeholder {
   min-height: 220px;
 }
+/* Shared request states: data failures stay recoverable without blocking the shell. */
+.request-loading { display: grid; gap: .8rem; min-height: 10rem; align-content: center; }
+.request-skeleton { display: block; height: .9rem; width: 100%; border-radius: 999px; background: linear-gradient(90deg, #e5ebee 25%, #f7f9fa 45%, #e5ebee 65%); background-size: 240% 100%; animation: request-shimmer 1.3s ease-in-out infinite; }
+.request-skeleton-title { width: 42%; height: 1.35rem; }
+.request-skeleton-short { width: 68%; }
+.request-error { border-left: 4px solid #b02a37; }
+@keyframes request-shimmer { to { background-position: -240% 0; } }
+@media (prefers-reduced-motion: reduce) { .request-skeleton { animation: none; } }

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { dashboardApi, salesApi } from "../services/api.js";
 import { formatCurrency } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
+import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
 const chartPalette = [
   { fill: "#DCE4E8", border: "#405565", text: "#172B3A" },
@@ -25,7 +26,7 @@ export default function Reports() {
   const [visits, setVisits] = useState(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([dashboardApi.summary(), salesApi.list()])
       .then(([dashboardResponse, visitResponse]) => {
         setCustomerStats(dashboardResponse.data);
@@ -33,6 +34,8 @@ export default function Reports() {
       })
       .catch(() => setError("Unable to load reports."));
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const visitStats = useMemo(() => {
     if (!visits) return null;
@@ -70,8 +73,8 @@ export default function Reports() {
     };
   }, [visits]);
 
-  if (error) return <div className="alert alert-danger">{error}</div>;
-  if (!customerStats || !visitStats) return <div className="panel">Loading reports...</div>;
+  if (error) return <RequestError message={error} onRetry={load} />;
+  if (!customerStats || !visitStats) return <LoadingPanel label="Loading reports" />;
 
   const maxCustomerCount = Math.max(1, ...customerStats.responseStats.map((item) => item.count));
   const maxVisitCount = Math.max(1, ...visitStats.statuses.map((item) => item.count));
@@ -106,7 +109,7 @@ export default function Reports() {
 
 function Summary({ label, value, icon }) {
   const [ref, isVisible] = useRevealOnView();
-  return <div ref={ref} className="summary-card compact"><span className="metric-icon"><i className={`bi ${icon}`} /></span><div className="text-secondary small">{label}</div><div className="reports-summary-value"><AnimatedNumber value={value} active={isVisible} /></div></div>;
+  return <div ref={ref} className={`summary-card compact ${typeof value === "string" ? "reports-summary-currency" : ""}`}><span className="metric-icon"><i className={`bi ${icon}`} /></span><div className="text-secondary small">{label}</div><div className="reports-summary-value"><AnimatedNumber value={value} active={isVisible} /></div></div>;
 }
 
 function Breakdown({ title, items, max, empty = "No customer data recorded yet." }) {

@@ -4,6 +4,7 @@ import { adminApi } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { useAuth } from "../hooks/useAuth.jsx";
+import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
 function getTargetsForUser(targets, userId) {
   return targets?.filter((target) => target.userId === userId) || [];
@@ -65,8 +66,8 @@ export default function AdminPanel() {
     load();
   }, []);
 
-  if (error) return <div className="alert alert-danger">{error}</div>;
-  if (!data) return <div className="panel">Loading admin panel...</div>;
+  if (error) return <RequestError message={error} onRetry={load} />;
+  if (!data) return <LoadingPanel label="Loading admin panel" />;
 
   const pageCount = Math.ceil(data.users.length / 5);
   const visibleUsers = data.users.slice((page - 1) * 5, page * 5); //Selects the five users for the current page.
@@ -262,8 +263,9 @@ export default function AdminPanel() {
           <h2 className="h5 mb-1">Users</h2>
           <p className="text-secondary small mb-0">CRM account access and dataset target progress overview.</p>
         </div>
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0">
+        <p className="table-scroll-hint">Scroll horizontally to see all user details and actions.</p>
+        <div className="table-responsive" tabIndex={0} role="region" aria-label="CRM users table, scroll horizontally to see all columns">
+          <table className="table table-hover align-middle mb-0 admin-users-table">
             <thead className="table-light">
               <tr>
                 <th>Username</th>
@@ -331,7 +333,7 @@ export default function AdminPanel() {
                     </td>
                     <td data-label="Date joined">{formatDateTime(user.date_joined)}</td>
                     <td data-label="Actions">
-                      <div className="btn-group btn-group-sm table-actions">
+                      <div className="table-actions" role="group" aria-label={`Actions for ${user.username}`}>
                         <Link className="btn btn-outline-primary" to={`/admin-panel/users/${user.id}`}>View</Link>
                         <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
                         <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
@@ -362,7 +364,7 @@ export default function AdminPanel() {
           </table>
         </div>
         {pageCount > 1 && (
-          <div className="d-flex justify-content-between align-items-center px-3 pb-3">
+          <div className="table-pagination d-flex justify-content-between align-items-center">
             <span className="text-secondary small">Page {page} of {pageCount}</span>
             <div className="d-flex gap-2">
               <button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => setPage((current) => current - 1)} disabled={page <= 1}>Previous</button>
@@ -399,7 +401,7 @@ export default function AdminPanel() {
 
       {targetUser && (
         <div className="modal d-block" tabIndex="-1" style={{ background: "rgba(0,0,0,0.5)" }}>
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header">
                 <div>
@@ -461,7 +463,7 @@ export default function AdminPanel() {
 
       {taskUser && (
         <div className="modal d-block" tabIndex="-1" style={{ background: "rgba(0,0,0,0.5)" }}>
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header">
                 <div>

@@ -1,40 +1,45 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "./layouts/AppLayout.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import AdminRoute from "./components/AdminRoute.jsx";
 import { AuthProvider } from "./hooks/useAuth.jsx";
-import Dashboard from "./pages/Dashboard.jsx";
-import CustomerDelete from "./pages/CustomerDelete.jsx";
-import CustomerDetail from "./pages/CustomerDetail.jsx";
-import CustomerEdit from "./pages/CustomerEdit.jsx";
-import Customers from "./pages/Customers.jsx";
-import Callbacks from "./pages/Callbacks.jsx";
-import DatasetDetail from "./pages/DatasetDetail.jsx";
-import DatasetList from "./pages/DatasetList.jsx";
-import DatasetManagement from "./pages/DatasetManagement.jsx";
-import ImportExcel from "./pages/ImportExcel.jsx";
-import Notifications from "./pages/Notifications.jsx";
-import Reminders from "./pages/Reminders.jsx";
-import Reports from "./pages/Reports.jsx";
-import Attendance from "./pages/Attendance.jsx";
-import Login from "./pages/Login.jsx";
-import Sales from "./pages/Sales.jsx";
-import Overtime from "./pages/Overtime.jsx";
-import VisitForm from "./pages/VisitForm.jsx";
-import VisitDetail from "./pages/VisitDetail.jsx";
-import VisitDelete from "./pages/VisitDelete.jsx";
-import AdminPanel from "./pages/AdminPanel.jsx";
-import AdminTasks from "./pages/AdminTasks.jsx";
-import AdminUserDetail from "./pages/AdminUserDetail.jsx";
-import AdminUserForm from "./pages/AdminUserForm.jsx";
-import AdminUserPassword from "./pages/AdminUserPassword.jsx";
-import AdminUserDatasets from "./pages/AdminUserDatasets.jsx";
 import { AttendanceAuthProvider } from "./hooks/useAttendanceAuth.jsx";
+
+// Route-level chunks make the initial CRM shell fast; each screen is fetched
+// only when it is opened instead of making every page block the first render.
+const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
+const CustomerDelete = lazy(() => import("./pages/CustomerDelete.jsx"));
+const CustomerDetail = lazy(() => import("./pages/CustomerDetail.jsx"));
+const CustomerEdit = lazy(() => import("./pages/CustomerEdit.jsx"));
+const Customers = lazy(() => import("./pages/Customers.jsx"));
+const Callbacks = lazy(() => import("./pages/Callbacks.jsx"));
+const DatasetDetail = lazy(() => import("./pages/DatasetDetail.jsx"));
+const DatasetList = lazy(() => import("./pages/DatasetList.jsx"));
+const DatasetManagement = lazy(() => import("./pages/DatasetManagement.jsx"));
+const ImportExcel = lazy(() => import("./pages/ImportExcel.jsx"));
+const Notifications = lazy(() => import("./pages/Notifications.jsx"));
+const Reminders = lazy(() => import("./pages/Reminders.jsx"));
+const Reports = lazy(() => import("./pages/Reports.jsx"));
+const Attendance = lazy(() => import("./pages/Attendance.jsx"));
+const Login = lazy(() => import("./pages/Login.jsx"));
+const Sales = lazy(() => import("./pages/Sales.jsx"));
+const Overtime = lazy(() => import("./pages/Overtime.jsx"));
+const VisitForm = lazy(() => import("./pages/VisitForm.jsx"));
+const VisitDetail = lazy(() => import("./pages/VisitDetail.jsx"));
+const VisitDelete = lazy(() => import("./pages/VisitDelete.jsx"));
+const AdminPanel = lazy(() => import("./pages/AdminPanel.jsx"));
+const AdminTasks = lazy(() => import("./pages/AdminTasks.jsx"));
+const AdminUserDetail = lazy(() => import("./pages/AdminUserDetail.jsx"));
+const AdminUserForm = lazy(() => import("./pages/AdminUserForm.jsx"));
+const AdminUserPassword = lazy(() => import("./pages/AdminUserPassword.jsx"));
+const AdminUserDatasets = lazy(() => import("./pages/AdminUserDatasets.jsx"));
 
 export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.MODE === "pages" || import.meta.env.VITE_PAGES_BUILD === "true" ? "/CRM" : "/"}>
       <AuthProvider>
+        <Suspense fallback={<div className="crm-loading" role="status">Loading page…</div>}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
@@ -87,6 +92,7 @@ export default function App() {
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

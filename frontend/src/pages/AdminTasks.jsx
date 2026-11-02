@@ -81,8 +81,9 @@ export default function AdminTasks() {
             {user ? `Tasks assigned to ${user.username}.` : "All tasks assigned to CRM users."}
           </p>
         </div>
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0">
+        <p className="table-scroll-hint">Scroll horizontally to see all task details.</p>
+        <div className="table-responsive" tabIndex={0} role="region" aria-label="Assigned tasks table, scroll horizontally to see all columns">
+          <table className="table table-hover align-middle mb-0 admin-tasks-table">
             <thead className="table-light">
               <tr>
                 <th>User</th>

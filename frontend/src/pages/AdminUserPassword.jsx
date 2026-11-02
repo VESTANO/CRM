@@ -21,7 +21,7 @@ export default function AdminUserPassword() {
     }
   };
 
-  return <div className="panel">
+  return <div className="panel admin-form-panel">
     <h1 className="h2 mb-2">Reset Password</h1>
     <p className="text-secondary">Set a new password. Existing passwords are never displayed.</p>
     <form onSubmit={submit}>
