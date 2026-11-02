@@ -5,12 +5,12 @@ import { formatCurrency } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 
 const chartPalette = [
-  { fill: "#abc8ea", border: "#557da9", text: "#304c69" },
-  { fill: "#acd8ba", border: "#548564", text: "#31573d" },
-  { fill: "#edb8bd", border: "#a95e68", text: "#743c45" },
-  { fill: "#eed69a", border: "#9d7925", text: "#644b16" },
-  { fill: "#a6d4d4", border: "#4b8585", text: "#2d5a5a" },
-  { fill: "#c6b8df", border: "#78649f", text: "#51416f" },
+  { fill: "#DCE4E8", border: "#405565", text: "#172B3A" },
+  { fill: "#F8E3D4", border: "#D97736", text: "#172B3A" },
+  { fill: "#C9D5DD", border: "#405565", text: "#172B3A" },
+  { fill: "#E6B48F", border: "#A85421", text: "#172B3A" },
+  { fill: "#F5F1E9", border: "#405565", text: "#172B3A" },
+  { fill: "#FFFFFF", border: "#172B3A", text: "#172B3A" },
 ];
 const customerColors = chartPalette.slice(0, 5);
 const visitColors = [chartPalette[0], chartPalette[3], chartPalette[1], chartPalette[2], chartPalette[5]];

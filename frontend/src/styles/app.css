@@ -119,19 +119,19 @@ td:has(.btn-success[disabled]) {
 .btn-outline-secondary,
 .btn-light,
 .btn-outline-light {
-  --bs-btn-color: #40536a;
-  --bs-btn-bg: #f4f7fb;
-  --bs-btn-border-color: #cbd6e3;
-  --bs-btn-hover-color: #30445b;
-  --bs-btn-hover-bg: #e7eef6;
-  --bs-btn-hover-border-color: #b7c7d9;
-  --bs-btn-active-color: #30445b;
-  --bs-btn-active-bg: #dce7f2;
-  --bs-btn-active-border-color: #aebfd2;
+  --bs-btn-color: #172B3A;
+  --bs-btn-bg: #F5F1E9;
+  --bs-btn-border-color: #D8E0E3;
+  --bs-btn-hover-color: #172B3A;
+  --bs-btn-hover-bg: #D8E0E3;
+  --bs-btn-hover-border-color: #405565;
+  --bs-btn-active-color: #172B3A;
+  --bs-btn-active-bg: #D8E0E3;
+  --bs-btn-active-border-color: #405565;
 }
 
 .btn:not(:disabled):not(.disabled):hover {
-  box-shadow: 0 2px 6px rgba(53, 76, 102, 0.12);
+  box-shadow: 0 2px 6px rgba(23, 43, 58, 0.12);
 }
 
 /* Keep the dashboard date inside its summary card at every viewport size. */
@@ -139,8 +139,8 @@ td:has(.btn-success[disabled]) {
   flex: 0 0 190px !important;
   min-width: 190px !important;
   max-width: 100%;
-  background: #f4f8fc;
-  border-color: #d7e3ef;
+  background: #F5F1E9;
+  border-color: #D8E0E3;
   overflow: hidden;
 }
 
