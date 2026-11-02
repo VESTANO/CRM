@@ -39,10 +39,12 @@ const navItems = [
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const { profile: attendanceProfile, isLoading: attendanceAuthLoading } = useAttendanceAuth();
+  const location = useLocation();
   const [pendingTaskCount, setPendingTaskCount] = useState(0);
   const [todayCallbackCount, setTodayCallbackCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
   const roleLabel = user?.is_admin ? "Admin" : "User";
+  const isDashboard = location.pathname === "/dashboard" || location.pathname === "/";
 
   useEffect(() => {
     let isMounted = true;
@@ -101,22 +103,26 @@ export default function AppLayout() {
     <>
       <header className="mobile-topbar d-lg-none">
         <button
-          className="btn btn-outline-secondary btn-sm"
+          className="mobile-menu-button"
           type="button"
           data-bs-toggle="offcanvas"
           data-bs-target="#mobileNav"
           aria-controls="mobileNav"
+          aria-label="Open navigation menu"
         >
-          Menu
+          <i className="bi bi-list" aria-hidden="true" />
         </button>
-        <NavLink className="mobile-brand" to="/dashboard">Customer CRM</NavLink>
+        <NavLink className="mobile-brand" to="/dashboard">
+          <span className="brand-mark">V</span>
+          <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
+        </NavLink>
       </header>
 
       <aside className="app-sidebar d-none d-lg-flex">
         <div>
           <NavLink className="app-brand" to="/dashboard">
-            <span className="brand-mark">C</span>
-            <span>Customer CRM</span>
+            <span className="brand-mark">V</span>
+            <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
           </NavLink>
           <Navigation user={user} attendanceProfile={attendanceProfile} attendanceAuthLoading={attendanceAuthLoading} pendingTaskCount={pendingTaskCount} todayCallbackCount={todayCallbackCount} />
         </div>
@@ -125,7 +131,7 @@ export default function AppLayout() {
 
       <div className="offcanvas offcanvas-start" tabIndex="-1" id="mobileNav" aria-labelledby="mobileNavLabel">
         <div className="offcanvas-header">
-          <h2 className="h5 offcanvas-title" id="mobileNavLabel">Customer CRM</h2>
+          <h2 className="h5 offcanvas-title" id="mobileNavLabel">VESTANO CRM</h2>
           <button type="button" className="btn-close" data-bs-dismiss="offcanvas" aria-label="Close" />
         </div>
         <div className="offcanvas-body d-flex flex-column">
@@ -134,7 +140,18 @@ export default function AppLayout() {
         </div>
       </div>
 
-      <main className="app-main">
+      <main className={`app-main ${isDashboard ? "is-dashboard" : ""}`}>
+        <div className="workspace-topbar">
+          <div className="workspace-breadcrumb">
+            <span className="workspace-brand-label">VESTANO / CRM</span>
+            <i className="bi bi-chevron-right" aria-hidden="true" />
+            <span>Customer operations</span>
+          </div>
+          <div className="workspace-account">
+            <span>{roleLabel} workspace</span>
+            <span className="workspace-avatar" aria-hidden="true">{initial}</span>
+          </div>
+        </div>
         <div className="content-wrap">
           <Outlet />
         </div>
@@ -279,7 +296,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
 function UserPanel({ user, initial, roleLabel, logout, mobile = false }) {
   return (
     <div className={`sidebar-user ${mobile ? "mt-auto" : ""}`}>
-      <div className="text-secondary small">Signed in as</div>
+      <div className="sidebar-user-label">Signed in as</div>
       <div className="d-flex align-items-center gap-2 mt-1">
         <span className="user-avatar">{initial}</span>
         <div className="min-w-0">
