@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { adminApi } from "../services/api.js";
+import { adminApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDateTime } from "../utils/formatters.js";
 
 export default function AdminUserDetail() {
   const { userId } = useParams();
   const { csrfToken } = useAuth();
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => peekCachedResponse(`/admin/users/${userId}/`)?.data || null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setUser(null);
+    const cachedUser = peekCachedResponse(`/admin/users/${userId}/`)?.data || null;
+    setUser(cachedUser);
     setError("");
     adminApi
       .detail(userId)
@@ -30,11 +31,12 @@ export default function AdminUserDetail() {
     }
   };
 
-  if (error) return <div className="alert alert-danger">{error}</div>;
+  if (error && !user) return <div className="alert alert-danger">{error}</div>;
   if (!user) return <div className="panel">Loading user...</div>;
 
   return (
     <>
+      {error && <div className="alert alert-danger" role="alert">{error} Showing the last loaded user details.</div>}
       <nav aria-label="breadcrumb" className="mb-3">
         <ol className="breadcrumb mb-0">
           <li className="breadcrumb-item"><Link to="/admin-panel">Admin Panel</Link></li>

@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { adminApi } from "../services/api.js";
+import { adminApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 
 export default function AdminUserDatasets() {
   const { userId } = useParams();
-  const [data, setData] = useState(null);
+  const cachedData = () => {
+    const datasets = peekCachedResponse(`/admin/users/${userId}/datasets/`)?.data;
+    const user = peekCachedResponse(`/admin/users/${userId}/`)?.data;
+    return datasets && user ? { ...datasets, user } : null;
+  };
+  const [data, setData] = useState(cachedData);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setData(null);
+    setData(cachedData());
     setError("");
 
     Promise.all([adminApi.datasets(userId), adminApi.detail(userId)])
@@ -25,7 +30,7 @@ export default function AdminUserDatasets() {
       });
   }, [userId]);
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="alert alert-danger" role="alert">
         {error}
@@ -42,6 +47,7 @@ export default function AdminUserDatasets() {
 
   return (
     <>
+      {error && <div className="alert alert-danger" role="alert">{error} Showing the last loaded datasets.</div>}
       <nav aria-label="breadcrumb" className="mb-3">
         <ol className="breadcrumb mb-0">
           <li className="breadcrumb-item">

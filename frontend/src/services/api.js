@@ -63,6 +63,13 @@ function cachedGet(url, config = {}, maxAge = GET_CACHE_TTL) {
   return request;
 }
 
+// Components can render a recently fetched response synchronously on mount,
+// avoiding even a one-frame loading flash when returning to a page.
+export function peekCachedResponse(url, config = {}, maxAge = GET_CACHE_TTL) {
+  const cached = getCache.get(cacheKey(url, config.params));
+  return cached?.response && Date.now() - cached.createdAt < maxAge ? cached.response : null;
+}
+
 const multipartHeaders = () => ({
   headers: {
     "Content-Type": undefined,
