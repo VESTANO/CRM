@@ -1,0 +1,74 @@
+services:
+  - type: web
+    name: vestano-crm
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    repo: https://github.com/VESTANO/CRM
+    branch: main
+    healthCheckPath: /api/auth/session/
+    preDeployCommand: python manage.py migrate --noinput
+    disk:
+      name: crm-media
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: DJANGO_TRUST_PROXY_SSL_HEADER
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vestano-crm-db
+          property: connectionString
+      - key: WEBPUSH_VAPID_PUBLIC_KEY
+        sync: false
+      - key: WEBPUSH_VAPID_PRIVATE_KEY
+        sync: false
+      - key: WEBPUSH_VAPID_SUBJECT
+        sync: false
+  - type: worker
+    name: vestano-crm-reminders
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    repo: https://github.com/VESTANO/CRM
+    branch: main
+    dockerCommand: "sh -c 'until python manage.py migrate --check; do sleep 5; done; exec python manage.py send_due_reminders --loop --interval 5'"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vestano-crm-db
+          property: connectionString
+      - key: DJANGO_ALLOWED_HOSTS
+        fromService:
+          name: vestano-crm
+          type: web
+          envVarKey: RENDER_EXTERNAL_HOSTNAME
+      - key: DJANGO_SECRET_KEY
+        fromService:
+          name: vestano-crm
+          type: web
+          envVarKey: DJANGO_SECRET_KEY
+      - key: WEBPUSH_VAPID_PUBLIC_KEY
+        fromService:
+          name: vestano-crm
+          type: web
+          envVarKey: WEBPUSH_VAPID_PUBLIC_KEY
+      - key: WEBPUSH_VAPID_PRIVATE_KEY
+        fromService:
+          name: vestano-crm
+          type: web
+          envVarKey: WEBPUSH_VAPID_PRIVATE_KEY
+      - key: WEBPUSH_VAPID_SUBJECT
+        fromService:
+          name: vestano-crm
+          type: web
+          envVarKey: WEBPUSH_VAPID_SUBJECT
+databases:
+  - name: vestano-crm-db
+    region: singapore
+    plan: 0.1c-256mb
+    postgresMajorVersion: "16"
+    diskSizeGB: 5
+    ipAllowList: []
