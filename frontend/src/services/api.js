@@ -232,7 +232,10 @@ apiClient.interceptors.response.use(
 );
 
 export const customersApi = {
-  list: (params = {}) => cachedGet("/customers/", { params }),
+  // People commonly move between the status tabs. Keep each recently viewed
+  // customer result available long enough for those revisits to be instant;
+  // customer edits still naturally refresh after this short window.
+  list: (params = {}) => cachedGet("/customers/", { params }, 120_000),
   detail: (datasetId, recordId) => cachedGet(`/datasets/${datasetId}/customers/${recordId}/`),
   detailById: (recordId) => cachedGet(`/customers/${recordId}/`),
   update: (datasetId, recordId, data, csrfToken) => (
