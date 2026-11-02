@@ -33,7 +33,7 @@ import { AttendanceAuthProvider } from "./hooks/useAttendanceAuth.jsx";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.MODE === "pages" || import.meta.env.VITE_PAGES_BUILD === "true" ? "/CRM" : "/"}>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />

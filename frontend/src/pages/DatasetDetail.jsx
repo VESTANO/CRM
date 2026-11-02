@@ -11,6 +11,8 @@ export default function DatasetDetail() {
   const location = useLocation();
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState("");
+  const [exportError, setExportError] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
   const [form, setForm] = useState({
     q: searchParams.get("q") || "",
     response: searchParams.get("response") || "",
@@ -55,6 +57,22 @@ export default function DatasetDetail() {
     return `/datasets/${id}?${next.toString()}`;
   };
 
+  const exportDataset = async () => {
+    if (!detail || isExporting) return;
+    setIsExporting(true);
+    setExportError("");
+    try {
+      await datasetsApi.export(detail.dataset.id, {
+        q: searchParams.get("q") || "",
+        response: searchParams.get("response") || "",
+      });
+    } catch (exportError) {
+      setExportError(exportError.response?.data?.detail || "Unable to export this dataset.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   if (error) {
     return <div className="alert alert-danger">{error}</div>;
   }
@@ -77,6 +95,7 @@ export default function DatasetDetail() {
       </nav>
 
       <TimedAlert message={location.state?.message} />
+      {exportError && <div className="alert alert-danger" role="alert">{exportError}</div>}
 
       <div className="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
         <div>
@@ -84,15 +103,14 @@ export default function DatasetDetail() {
           <p className="text-secondary mb-0">File: {dataset.original_filename}</p>
         </div>
         <div className="d-flex flex-wrap gap-2 action-bar">
-          <a
+          <button
             className="btn btn-success"
-            href={datasetsApi.exportUrl(dataset.id, {
-              q: searchParams.get("q") || "",
-              response: searchParams.get("response") || "",
-            })}
+            type="button"
+            disabled={isExporting}
+            onClick={exportDataset}
           >
-            <i className="bi bi-download me-1" />Export
-          </a>
+            <i className="bi bi-download me-1" />{isExporting ? "Preparing…" : "Export"}
+          </button>
           <Link className="btn btn-outline-secondary" to={`/datasets/${dataset.id}/rename`}>
             <i className="bi bi-pencil me-1" />Rename
           </Link>

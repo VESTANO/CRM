@@ -87,9 +87,9 @@ export default function AdminUserDatasets() {
                     <td data-label="Customer Count">{dataset.customer_count}</td>
                     <td data-label="Created Date">{formatDateTime(dataset.uploaded_at)}</td>
                     <td data-label="Actions">
-                      <a className="btn btn-outline-primary btn-sm" href={`/datasets/${dataset.id}`}>
+                      <Link className="btn btn-outline-primary btn-sm" to={`/datasets/${dataset.id}`}>
                         Open Dataset
-                      </a>
+                      </Link>
                     </td>
                   </tr>
                 ))}

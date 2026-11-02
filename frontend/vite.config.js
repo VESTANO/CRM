@@ -3,12 +3,15 @@ import react from "@vitejs/plugin-react";
 
 const djangoTarget = process.env.VITE_DJANGO_URL || "http://127.0.0.1:8001";
 const devHost = process.env.VITE_DEV_HOST || "0.0.0.0";
+const pagesBuild = process.env.VITE_PAGES_BUILD === "true";
 
-export default defineConfig(({ command }) => ({
-  base: command === "build" ? "/static/frontend/" : "/",
+export default defineConfig(({ command, mode }) => {
+  const isPagesBuild = mode === "pages" || pagesBuild;
+  return ({
+  base: command === "build" ? (isPagesBuild ? "/CRM/" : "/static/frontend/") : "/",
   plugins: [react()],
   build: {
-    outDir: "../backend/static/frontend",
+    outDir: isPagesBuild ? "dist" : "../backend/static/frontend",
     emptyOutDir: true,
   },
   server: {
@@ -29,4 +32,5 @@ export default defineConfig(({ command }) => ({
       },
     },
   },
-}));
+  });
+});

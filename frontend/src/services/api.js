@@ -1,31 +1,116 @@
 import axios from "axios";
+import * as XLSX from "xlsx";
+import {
+  attendanceSupabase,
+  ATTENDANCE_SUPABASE_PUBLISHABLE_KEY,
+  ATTENDANCE_SUPABASE_URL,
+} from "./attendanceSupabase.js";
+
+const crmApiUrl = `${ATTENDANCE_SUPABASE_URL}/functions/v1/crm-api/api`;
+const pendingImports = new Map();
 
 export const apiClient = axios.create({
-  baseURL: "/api",
-  withCredentials: true,
+  baseURL: crmApiUrl,
+  withCredentials: false,
   headers: {
+    apikey: ATTENDANCE_SUPABASE_PUBLISHABLE_KEY,
     "Content-Type": "application/json",
   },
 });
 
-const csrfHeaders = (csrfToken) => ({
+const csrfHeaders = () => ({});
+
+const multipartHeaders = () => ({
   headers: {
-    "X-CSRFToken": csrfToken,
+    "Content-Type": undefined,
   },
 });
 
-const multipartHeaders = (csrfToken) => ({
-  headers: {
-    "X-CSRFToken": csrfToken,
-    "Content-Type": "multipart/form-data",
-  },
+apiClient.interceptors.request.use(async (config) => {
+  config.headers.set("apikey", ATTENDANCE_SUPABASE_PUBLISHABLE_KEY);
+  const { data, error } = await attendanceSupabase.auth.getSession();
+  if (error) throw error;
+  if (data.session?.access_token) config.headers.set("Authorization", `Bearer ${data.session.access_token}`);
+  else config.headers.delete("Authorization");
+  return config;
 });
+
+function apiError(detail, status = 400) {
+  const error = new Error(detail);
+  error.response = { status, data: { detail } };
+  return error;
+}
+
+async function currentCrmUser() {
+  const { data: sessionData, error: sessionError } = await attendanceSupabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  const session = sessionData.session;
+  if (!session?.user?.id) return null;
+  const { data: profile, error } = await attendanceSupabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+  if (error) throw error;
+  if (!profile?.active) {
+    await attendanceSupabase.auth.signOut();
+    return null;
+  }
+  const isAdmin = ["admin", "super_admin"].includes(String(profile.role || "").toLowerCase());
+  return {
+    id: profile.id,
+    username: profile.employee_id || profile.email || "user",
+    email: profile.email || "",
+    name: profile.name || profile.employee_id || "",
+    is_staff: isAdmin,
+    is_superuser: profile.role === "super_admin",
+    is_admin: isAdmin,
+    is_active: Boolean(profile.active),
+    date_joined: profile.created_at,
+  };
+}
 
 export const authApi = {
-  session: () => apiClient.get("/auth/session/"),
-  login: (credentials, csrfToken) => apiClient.post("/auth/login/", credentials, csrfHeaders(csrfToken)),
-  logout: (csrfToken) => apiClient.post("/auth/logout/", {}, csrfHeaders(csrfToken)),
+  session: async () => {
+    const user = await currentCrmUser();
+    return { data: { isAuthenticated: Boolean(user), user, csrfToken: "" } };
+  },
+  login: async (credentials) => {
+    const identity = String(credentials.username || "").trim();
+    if (!identity || !credentials.password) throw apiError("Enter your username and password.");
+    let email = identity;
+    if (!identity.includes("@")) {
+      const { data, error } = await attendanceSupabase.rpc("resolve_login_email", { identity });
+      if (error) throw apiError(error.message || "Unable to look up that employee ID.");
+      email = data || "";
+    }
+    if (!email) throw apiError("That username or employee ID is not registered.");
+    const { data, error } = await attendanceSupabase.auth.signInWithPassword({ email, password: credentials.password });
+    if (error) throw apiError(error.message || "Invalid username or password.", 401);
+    const user = await currentCrmUser();
+    if (!user) throw apiError("This account is inactive or has no CRM profile.", 403);
+    return { data: { user, csrfToken: "" } };
+  },
+  logout: async () => {
+    const { error } = await attendanceSupabase.auth.signOut();
+    if (error) throw error;
+    return { data: { ok: true } };
+  },
 };
+
+function maskImportValue(value) {
+  if (value === null || value === undefined || value === "") return "";
+  let text = String(value).replace(/([A-Z0-9._%+-]+)@([A-Z0-9.-]+\.[A-Z]{2,})/gi, (_match, local, domain) => {
+    const masked = local.length <= 2 ? "*".repeat(local.length) : `${local[0]}***${local.at(-1)}`;
+    return `${masked}@${domain}`;
+  });
+  const digits = (text.match(/\d/g) || []).length;
+  if (digits >= 7) {
+    let seen = 0;
+    text = text.split("").reverse().map((character) => {
+      if (!/\d/.test(character)) return character;
+      seen += 1;
+      return seen <= 2 ? character : "X";
+    }).reverse().join("");
+  }
+  return text;
+}
 
 export const overtimeApi = {
   list: (attendanceAccessToken = "") => apiClient.get("/overtime/", attendanceAccessToken ? { headers: { Authorization: `Bearer ${attendanceAccessToken}` } } : undefined),
@@ -46,33 +131,34 @@ export const datasetsApi = {
   remove: (datasetId, csrfToken) => (
     apiClient.delete(`/datasets/${datasetId}/manage/`, csrfHeaders(csrfToken))
   ),
-  exportUrl: (datasetId, params = {}) => {
-    const query = new URLSearchParams(params);
-    const queryString = query.toString();
-    return `/api/datasets/${datasetId}/export/${queryString ? `?${queryString}` : ""}`;
+  export: async (datasetId, params = {}) => {
+    const { data } = await apiClient.get(`/datasets/${datasetId}/export/`, { params });
+    const workbook = XLSX.utils.book_new();
+    const usedNames = new Set();
+    for (const sheet of data.sheets || []) {
+      let name = String(sheet.name || "Customers").replace(/[\\/?*:[\]]/g, " ").slice(0, 31) || "Customers";
+      let candidate = name;
+      let suffix = 2;
+      while (usedNames.has(candidate.toLowerCase())) {
+        const suffixText = ` ${suffix++}`;
+        candidate = `${name.slice(0, 31 - suffixText.length)}${suffixText}`;
+      }
+      usedNames.add(candidate.toLowerCase());
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([sheet.headers || [], ...(sheet.rows || [])]), candidate);
+    }
+    if (!workbook.SheetNames.length) XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["No records"]]), "Customers");
+    const filename = String(data.filename || "customers").replace(/[\\/:*?"<>|]/g, "_").trim() || "customers";
+    XLSX.writeFile(workbook, `${filename}.xlsx`);
+    return { data };
   },
 };
 
-let sessionCheckPromise = null;
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const requestUrl = error.config?.url || "";
-    if (
-      [401, 403].includes(error.response?.status) &&
-      !requestUrl.includes("/auth/session/") &&
-      !requestUrl.includes("/auth/login/") &&
-      !requestUrl.includes("/auth/logout/")
-    ) {
-      if (!sessionCheckPromise) {
-        sessionCheckPromise = apiClient.get("/auth/session/")
-          .then(({ data }) => {
-            if (!data.isAuthenticated) window.dispatchEvent(new Event("crm:session-expired"));
-          })
-          .catch(() => window.dispatchEvent(new Event("crm:session-expired")))
-          .finally(() => { sessionCheckPromise = null; });
-      }
-      await sessionCheckPromise;
+    if (error.response?.status === 401 && typeof window !== "undefined") {
+      await attendanceSupabase.auth.signOut();
+      window.dispatchEvent(new Event("crm:session-expired"));
     }
     return Promise.reject(error);
   }
@@ -98,10 +184,83 @@ export const callbacksApi = {
 };
 
 export const importApi = {
-  inspect: (formData, csrfToken) => apiClient.post("/import/inspect/", formData, multipartHeaders(csrfToken)),
-  confirm: (pendingImportToken, csrfToken) => (
-    apiClient.post("/import/confirm/", { pendingImportToken }, csrfHeaders(csrfToken))
-  ),
+  inspect: async (formData) => {
+    const file = formData.get("excel_file");
+    const datasetName = String(formData.get("dataset_name") || "").trim();
+    if (!datasetName || datasetName.length > 255) throw apiError("Enter a dataset name up to 255 characters.");
+    if (!(file instanceof File) || !file.size) throw apiError("Choose an .xlsx workbook to inspect.");
+    if (!file.name.toLowerCase().endsWith(".xlsx")) throw apiError("Upload an .xlsx workbook.");
+    if (file.size > 20 * 1024 * 1024) throw apiError("The workbook must be 20 MB or smaller.");
+    let workbook;
+    try {
+      workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+    } catch {
+      throw apiError("The uploaded file is not a readable .xlsx workbook.");
+    }
+    const sheets = workbook.SheetNames.map((name) => {
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: "", raw: false });
+      const rawHeaders = rows[0] || [];
+      const columnNames = rawHeaders.map((value, index) => value == null || String(value).trim() === "" ? `Unnamed column ${index + 1}` : String(value).trim());
+      const seen = new Map();
+      const fieldKeys = columnNames.map((value, index) => {
+        const base = value.toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/[\s-]+/g, "_") || `column_${index + 1}`;
+        const count = (seen.get(base) || 0) + 1;
+        seen.set(base, count);
+        return count === 1 ? base : `${base}_${count}`;
+      });
+      const dataRows = rows.slice(1).map((row) => row.map((value) => value instanceof Date ? value.toISOString() : value));
+      return {
+        name,
+        rows: dataRows.length,
+        columns: columnNames.length,
+        column_names: columnNames,
+        field_keys: fieldKeys,
+        data_rows: dataRows,
+        preview_headers: columnNames,
+        preview_rows: dataRows.slice(0, 5).map((row) => row.map(maskImportValue)),
+      };
+    });
+    if (!sheets.length || sheets.every((sheet) => !sheet.column_names.length)) throw apiError("No workbook headers were found.");
+    const token = crypto.randomUUID();
+    const inspection = { filename: file.name.split(/[\\/]/).pop(), sheet_names: workbook.SheetNames, sheets };
+    pendingImports.set(token, { datasetName, inspection });
+    return { data: { datasetName, pendingImportToken: token, inspection: { ...inspection, sheets: sheets.map(({ data_rows, ...sheet }) => sheet) } } };
+  },
+  confirm: async (pendingImportToken) => {
+    const pending = pendingImports.get(pendingImportToken);
+    if (!pending) throw apiError("The inspected workbook has expired. Please upload it again.");
+    const sheetMetadata = pending.inspection.sheets.map(({ data_rows, ...sheet }) => sheet);
+    let createdDatasetId;
+    try {
+      const { data: created } = await apiClient.post("/import/confirm/", {
+        datasetName: pending.datasetName,
+        inspection: { filename: pending.inspection.filename, sheets: sheetMetadata },
+      });
+      const dataset = created.dataset;
+      createdDatasetId = dataset.id;
+      let imported = 0;
+      let skipped = 0;
+      for (const sheet of pending.inspection.sheets) {
+        const rows = [];
+        sheet.data_rows.forEach((values, index) => {
+          if (!values.some((value) => value !== "" && value != null)) { skipped += 1; return; }
+          const original_data = {};
+          sheet.field_keys.forEach((key, columnIndex) => { if (columnIndex < values.length) original_data[key] = values[columnIndex]; });
+          rows.push({ sheet_name: sheet.name, row_number: index + 2, original_data });
+        });
+        for (let offset = 0; offset < rows.length; offset += 250) {
+          const chunk = rows.slice(offset, offset + 250);
+          await apiClient.post(`/import/datasets/${dataset.id}/batch/`, { rows: chunk });
+          imported += chunk.length;
+        }
+      }
+      pendingImports.delete(pendingImportToken);
+      return { data: { dataset, summary: { rows_found: pending.inspection.sheets.reduce((sum, sheet) => sum + sheet.data_rows.length, 0), rows_imported: imported, rows_skipped: skipped } } };
+    } catch (error) {
+      if (createdDatasetId) await apiClient.delete(`/import/datasets/${createdDatasetId}/`).catch(() => {});
+      throw error;
+    }
+  },
 };
 
 export const remindersApi = {

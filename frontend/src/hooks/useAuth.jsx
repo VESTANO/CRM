@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authApi } from "../services/api.js";
+import { attendanceSupabase } from "../services/attendanceSupabase.js";
 
 const AuthContext = createContext(null);
 
@@ -21,21 +22,32 @@ export function AuthProvider({ children }) {
       setUser(null);
       setIsLoading(false);
     });
-    const expireSession = () => setUser(null);
+    const expireSession = () => { setUser(null); setCsrfToken(""); };
     window.addEventListener("crm:session-expired", expireSession);
-    return () => window.removeEventListener("crm:session-expired", expireSession);
+    const { data: authListener } = attendanceSupabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) {
+        expireSession();
+        return;
+      }
+      if (["SIGNED_IN", "TOKEN_REFRESHED", "USER_UPDATED"].includes(event)) {
+        window.setTimeout(() => refreshSession().catch(expireSession), 0);
+      }
+    });
+    return () => {
+      window.removeEventListener("crm:session-expired", expireSession);
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (credentials) => {
-    const session = await refreshSession();
-    await authApi.login(credentials, session.csrfToken);
+    await authApi.login(credentials);
     return refreshSession();
   };
 
   const logout = async () => {
-    await authApi.logout(csrfToken);
+    await authApi.logout();
     setUser(null);
-    await refreshSession();
+    setCsrfToken("");
   };
 
   const value = useMemo(

@@ -48,15 +48,15 @@ export default function AdminUserDetail() {
           <p className="text-secondary mb-0">User account, access status, and CRM ownership.</p>
         </div>
         <div className="d-flex flex-wrap gap-2">
-          <a className="btn btn-primary" href={`/admin-panel/users/${user.id}/edit`}>Edit user</a>
+          <Link className="btn btn-primary" to={`/admin-panel/users/${user.id}/edit`}>Edit user</Link>
           {!user.is_admin && (
-            <a className="btn btn-outline-secondary" href={`/admin-panel/users/${user.id}/password`}>
+            <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/password`}>
               Reset password
-            </a>
+            </Link>
           )}
-          <a className="btn btn-outline-secondary" href={`/admin-panel/users/${user.id}/datasets`}>
+          <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/datasets`}>
             View datasets
-          </a>
+          </Link>
         </div>
       </div>
 
