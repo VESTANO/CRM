@@ -246,3 +246,17 @@ td:has(.btn-success[disabled]) {
 .request-error { border-left: 4px solid #b02a37; }
 @keyframes request-shimmer { to { background-position: -240% 0; } }
 @media (prefers-reduced-motion: reduce) { .request-skeleton { animation: none; } }
+
+.crm-boot-loader { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem; background: #f5f1e9; color: #172b3a; }
+.crm-boot-card { width: min(100%, 28rem); padding: 2.25rem; border: 1px solid #9aacb7; border-radius: 1.25rem; background: #fff; box-shadow: 0 1.5rem 4rem rgba(23, 43, 58, .12); text-align: center; }
+.crm-boot-brand { display: inline-flex; align-items: center; gap: .7rem; color: #172b3a; text-align: left; letter-spacing: .12em; }
+.crm-boot-brand strong, .crm-boot-brand small { display: block; font-size: .85rem; font-weight: 800; }
+.crm-boot-brand small { margin-top: .1rem; color: #405565; font-size: .68rem; letter-spacing: .06em; }
+.crm-boot-spinner { width: 2.75rem; height: 2.75rem; margin: 2rem auto 1.15rem; border: .28rem solid #dce4e8; border-top-color: #d97736; border-radius: 50%; animation: crm-boot-spin .8s linear infinite; }
+.crm-boot-card h1 { margin: 0; font-size: 1.2rem; font-family: inherit; font-weight: 750; }
+.crm-boot-card p { margin: .55rem auto 1.5rem; color: #405565; font-size: .92rem; }
+.crm-boot-progress { height: .38rem; overflow: hidden; border-radius: 999px; background: #e5ebee; }
+.crm-boot-progress span { display: block; width: 45%; height: 100%; border-radius: inherit; background: #d97736; animation: crm-boot-progress 1.2s ease-in-out infinite; }
+@keyframes crm-boot-spin { to { transform: rotate(360deg); } }
+@keyframes crm-boot-progress { 0% { transform: translateX(-120%); } 100% { transform: translateX(260%); } }
+@media (prefers-reduced-motion: reduce) { .crm-boot-spinner, .crm-boot-progress span { animation: none; } }

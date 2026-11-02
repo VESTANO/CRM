@@ -5,6 +5,7 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import AdminRoute from "./components/AdminRoute.jsx";
 import { AuthProvider } from "./hooks/useAuth.jsx";
 import { AttendanceAuthProvider } from "./hooks/useAttendanceAuth.jsx";
+import { AppBootLoader } from "./components/RequestState.jsx";
 
 // Route-level chunks make the initial CRM shell fast; each screen is fetched
 // only when it is opened instead of making every page block the first render.
@@ -39,7 +40,7 @@ export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.MODE === "pages" || import.meta.env.VITE_PAGES_BUILD === "true" ? "/CRM" : "/"}>
       <AuthProvider>
-        <Suspense fallback={<div className="crm-loading" role="status">Loading page…</div>}>
+        <Suspense fallback={<AppBootLoader label="Opening CRM page" />}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route

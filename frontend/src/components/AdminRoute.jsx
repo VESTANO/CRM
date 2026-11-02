@@ -1,6 +1,7 @@
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "../hooks/useAuth.jsx";
+import { AppBootLoader } from "./RequestState.jsx";
 
 export default function AdminRoute({ children }) {
   const { user, isLoading, logout } = useAuth();
@@ -18,8 +19,8 @@ export default function AdminRoute({ children }) {
       .catch(() => setSwitchingAccount(false));
   }, [isLoading, user, switchingAccount, logout, navigate, location]);
 
-  if (isLoading) return <div className="crm-loading">Loading CRM...</div>;
+  if (isLoading) return <AppBootLoader />;
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
-  if (!user.is_admin) return <div className="crm-loading">Switching to admin sign-in...</div>;
+  if (!user.is_admin) return <AppBootLoader label="Returning to secure sign-in" />;
   return children;
 }
