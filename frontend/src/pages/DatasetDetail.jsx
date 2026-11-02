@@ -11,6 +11,7 @@ export default function DatasetDetail() {
   const location = useLocation();
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [exportError, setExportError] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [form, setForm] = useState({
@@ -29,7 +30,7 @@ export default function DatasetDetail() {
 
   useEffect(() => {
     setForm({ q: query.q, response: query.response });
-    setDetail(null);
+    setIsRefreshing(Boolean(detail && String(detail.dataset?.id) === String(id)));
     setError("");
     datasetsApi
       .detail(id, query)
@@ -40,7 +41,8 @@ export default function DatasetDetail() {
         } else {
           setError("Unable to load this dataset.");
         }
-      });
+      })
+      .finally(() => setIsRefreshing(false));
   }, [id, query]);
 
   const submitFilters = (event) => {
@@ -73,11 +75,13 @@ export default function DatasetDetail() {
     }
   };
 
-  if (error) {
+  const isCurrentDataset = detail && String(detail.dataset?.id) === String(id);
+
+  if (error && !isCurrentDataset) {
     return <div className="alert alert-danger">{error}</div>;
   }
 
-  if (!detail) {
+  if (!isCurrentDataset) {
     return <div className="panel">Loading dataset...</div>;
   }
 
@@ -96,6 +100,7 @@ export default function DatasetDetail() {
 
       <TimedAlert message={location.state?.message} />
       {exportError && <div className="alert alert-danger" role="alert">{exportError}</div>}
+      {error && <div className="alert alert-danger" role="alert">{error} Showing the last loaded dataset view.</div>}
 
       <div className="page-header d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
         <div>
@@ -120,6 +125,7 @@ export default function DatasetDetail() {
           <Link className="btn btn-outline-secondary" to="/datasets">Back to Customer Lists</Link>
         </div>
       </div>
+      {isRefreshing && <div className="customer-directory-refresh mb-3" role="status"><span className="spinner-border spinner-border-sm" aria-hidden="true" /> Updating customer records</div>}
 
       <div className="row g-3 mb-4">
         <SummaryItem label="Customers" value={dataset.customer_count} valueClass="fs-4" />

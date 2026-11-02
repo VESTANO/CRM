@@ -6,7 +6,10 @@ import { attendanceSupabase, runAttendanceAuthTask } from "./attendanceSupabase.
 const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
 const getCache = new Map();
-const GET_CACHE_TTL = 30_000;
+// Navigation should feel instant when a user returns to a CRM page. Mutations
+// use their own endpoints, while read data is refreshed after this short,
+// session-only window.
+const GET_CACHE_TTL = 120_000;
 export const API_TIMEOUT_MS = 15_000;
 
 // XLSX is a large dependency.  It is only needed while importing or exporting a
