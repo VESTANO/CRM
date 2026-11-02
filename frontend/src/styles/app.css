@@ -260,3 +260,5 @@ td:has(.btn-success[disabled]) {
 @keyframes crm-boot-spin { to { transform: rotate(360deg); } }
 @keyframes crm-boot-progress { 0% { transform: translateX(-120%); } 100% { transform: translateX(260%); } }
 @media (prefers-reduced-motion: reduce) { .crm-boot-spinner, .crm-boot-progress span { animation: none; } }
+
+.customer-directory-refresh { display: inline-flex; align-items: center; gap: .4rem; color: #405565; font-size: .8rem; white-space: nowrap; }

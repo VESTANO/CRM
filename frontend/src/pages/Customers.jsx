@@ -34,10 +34,14 @@ export default function Customers() {
   const [searchText, setSearchText] = useState(query);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     let active = true;
-    setData(null);
+    // Keep the current directory on screen while a filter or page change is
+    // being requested. Clearing it here caused the whole view to flash back
+    // to its loading state whenever a status tab was selected.
+    setIsRefreshing(Boolean(data));
     setError("");
     customersApi.list({ page, status: status || undefined, q: query || undefined })
       .then(({ data: responseData }) => {
@@ -45,6 +49,9 @@ export default function Customers() {
       })
       .catch(() => {
         if (active) setError("Unable to load customers.");
+      })
+      .finally(() => {
+        if (active) setIsRefreshing(false);
       });
     return () => { active = false; };
   }, [page, status, query]);
@@ -83,11 +90,11 @@ export default function Customers() {
     setSearchParams(status ? { status } : {});
   };
 
-  if (error) return <div className="alert alert-danger">{error}</div>;
-
   const results = data?.results || [];
   const pagination = data?.pagination;
-  const selectedStatus = data?.selectedStatus || "";
+  // Use the URL immediately, while the previous table remains visible during
+  // the background request for the newly selected filter.
+  const selectedStatus = status;
   const detailColumns = Array.from(new Map(
     results.flatMap(({ fieldRows }) => fieldRows.map((field) => field.label))
       .filter((label) => !isClientNameLabel(label) && !RESERVED_CUSTOMER_COLUMNS.has(normalizeColumnLabel(label)))
@@ -109,6 +116,8 @@ export default function Customers() {
           Customer details from every accessible dataset, with 50 customers per page.
         </p>
       </div>
+
+      {error && <div className="alert alert-danger" role="alert">{error} {data && "Showing the last loaded customer list."}</div>}
 
       {!data ? (
         <div className="panel">Loading customers...</div>
@@ -157,7 +166,10 @@ export default function Customers() {
             <span className="text-secondary small">
               {pagination.count} {query ? `customers matching “${data.searchQuery}”` : "customers"}
             </span>
-            <span className="badge text-bg-light">Page {pagination.page} of {pagination.numPages}</span>
+            <div className="d-flex align-items-center gap-2">
+              {isRefreshing && <span className="customer-directory-refresh" role="status"><span className="spinner-border spinner-border-sm" aria-hidden="true" /> Updating</span>}
+              <span className="badge text-bg-light">Page {pagination.page} of {pagination.numPages}</span>
+            </div>
           </div>
           {results.length ? <><div className="table-responsive panel p-0 customer-directory-table">
             <table className="table table-hover align-middle mb-0">
