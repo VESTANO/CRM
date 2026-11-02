@@ -1,19 +1,15 @@
 import axios from "axios";
 import * as XLSX from "xlsx";
-import {
-  attendanceSupabase,
-  ATTENDANCE_SUPABASE_PUBLISHABLE_KEY,
-  ATTENDANCE_SUPABASE_URL,
-} from "./attendanceSupabase.js";
+import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./crmSupabase.js";
 
-const crmApiUrl = `${ATTENDANCE_SUPABASE_URL}/functions/v1/crm-api/api`;
+const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
 
 export const apiClient = axios.create({
   baseURL: crmApiUrl,
   withCredentials: false,
   headers: {
-    apikey: ATTENDANCE_SUPABASE_PUBLISHABLE_KEY,
+    apikey: CRM_SUPABASE_PUBLISHABLE_KEY,
     "Content-Type": "application/json",
   },
 });
@@ -27,8 +23,8 @@ const multipartHeaders = () => ({
 });
 
 apiClient.interceptors.request.use(async (config) => {
-  config.headers.set("apikey", ATTENDANCE_SUPABASE_PUBLISHABLE_KEY);
-  const { data, error } = await attendanceSupabase.auth.getSession();
+  config.headers.set("apikey", CRM_SUPABASE_PUBLISHABLE_KEY);
+  const { data, error } = await crmSupabase.auth.getSession();
   if (error) throw error;
   if (data.session?.access_token) config.headers.set("Authorization", `Bearer ${data.session.access_token}`);
   else config.headers.delete("Authorization");
@@ -42,14 +38,14 @@ function apiError(detail, status = 400) {
 }
 
 async function currentCrmUser() {
-  const { data: sessionData, error: sessionError } = await attendanceSupabase.auth.getSession();
+  const { data: sessionData, error: sessionError } = await crmSupabase.auth.getSession();
   if (sessionError) throw sessionError;
   const session = sessionData.session;
   if (!session?.user?.id) return null;
-  const { data: profile, error } = await attendanceSupabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+  const { data: profile, error } = await crmSupabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
   if (error) throw error;
   if (!profile?.active) {
-    await attendanceSupabase.auth.signOut();
+    await crmSupabase.auth.signOut();
     return null;
   }
   const isAdmin = ["admin", "super_admin"].includes(String(profile.role || "").toLowerCase());
@@ -74,21 +70,37 @@ export const authApi = {
   login: async (credentials) => {
     const identity = String(credentials.username || "").trim();
     if (!identity || !credentials.password) throw apiError("Enter your username and password.");
+    try {
+      const { data: legacy } = await apiClient.post("/auth/legacy-login/", {
+        identity,
+        password: credentials.password,
+      });
+      const { error: sessionError } = await crmSupabase.auth.setSession({
+        access_token: legacy.access_token,
+        refresh_token: legacy.refresh_token,
+      });
+      if (sessionError) throw apiError(sessionError.message || "Unable to start your CRM session.", 401);
+      const user = await currentCrmUser();
+      if (!user) throw apiError("This account is inactive or has no CRM profile.", 403);
+      return { data: { user, csrfToken: "" } };
+    } catch (error) {
+      if (error.response?.status !== 404) throw error;
+    }
     let email = identity;
     if (!identity.includes("@")) {
-      const { data, error } = await attendanceSupabase.rpc("resolve_login_email", { identity });
+      const { data, error } = await crmSupabase.rpc("resolve_login_email", { identity });
       if (error) throw apiError(error.message || "Unable to look up that employee ID.");
       email = data || "";
     }
     if (!email) throw apiError("That username or employee ID is not registered.");
-    const { data, error } = await attendanceSupabase.auth.signInWithPassword({ email, password: credentials.password });
+    const { data, error } = await crmSupabase.auth.signInWithPassword({ email, password: credentials.password });
     if (error) throw apiError(error.message || "Invalid username or password.", 401);
     const user = await currentCrmUser();
     if (!user) throw apiError("This account is inactive or has no CRM profile.", 403);
     return { data: { user, csrfToken: "" } };
   },
   logout: async () => {
-    const { error } = await attendanceSupabase.auth.signOut();
+    const { error } = await crmSupabase.auth.signOut();
     if (error) throw error;
     return { data: { ok: true } };
   },
@@ -113,9 +125,9 @@ function maskImportValue(value) {
 }
 
 export const overtimeApi = {
-  list: (attendanceAccessToken = "") => apiClient.get("/overtime/", attendanceAccessToken ? { headers: { Authorization: `Bearer ${attendanceAccessToken}` } } : undefined),
+  list: () => apiClient.get("/overtime/"),
   create: (payload, csrfToken) => apiClient.post("/overtime/", payload, csrfHeaders(csrfToken)),
-  review: (requestId, action, payload, csrfToken, attendanceAccessToken = "") => apiClient.post(`/overtime/${requestId}/${action}/`, payload, { ...csrfHeaders(csrfToken), ...(attendanceAccessToken ? { headers: { ...csrfHeaders(csrfToken).headers, Authorization: `Bearer ${attendanceAccessToken}` } } : {}) }),
+  review: (requestId, action, payload, csrfToken) => apiClient.post(`/overtime/${requestId}/${action}/`, payload, csrfHeaders(csrfToken)),
 };
 
 export const dashboardApi = {
@@ -157,7 +169,7 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401 && typeof window !== "undefined") {
-      await attendanceSupabase.auth.signOut();
+      await crmSupabase.auth.signOut();
       window.dispatchEvent(new Event("crm:session-expired"));
     }
     return Promise.reject(error);

@@ -3,6 +3,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const vapidPublicKey = Deno.env.get("WEBPUSH_VAPID_PUBLIC_KEY") || "";
 const adminClient = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -35,6 +36,319 @@ function checkDb(error: any) {
   if (!error) return;
   const status = error.code === "23505" ? 409 : error.code === "23503" ? 400 : 400;
   throw new ApiError(status, error.message || "Database request failed.");
+}
+
+function bytesToBase64(value: Uint8Array) {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function verifyDjangoPassword(password: string, encoded: string) {
+  const parts = encoded.split("$");
+  if (parts.length !== 4 || parts[0] !== "pbkdf2_sha256") return false;
+  const iterations = Number(parts[1]);
+  if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > 10_000_000) return false;
+  try {
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+    const digest = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: "PBKDF2", hash: "SHA-256", salt: new TextEncoder().encode(parts[2]), iterations },
+      key,
+      256,
+    ));
+    const actual = bytesToBase64(digest);
+    if (actual.length !== parts[3].length) return false;
+    let difference = 0;
+    for (let index = 0; index < actual.length; index++) difference |= actual.charCodeAt(index) ^ parts[3].charCodeAt(index);
+    return difference === 0;
+  } catch {
+    return false;
+  }
+}
+
+function legacyRole(user: any) {
+  return user.is_staff || user.is_superuser ? "admin" : "employee";
+}
+
+function legacyDisplayName(user: any) {
+  return [user.first_name, user.last_name].map((part) => String(part || "").trim()).filter(Boolean).join(" ") || String(user.username || "");
+}
+
+function legacyAuthClient(request: Request) {
+  const key = request.headers.get("apikey") || anonKey;
+  if (!key) fail(503, "Supabase sign-in is not configured.");
+  return createClient(supabaseUrl, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+async function handleLegacyLogin(request: Request, body: any) {
+  const identity = String(body?.identity || "").trim().toLocaleLowerCase();
+  const password = typeof body?.password === "string" ? body.password : "";
+  if (!identity || !password) fail(400, "Enter your username and password.");
+
+  const { data: accounts, error } = await adminClient.from("crm_legacy_auth").select("*");
+  checkDb(error);
+  const usernameMatches = (accounts || []).filter((item: any) => String(item.username).toLocaleLowerCase() === identity);
+  const emailMatches = (accounts || []).filter((item: any) => String(item.original_email || "").toLocaleLowerCase() === identity);
+  const matches = usernameMatches.length ? usernameMatches : emailMatches;
+  if (!matches.length) fail(404, "No imported CRM account matches that username or email.");
+  if (matches.length > 1) fail(409, "More than one imported account uses that email. Sign in with your username.");
+
+  const account = matches[0];
+  if (!account.is_active) fail(403, "This CRM account is inactive.");
+  if (!account.password_hash) {
+    const authClient = legacyAuthClient(request);
+    const { data, error: signInError } = await authClient.auth.signInWithPassword({ email: account.auth_email, password });
+    if (signInError || !data.session) fail(401, "Invalid username or password.");
+    return json(200, { access_token: data.session.access_token, refresh_token: data.session.refresh_token });
+  }
+  if (account.password_hash.startsWith("!") || !await verifyDjangoPassword(password, account.password_hash)) {
+    fail(401, account.password_hash.startsWith("!")
+      ? "This account has no usable password. Ask an administrator to reset it."
+      : "Invalid username or password.");
+  }
+
+  const { error: updateError } = await adminClient.auth.admin.updateUserById(account.auth_user_id, { password });
+  if (updateError) {
+    console.error("Legacy CRM password upgrade failed:", updateError.message);
+    fail(400, "The old password was verified, but Supabase could not accept it. Ask an administrator to reset the password.");
+  }
+  const { error: clearError } = await adminClient.from("crm_legacy_auth")
+    .update({ password_hash: null, password_upgraded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("local_user_id", account.local_user_id);
+  checkDb(clearError);
+  const authClient = legacyAuthClient(request);
+  const { data, error: signInError } = await authClient.auth.signInWithPassword({ email: account.auth_email, password });
+  if (signInError || !data.session) fail(401, "Your password was upgraded. Sign in again with the same username and password.");
+  return json(200, { access_token: data.session.access_token, refresh_token: data.session.refresh_token });
+}
+
+async function allAuthUsers() {
+  const users: any[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw error;
+    users.push(...(data.users || []));
+    if (!data.users || data.users.length < 1000) return users;
+  }
+  throw new Error("Auth user list exceeded the migration limit.");
+}
+
+async function upsertMigrationRows(table: string, rows: any[]) {
+  for (let start = 0; start < rows.length; start += 250) {
+    const { error } = await adminClient.from(table).upsert(rows.slice(start, start + 250), { onConflict: "id" });
+    checkDb(error);
+  }
+}
+
+function remapUserId(id: any, users: Map<string, string>, label: string, nullable = false) {
+  if (id === null || id === undefined || id === "") {
+    if (nullable) return null;
+    fail(400, `The local migration is missing an account for ${label}.`);
+  }
+  const mapped = users.get(String(id));
+  if (!mapped) fail(400, `The local migration references an unknown account for ${label}.`);
+  return mapped;
+}
+
+async function migrateLegacyData(request: Request, body: any) {
+  const token = request.headers.get("x-crm-migration-token") || "";
+  if (!token) fail(401, "Migration authorization is required.");
+  const tokenHash = await sha256Hex(token);
+  const { data: authorization, error: authorizationError } = await adminClient.from("crm_migration_authorizations")
+    .select("token_hash,expires_at,used_at").eq("token_hash", tokenHash).maybeSingle();
+  checkDb(authorizationError);
+  if (!authorization || authorization.used_at || new Date(authorization.expires_at).getTime() <= Date.now()) {
+    fail(401, "Migration authorization is invalid, expired, or already used.");
+  }
+  if (body?.version !== 1 || !Array.isArray(body.users) || body.users.length === 0) fail(400, "The local CRM migration payload is invalid.");
+
+  const [profilesResult, legacyResult, authUsers] = await Promise.all([
+    adminClient.from("profiles").select("id,employee_id,email"),
+    adminClient.from("crm_legacy_auth").select("*"),
+    allAuthUsers(),
+  ]);
+  checkDb(profilesResult.error); checkDb(legacyResult.error);
+  const profiles = profilesResult.data || [];
+  const existingLegacy = new Map((legacyResult.data || []).map((item: any) => [String(item.local_user_id), item]));
+  const authById = new Map(authUsers.map((item: any) => [String(item.id), item]));
+  const authByEmail = new Map(authUsers.map((item: any) => [String(item.email || "").toLocaleLowerCase(), item]));
+  const profileByUsername = new Map(profiles.map((item: any) => [String(item.employee_id || "").toLocaleLowerCase(), item]));
+  const usedEmails = new Set([
+    ...profiles.map((item: any) => String(item.email || "").toLocaleLowerCase()),
+    ...authUsers.map((item: any) => String(item.email || "").toLocaleLowerCase()),
+  ]);
+  const usernames = new Set(body.users.map((user: any) => String(user.username || "").toLocaleLowerCase()));
+  const emailCounts = new Map<string, number>();
+  for (const user of body.users) {
+    const email = String(user.email || "").trim().toLocaleLowerCase();
+    if (email) emailCounts.set(email, (emailCounts.get(email) || 0) + 1);
+  }
+
+  const userIds = new Map<string, string>();
+  const legacyRows: any[] = [];
+  for (const local of body.users) {
+    const localId = String(local.local_user_id);
+    const username = String(local.username || "").trim();
+    if (!username) fail(400, "A local CRM account has no username.");
+    const old = existingLegacy.get(localId) as any;
+    const existingProfile = profileByUsername.get(username.toLocaleLowerCase()) as any;
+    const matchingAuth = existingProfile ? authById.get(String(existingProfile.id)) : null;
+    if (existingProfile && !old && !matchingAuth) fail(409, "A CRM username conflicts with an existing shared account.");
+
+    const desiredEmail = String(local.email || "").trim().toLocaleLowerCase();
+    const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(desiredEmail);
+    let authEmail = old?.auth_email || existingProfile?.email || matchingAuth?.email || "";
+    let authUserId = old?.auth_user_id || existingProfile?.id || matchingAuth?.id || "";
+    if (!authEmail) {
+      const useOriginal = validEmail && emailCounts.get(desiredEmail) === 1 && !usedEmails.has(desiredEmail);
+      authEmail = useOriginal ? desiredEmail : `crm-local-${localId}@legacy.invalid`;
+      let suffix = 1;
+      while (usedEmails.has(authEmail)) authEmail = `crm-local-${localId}-${suffix++}@legacy.invalid`;
+      usedEmails.add(authEmail);
+    }
+    let authUser = authUserId ? authById.get(String(authUserId)) : authByEmail.get(String(authEmail).toLocaleLowerCase());
+    if (!authUser) {
+      const generated = new Uint8Array(36);
+      crypto.getRandomValues(generated);
+      const temporaryPassword = bytesToBase64(generated).replace(/[+/=]/g, "x") + "A9!";
+      const { data, error } = await adminClient.auth.admin.createUser({
+        email: authEmail,
+        password: temporaryPassword,
+        email_confirm: true,
+        user_metadata: { employee_id: username, name: legacyDisplayName(local), crm_legacy_user_id: localId },
+      });
+      if (error || !data.user) {
+        console.error("Unable to create a migrated CRM account:", error?.message || "No user was returned.");
+        fail(409, "Supabase could not create one of the migrated accounts. No passwords were disclosed.");
+      }
+      authUser = data.user;
+      authById.set(String(authUser.id), authUser);
+      authByEmail.set(String(authUser.email || "").toLocaleLowerCase(), authUser);
+    }
+    authUserId = authUser.id;
+    userIds.set(localId, authUserId);
+
+    const profile = {
+      id: authUserId,
+      employee_id: username,
+      name: legacyDisplayName(local),
+      email: authEmail,
+      department: "Other",
+      manager: "",
+      role: legacyRole(local),
+      active: Boolean(local.active),
+      profile_image: "",
+      ...(old?.created_at ? { created_at: old.created_at } : local.date_joined ? { created_at: new Date(local.date_joined).toISOString() } : {}),
+    };
+    const { error: profileError } = await adminClient.from("profiles").upsert(profile, { onConflict: "id" });
+    checkDb(profileError);
+    profileByUsername.set(username.toLocaleLowerCase(), profile);
+    usedEmails.add(authEmail.toLocaleLowerCase());
+
+    const legacyRow = {
+      local_user_id: local.local_user_id,
+      username,
+      original_email: String(local.email || "").trim(),
+      auth_email: authEmail,
+      password_hash: old ? old.password_hash : String(local.password_hash || ""),
+      is_active: Boolean(local.active),
+      role: legacyRole(local),
+      name: legacyDisplayName(local),
+      first_name: String(local.first_name || ""),
+      last_name: String(local.last_name || ""),
+      date_joined: local.date_joined ? new Date(local.date_joined).toISOString() : new Date().toISOString(),
+      auth_user_id: authUserId,
+      ...(old?.password_upgraded_at ? { password_upgraded_at: old.password_upgraded_at } : {}),
+    };
+    const { error: legacyError } = await adminClient.from("crm_legacy_auth").upsert(legacyRow, { onConflict: "local_user_id" });
+    checkDb(legacyError);
+    legacyRows.push(legacyRow);
+  }
+
+  const remap = (rows: any[], field: string, nullable = false) => rows.map((row) => ({
+    ...row,
+    [field]: remapUserId(row[field], userIds, field, nullable),
+  }));
+  await upsertMigrationRows("crm_datasets", remap(body.datasets || [], "owner_id"));
+  await upsertMigrationRows("crm_dataset_columns", body.dataset_columns || []);
+  const records = (body.customer_records || []).map((row: any) => {
+    const { callback_completed_by_id, ...rest } = row;
+    return { ...rest, callback_completed_by: remapUserId(callback_completed_by_id, userIds, "callback_completed_by", true) };
+  });
+  await upsertMigrationRows("crm_customer_records", records);
+  const changes = (body.customer_record_changes || []).map((row: any) => {
+    const { changed_by_id, ...rest } = row;
+    return { ...rest, changed_by: remapUserId(changed_by_id, userIds, "changed_by", true) };
+  });
+  await upsertMigrationRows("crm_customer_record_changes", changes);
+  await upsertMigrationRows("crm_manual_clients", remap(body.manual_clients || [], "owner_id"));
+  await upsertMigrationRows("crm_visits", remap(body.visits || [], "owner_id"));
+
+  for (const image of body.visit_images || []) {
+    const safeName = String(image.file_name || "image").replace(/[^A-Za-z0-9._-]/g, "_").slice(-120) || "image";
+    const storagePath = `legacy/${image.visit_id}/${image.id}-${safeName}`;
+    const binary = atob(String(image.content_base64 || ""));
+    const content = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const { error: uploadError } = await adminClient.storage.from("crm-visit-images").upload(storagePath, content, {
+      contentType: String(image.content_type || "application/octet-stream"), upsert: true,
+    });
+    checkDb(uploadError);
+    const { error: imageError } = await adminClient.from("crm_visit_images").upsert({
+      id: image.id, visit_id: image.visit_id, storage_path: storagePath,
+      original_name: String(image.original_name || safeName), uploaded_at: image.uploaded_at,
+    }, { onConflict: "id" });
+    checkDb(imageError);
+  }
+
+  await upsertMigrationRows("crm_reminders", remap(body.reminders || [], "owner_id"));
+  const tasks = (body.assigned_tasks || []).map((row: any) => {
+    const { assigned_by_id, ...rest } = row;
+    return {
+      ...rest,
+      assignee_id: remapUserId(row.assignee_id, userIds, "task assignee"),
+      assigned_by_id: remapUserId(assigned_by_id, userIds, "task creator", true),
+    };
+  });
+  await upsertMigrationRows("crm_assigned_tasks", tasks);
+  await upsertMigrationRows("crm_sales_targets", remap(body.sales_targets || [], "user_id"));
+  const overtime = (body.overtime_requests || []).map((row: any) => {
+    const { reviewed_by_id, ...rest } = row;
+    return {
+      ...rest,
+      employee_id: remapUserId(row.employee_id, userIds, "overtime employee"),
+      reviewed_by: remapUserId(reviewed_by_id, userIds, "overtime reviewer", true),
+    };
+  });
+  await upsertMigrationRows("crm_overtime_requests", overtime);
+  await upsertMigrationRows("crm_push_subscriptions", remap(body.push_subscriptions || [], "owner_id"));
+  await upsertMigrationRows("crm_reminder_deliveries", body.reminder_deliveries || []);
+  const { error: sequenceError } = await adminClient.rpc("crm_reset_identity_sequences");
+  checkDb(sequenceError);
+
+  const { data: consumed, error: consumeError } = await adminClient.from("crm_migration_authorizations")
+    .update({ used_at: new Date().toISOString() }).eq("token_hash", tokenHash).is("used_at", null).select("token_hash").maybeSingle();
+  checkDb(consumeError);
+  if (!consumed) fail(409, "This migration authorization was already used.");
+  return json(200, { status: "complete", users: legacyRows.length, imported: {
+    datasets: (body.datasets || []).length,
+    dataset_columns: (body.dataset_columns || []).length,
+    customer_records: (body.customer_records || []).length,
+    customer_record_changes: (body.customer_record_changes || []).length,
+    manual_clients: (body.manual_clients || []).length,
+    visits: (body.visits || []).length,
+    visit_images: (body.visit_images || []).length,
+    reminders: (body.reminders || []).length,
+    assigned_tasks: (body.assigned_tasks || []).length,
+    sales_targets: (body.sales_targets || []).length,
+    overtime_requests: (body.overtime_requests || []).length,
+    push_subscriptions: (body.push_subscriptions || []).length,
+    reminder_deliveries: (body.reminder_deliveries || []).length,
+  } });
 }
 
 function isAdminRole(role: string) {
@@ -1487,10 +1801,23 @@ Deno.serve(async (request: Request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     if (!supabaseUrl || !serviceRoleKey) fail(503, "Supabase service configuration is missing.");
-    const ctx = await authenticate(request);
     const url = new URL(request.url);
-    const pathname = url.pathname.replace(/^\/functions\/v1\/crm-api/, "");
-    const apiPath = pathname.replace(/^\/api\/?/, "");
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const functionIndex = pathSegments.lastIndexOf("crm-api");
+    const routeSegments = pathSegments.slice(functionIndex >= 0 ? functionIndex + 1 : 0);
+    const apiIndex = routeSegments.indexOf("api");
+    const apiPath = (apiIndex >= 0 ? routeSegments.slice(apiIndex + 1) : routeSegments).join("/");
+    if (request.method === "POST" && apiPath.replace(/^\/+|\/+$/g, "") === "auth/legacy-login") {
+      let body: any;
+      try { body = await request.json(); } catch { fail(400, "The login request is not valid JSON."); }
+      return await handleLegacyLogin(request, body);
+    }
+    if (request.method === "POST" && apiPath.replace(/^\/+|\/+$/g, "") === "migration/import") {
+      let body: any;
+      try { body = await request.json(); } catch { fail(400, "The migration payload is not valid JSON."); }
+      return await migrateLegacyData(request, body);
+    }
+    const ctx = await authenticate(request);
     const { values, files } = await requestBody(request);
     return await routeApi(ctx, request, apiPath, queryParams(url), values, files);
   } catch (error) {

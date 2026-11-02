@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authApi } from "../services/api.js";
-import { attendanceSupabase } from "../services/attendanceSupabase.js";
+import { crmSupabase } from "../services/crmSupabase.js";
 
 const AuthContext = createContext(null);
 
@@ -24,7 +24,7 @@ export function AuthProvider({ children }) {
     });
     const expireSession = () => { setUser(null); setCsrfToken(""); };
     window.addEventListener("crm:session-expired", expireSession);
-    const { data: authListener } = attendanceSupabase.auth.onAuthStateChange((event, session) => {
+    const { data: authListener } = crmSupabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT" || !session) {
         expireSession();
         return;
