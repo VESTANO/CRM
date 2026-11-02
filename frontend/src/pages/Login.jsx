@@ -41,7 +41,7 @@ export default function Login() {
           <div className="login-brand-rule" />
           <div className="login-brand-caption"><span>01</span><span>THE VESTANO CRM WORKSPACE</span></div>
         </div>
-        <div className="login-brand-footer"><span>VESTANO CRM</span><span>EST. 2018</span></div>
+        <div className="login-brand-footer"><span>VESTANO CRM</span><span>CLIENT OPERATIONS</span></div>
       </aside>
 
       <section className="login-access-panel">
