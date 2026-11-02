@@ -27,6 +27,12 @@ export const authApi = {
   logout: (csrfToken) => apiClient.post("/auth/logout/", {}, csrfHeaders(csrfToken)),
 };
 
+export const overtimeApi = {
+  list: (attendanceAccessToken = "") => apiClient.get("/overtime/", attendanceAccessToken ? { headers: { Authorization: `Bearer ${attendanceAccessToken}` } } : undefined),
+  create: (payload, csrfToken) => apiClient.post("/overtime/", payload, csrfHeaders(csrfToken)),
+  review: (requestId, action, payload, csrfToken, attendanceAccessToken = "") => apiClient.post(`/overtime/${requestId}/${action}/`, payload, { ...csrfHeaders(csrfToken), ...(attendanceAccessToken ? { headers: { ...csrfHeaders(csrfToken).headers, Authorization: `Bearer ${attendanceAccessToken}` } } : {}) }),
+};
+
 export const dashboardApi = {
   summary: () => apiClient.get("/dashboard/"),
 };
@@ -73,6 +79,7 @@ apiClient.interceptors.response.use(
 );
 
 export const customersApi = {
+  list: (params = {}) => apiClient.get("/customers/", { params }),
   detail: (datasetId, recordId) => apiClient.get(`/datasets/${datasetId}/customers/${recordId}/`),
   detailById: (recordId) => apiClient.get(`/customers/${recordId}/`),
   update: (datasetId, recordId, data, csrfToken) => (
@@ -80,6 +87,13 @@ export const customersApi = {
   ),
   remove: (datasetId, recordId, csrfToken) => (
     apiClient.delete(`/datasets/${datasetId}/customers/${recordId}/`, csrfHeaders(csrfToken))
+  ),
+};
+
+export const callbacksApi = {
+  list: (params = {}) => apiClient.get("/callbacks/", { params }),
+  complete: (recordId, response, csrfToken) => (
+    apiClient.post(`/callbacks/${recordId}/complete/`, { response }, csrfHeaders(csrfToken))
   ),
 };
 

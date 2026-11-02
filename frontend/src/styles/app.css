@@ -1,5 +1,189 @@
 @import "../../../backend/static/css/styles.css";
 
+button:disabled,
+.btn:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed !important;
+}
+
+button:disabled:hover,
+.btn:disabled:hover {
+  cursor: not-allowed !important;
+  transform: none;
+}
+
+.btn-success:disabled,
+.btn-success[disabled] {
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+
+td:has(.btn-success:disabled),
+td:has(.btn-success[disabled]) {
+  cursor: not-allowed !important;
+}
+
+@media (max-width: 767.98px) {
+  .responsive-table table,
+  .responsive-table .table-responsive > table {
+    display: table !important;
+    min-width: 720px !important;
+    width: 720px !important;
+    table-layout: auto !important;
+  }
+
+  .responsive-table thead {
+    display: table-header-group !important;
+  }
+
+  .responsive-table tbody {
+    display: table-row-group !important;
+  }
+
+  .responsive-table tr {
+    display: table-row !important;
+  }
+
+  .responsive-table th,
+  .responsive-table td {
+    display: table-cell !important;
+  }
+
+  .responsive-table .table-responsive {
+    overflow-x: auto !important;
+  }
+
+  .responsive-table:not(:has(td[data-label])) table {
+    min-width: 720px;
+  }
+
+  .responsive-table:not(:has(td[data-label])) th,
+  .responsive-table:not(:has(td[data-label])) td {
+    white-space: nowrap;
+  }
+
+  /* Keep each attendance/admin column readable on narrow screens. The table
+     remains wider than the viewport and is intentionally horizontally scrollable. */
+  .responsive-table:not(:has(td[data-label])) th:nth-child(1),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(1) { min-width: 170px; }
+  .responsive-table:not(:has(td[data-label])) th:nth-child(2),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(2) { min-width: 100px; }
+  .responsive-table:not(:has(td[data-label])) th:nth-child(3),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(3) { min-width: 170px; }
+  .responsive-table:not(:has(td[data-label])) th:nth-child(4),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(4) { min-width: 125px; }
+  .responsive-table:not(:has(td[data-label])) th:nth-child(5),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(5) { min-width: 140px; }
+  .responsive-table:not(:has(td[data-label])) th:nth-child(6),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(6) { min-width: 110px; }
+  .responsive-table:not(:has(td[data-label])) th:nth-child(7),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(7) { min-width: 110px; }
+  .responsive-table:not(:has(td[data-label])) th:nth-child(8),
+  .responsive-table:not(:has(td[data-label])) td:nth-child(8) { min-width: 130px; }
+}
+
+/* Consistent table rhythm across CRM and Attendance views. */
+.table-responsive {
+  margin-bottom: 1.25rem;
+}
+
+.table > :not(caption) > * > * {
+  padding: 0.9rem 1rem;
+  vertical-align: middle;
+  text-align: center;
+}
+
+.table thead th {
+  line-height: 1.35;
+}
+
+.table tbody td {
+  line-height: 1.45;
+}
+
+.table tbody tr + tr {
+  border-top: 1px solid var(--crm-border);
+}
+
+/* The data source is an implementation detail; keep it out of the UI chrome. */
+.page-header > .d-flex > .badge.text-bg-success,
+.table-panel-header > .badge.text-bg-success,
+.table-panel-header > .text-secondary.small {
+  display: none !important;
+}
+
+/* Light, consistent treatment for neutral buttons and their hover state. */
+.btn-secondary,
+.btn-outline-secondary,
+.btn-light,
+.btn-outline-light {
+  --bs-btn-color: #40536a;
+  --bs-btn-bg: #f4f7fb;
+  --bs-btn-border-color: #cbd6e3;
+  --bs-btn-hover-color: #30445b;
+  --bs-btn-hover-bg: #e7eef6;
+  --bs-btn-hover-border-color: #b7c7d9;
+  --bs-btn-active-color: #30445b;
+  --bs-btn-active-bg: #dce7f2;
+  --bs-btn-active-border-color: #aebfd2;
+}
+
+.btn:not(:disabled):not(.disabled):hover {
+  box-shadow: 0 2px 6px rgba(53, 76, 102, 0.12);
+}
+
+/* Keep the dashboard date inside its summary card at every viewport size. */
+.today-summary-card {
+  flex: 0 0 190px !important;
+  min-width: 190px !important;
+  max-width: 100%;
+  background: #f4f8fc;
+  border-color: #d7e3ef;
+  overflow: hidden;
+}
+
+.today-summary-card strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attendance-metrics .summary-value {
+  font-size: clamp(1.25rem, 2.4vw, 1.65rem);
+  line-height: 1.2;
+}
+
+.attendance-metrics .summary-value .saved-range-separator {
+  display: block;
+  font-size: 0.72em;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0.15rem 0;
+  text-align: center;
+}
+
+.attendance-metrics .saved-range-date {
+  display: grid;
+  grid-template-columns: 1fr 2ch 1fr;
+  line-height: 1.2;
+  width: 100%;
+}
+
+.attendance-metrics .saved-range-date > :first-child { justify-self: end; }
+.attendance-metrics .saved-range-date > :nth-child(2) { text-align: center; }
+.attendance-metrics .saved-range-date > :last-child { justify-self: start; }
+
+@media (max-width: 576px) {
+  .today-summary-card {
+    flex-basis: 100% !important;
+    min-width: 0 !important;
+    width: 100%;
+  }
+}
+
 .migration-placeholder {
   min-height: 220px;
 }

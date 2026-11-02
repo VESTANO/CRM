@@ -33,6 +33,7 @@ from .forms import (
     save_visit_images,
     VisitForm,
 )
+from .audit import customer_crm_values, save_customer_crm_change
 from .models import AssignedTask, CustomerRecord, Dataset, DatasetColumn, ManualClient, Reminder, Visit
 
 
@@ -208,7 +209,10 @@ def notifications(request):
     if request.method == "POST" and request.POST.get("action") == "complete_task":
         task_id = request.POST.get("task_id", "")
         if task_id.isdigit():
-            AssignedTask.objects.filter(pk=task_id, assignee=request.user).update(status=AssignedTask.STATUS_DONE)
+            AssignedTask.objects.filter(pk=task_id, assignee=request.user).update(
+                status=AssignedTask.STATUS_DONE,
+                completed_at=timezone.now(),
+            )
             messages.success(request, "Task marked as completed.")
         return redirect("customers:notifications")
 
@@ -531,7 +535,9 @@ def admin_user_datasets(request, user_id):
 @login_required
 def dataset_list(request):
     datasets = Paginator(
-        get_accessible_datasets(request.user).annotate(customer_count=Count("records")),
+        get_accessible_datasets(request.user)
+        .annotate(customer_count=Count("records"))
+        .order_by("uploaded_at", "id"),
         5,
     ).get_page(request.GET.get("page", 1))
     return render(
@@ -676,10 +682,11 @@ def customer_detail(request, dataset_id, record_id):
 @login_required
 def customer_edit(request, dataset_id, record_id):
     dataset, record = get_dataset_record(request.user, dataset_id, record_id)
+    previous_values = customer_crm_values(record)
     form = CustomerCRMForm(request.POST or None, instance=record)
 
     if request.method == "POST" and form.is_valid():
-        form.save()
+        save_customer_crm_change(form, request.user, previous_values)
         messages.success(request, "Customer CRM information updated successfully.")
         return redirect(
             "customers:customer_detail",

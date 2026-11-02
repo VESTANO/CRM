@@ -9,14 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
     "@vitejs/plugin-react": "^5.1.0",
     "axios": "^1.13.2",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
-    "qz-tray": "^2.3.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "react-router-dom": "^7.10.1",
-    "vite": "^7.2.7"
+    "vite": "^7.2.7",
+    "xlsx": "^0.18.5"
   }
 }

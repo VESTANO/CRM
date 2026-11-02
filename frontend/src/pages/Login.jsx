@@ -43,7 +43,7 @@ export default function Login() {
 
               <form onSubmit={handleSubmit} noValidate>
                 <div className="mb-3">
-                  <label className="form-label" htmlFor="username">Username</label>
+                  <label className="form-label" htmlFor="username">Username or email</label>
                   <input
                     id="username"
                     className="form-control"

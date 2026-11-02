@@ -5,6 +5,7 @@ from django.http import FileResponse, HttpResponse
 from django.urls import include, path, re_path
 
 from customers.forms import CRMAuthenticationForm
+from customers.attendance import attendance_api, attendance_device_receiver
 
 
 def service_worker(request):
@@ -33,6 +34,12 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("service-worker.js", service_worker, name="service_worker"),
     path("api/", include("customers.api_urls")),
+    path("api/attendance/", attendance_api, name="attendance_api"),
+    path("api/attendance/<str:action>/", attendance_api, name="attendance_action"),
+    path("iclock/cdata", attendance_device_receiver, name="attendance_device_receiver"),
+    path("iclock/cdata/", attendance_device_receiver),
+    path("iclock/getrequest", attendance_device_receiver),
+    path("iclock/getrequest/", attendance_device_receiver),
     path(
         "legacy-login/",
         LoginView.as_view(

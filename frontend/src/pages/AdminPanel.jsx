@@ -42,14 +42,14 @@ export default function AdminPanel() {
 
   const load = async () => {
     try {
-      const [summaryResponse, targetsResponse] = await Promise.all([
-        adminApi.summary(),
-        adminApi.targets(),
+      const [summaryResponse, targetsResponse] = await Promise.all([ // waits until both requests finish. Their results are then assigned to summaryResponse and targetsResponse, in the same order as the requests.
+        adminApi.summary(), //fetches the admin overview: user and dataset information, plus summary counts.
+        adminApi.targets(),// fetches sales-target information.
       ]);
 
       setData({
-        ...summaryResponse.data,
-        targetPerformance: targetsResponse.data,
+        ...summaryResponse.data,  // is the data returned by the summary API.
+        targetPerformance: targetsResponse.data, //adds the target response under a field with that name.
       });
       setError("");
     } catch (requestError) {
@@ -69,7 +69,7 @@ export default function AdminPanel() {
   if (!data) return <div className="panel">Loading admin panel...</div>;
 
   const pageCount = Math.ceil(data.users.length / 5);
-  const visibleUsers = data.users.slice((page - 1) * 5, page * 5);
+  const visibleUsers = data.users.slice((page - 1) * 5, page * 5); //Selects the five users for the current page.
   const warningTargets = data.targetPerformance?.filter((target) => target.needsWarning) || [];
   const targetBeingEdited = targetUser && targetMonth
     ? getTargetForMonth(data.targetPerformance, targetUser.id, targetMonth)
@@ -183,7 +183,7 @@ export default function AdminPanel() {
         csrfToken
       );
       setTargetMessageType("success");
-      setTargetMessage(`Task assigned to ${taskUser.username}.`);
+      setTargetMessage("Task assigned successfully");
       closeTaskModal();
       await load();
     } catch (requestError) {

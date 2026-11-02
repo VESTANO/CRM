@@ -2,15 +2,29 @@ import io
 import json
 from datetime import date, time, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from openpyxl import Workbook, load_workbook
 
-from .models import AssignedTask, CustomerRecord, Dataset, DatasetColumn, ManualClient, Reminder, SalesTarget, Visit
+from .models import (
+    AssignedTask,
+    CustomerRecord,
+    CustomerRecordChange,
+    Dataset,
+    DatasetColumn,
+    ManualClient,
+    PushSubscription,
+    Reminder,
+    ReminderDelivery,
+    SalesTarget,
+    Visit,
+)
 
 
 class ExcelInspectionTests(TestCase):
@@ -260,6 +274,7 @@ class ExcelInspectionTests(TestCase):
             reverse("customers:customer_edit", args=[dataset.id, record.id]),
             {
                 "response": CustomerRecord.RESPONSE_CALLBACK,
+                "callback_date": (timezone.localdate() + timedelta(days=1)).isoformat(),
                 "note": "Call again tomorrow regarding pricing.",
             },
         )
@@ -272,6 +287,7 @@ class ExcelInspectionTests(TestCase):
         self.assertEqual(record.response, CustomerRecord.RESPONSE_CALLBACK)
         self.assertEqual(record.note, "Call again tomorrow regarding pricing.")
         self.assertEqual(record.original_data, original_data)
+        self.assertEqual(record.change_history.get().changed_by, self.user)
 
     def test_delete_customer_is_post_only_and_dataset_scoped(self):
         first_dataset = import_dataset(
@@ -1598,6 +1614,180 @@ class APIFoundationTests(TestCase):
         reminder.refresh_from_db()
         self.assertEqual(reminder.text, "Edited reminder")
 
+    @override_settings(
+        WEBPUSH_VAPID_PUBLIC_KEY="public-key",
+        WEBPUSH_VAPID_PRIVATE_KEY="private-key",
+        WEBPUSH_VAPID_SUBJECT="mailto:test@example.com",
+    )
+    @patch("pywebpush.webpush")
+    def test_due_reminder_worker_marks_sent_only_after_push_acceptance(self, webpush_mock):
+        reminder = Reminder.objects.create(
+            owner=self.user_one,
+            text="Due reminder",
+            reminder_at=timezone.now() - timedelta(minutes=1),
+        )
+        PushSubscription.objects.create(
+            owner=self.user_one,
+            endpoint="https://push.example.test/one",
+            p256dh="p256dh",
+            auth="auth",
+        )
+
+        call_command("send_due_reminders")
+
+        reminder.refresh_from_db()
+        self.assertIsNotNone(reminder.sent_at)
+        self.assertEqual(reminder.delivery_status, Reminder.DELIVERY_SENT)
+        self.assertEqual(reminder.deliveries.get().status, ReminderDelivery.STATUS_ACCEPTED)
+        self.assertEqual(webpush_mock.call_count, 1)
+
+    @override_settings(
+        WEBPUSH_VAPID_PUBLIC_KEY="public-key",
+        WEBPUSH_VAPID_PRIVATE_KEY="private-key",
+        WEBPUSH_VAPID_SUBJECT="mailto:test@example.com",
+    )
+    @patch("pywebpush.webpush")
+    def test_worker_does_not_send_future_reminders(self, webpush_mock):
+        Reminder.objects.create(
+            owner=self.user_one,
+            text="Future reminder",
+            reminder_at=timezone.now() + timedelta(minutes=10),
+        )
+        PushSubscription.objects.create(
+            owner=self.user_one,
+            endpoint="https://push.example.test/future",
+            p256dh="p256dh",
+            auth="auth",
+        )
+
+        call_command("send_due_reminders")
+
+        webpush_mock.assert_not_called()
+
+    @override_settings(
+        WEBPUSH_VAPID_PUBLIC_KEY="public-key",
+        WEBPUSH_VAPID_PRIVATE_KEY="private-key",
+        WEBPUSH_VAPID_SUBJECT="mailto:test@example.com",
+    )
+    @patch("pywebpush.webpush", side_effect=RuntimeError("temporary outage"))
+    def test_temporary_push_failure_is_retryable_and_not_marked_sent(self, webpush_mock):
+        reminder = Reminder.objects.create(
+            owner=self.user_one,
+            text="Retry reminder",
+            reminder_at=timezone.now() - timedelta(minutes=1),
+        )
+        PushSubscription.objects.create(
+            owner=self.user_one,
+            endpoint="https://push.example.test/retry",
+            p256dh="p256dh",
+            auth="auth",
+        )
+
+        call_command("send_due_reminders", max_attempts=3)
+
+        reminder.refresh_from_db()
+        self.assertIsNone(reminder.sent_at)
+        self.assertEqual(reminder.delivery_status, Reminder.DELIVERY_RETRYING)
+        self.assertIsNotNone(reminder.next_delivery_attempt_at)
+        self.assertIn("temporary outage", reminder.last_delivery_error)
+
+    @override_settings(
+        WEBPUSH_VAPID_PUBLIC_KEY="public-key",
+        WEBPUSH_VAPID_PRIVATE_KEY="private-key",
+        WEBPUSH_VAPID_SUBJECT="mailto:test@example.com",
+    )
+    @patch("pywebpush.webpush")
+    def test_expired_subscription_is_removed_without_claiming_delivery_success(self, webpush_mock):
+        class ExpiredPushError(Exception):
+            response = type("Response", (), {"status_code": 410})()
+
+        webpush_mock.side_effect = ExpiredPushError("expired")
+        reminder = Reminder.objects.create(
+            owner=self.user_one,
+            text="Expired subscription reminder",
+            reminder_at=timezone.now() - timedelta(minutes=1),
+        )
+        PushSubscription.objects.create(
+            owner=self.user_one,
+            endpoint="https://push.example.test/expired",
+            p256dh="p256dh",
+            auth="auth",
+        )
+
+        call_command("send_due_reminders")
+
+        reminder.refresh_from_db()
+        self.assertIsNone(reminder.sent_at)
+        self.assertEqual(reminder.delivery_status, Reminder.DELIVERY_NO_SUBSCRIPTIONS)
+        self.assertEqual(PushSubscription.objects.filter(owner=self.user_one).count(), 0)
+        self.assertEqual(reminder.deliveries.get().status, ReminderDelivery.STATUS_EXPIRED)
+
+    @override_settings(
+        WEBPUSH_VAPID_PUBLIC_KEY="public-key",
+        WEBPUSH_VAPID_PRIVATE_KEY="private-key",
+        WEBPUSH_VAPID_SUBJECT="mailto:test@example.com",
+    )
+    @patch("pywebpush.webpush")
+    def test_partial_subscription_failure_keeps_reminder_retryable(self, webpush_mock):
+        def maybe_fail(subscription_info, **kwargs):
+            if subscription_info["endpoint"].endswith("/bad"):
+                raise RuntimeError("temporary outage")
+
+        webpush_mock.side_effect = maybe_fail
+        reminder = Reminder.objects.create(
+            owner=self.user_one,
+            text="Partial reminder",
+            reminder_at=timezone.now() - timedelta(minutes=1),
+        )
+        PushSubscription.objects.create(owner=self.user_one, endpoint="https://push.example.test/good", p256dh="p", auth="a")
+        PushSubscription.objects.create(owner=self.user_one, endpoint="https://push.example.test/bad", p256dh="p", auth="a")
+
+        call_command("send_due_reminders", max_attempts=3)
+
+        reminder.refresh_from_db()
+        self.assertIsNone(reminder.sent_at)
+        self.assertEqual(reminder.delivery_status, Reminder.DELIVERY_RETRYING)
+        self.assertEqual(reminder.deliveries.filter(status=ReminderDelivery.STATUS_ACCEPTED).count(), 1)
+        self.assertEqual(reminder.deliveries.filter(status=ReminderDelivery.STATUS_FAILED).count(), 1)
+
+    def test_due_reminder_claim_prevents_concurrent_workers_from_claiming_same_row(self):
+        from customers.management.commands.send_due_reminders import Command
+
+        reminder = Reminder.objects.create(
+            owner=self.user_one,
+            text="Concurrent reminder",
+            reminder_at=timezone.now() - timedelta(minutes=1),
+        )
+        command = Command()
+        options = {"batch_size": 25, "lock_timeout": 300}
+
+        first_claim = command.claim_due_reminders(options)
+        second_claim = command.claim_due_reminders(options)
+
+        self.assertEqual(first_claim, [reminder.id])
+        self.assertEqual(second_claim, [])
+
+    @override_settings(
+        WEBPUSH_VAPID_PUBLIC_KEY="public-key",
+        WEBPUSH_VAPID_PRIVATE_KEY="private-key",
+        WEBPUSH_VAPID_SUBJECT="mailto:test@example.com",
+    )
+    def test_stale_processing_reminder_is_reclaimed_after_worker_crash(self):
+        from customers.management.commands.send_due_reminders import Command
+
+        reminder = Reminder.objects.create(
+            owner=self.user_one,
+            text="Crashed worker reminder",
+            reminder_at=timezone.now() - timedelta(minutes=1),
+            delivery_status=Reminder.DELIVERY_PROCESSING,
+            delivery_locked_at=timezone.now() - timedelta(minutes=10),
+        )
+        command = Command()
+
+        claimed = command.claim_due_reminders({"batch_size": 25, "lock_timeout": 60})
+
+        self.assertEqual(claimed, [reminder.id])
+
     def test_admin_can_assign_task_and_user_can_list_it(self):
         self.client.force_login(self.admin)
         due_at = timezone.now() + timedelta(days=1)
@@ -1655,7 +1845,9 @@ class APIFoundationTests(TestCase):
         own_task.refresh_from_db()
         other_task.refresh_from_db()
         self.assertEqual(own_task.status, "done")
+        self.assertIsNotNone(own_task.completed_at)
         self.assertEqual(other_task.status, "pending")
+        self.assertIsNone(other_task.completed_at)
 
     def test_normal_user_cannot_access_admin_tasks_api(self):
         self.client.force_login(self.user_one)
@@ -1788,7 +1980,81 @@ class APIFoundationTests(TestCase):
             404,
         )
 
+    def test_customer_list_api_combines_owned_datasets_with_fifty_per_page(self):
+        existing = self.user_one_dataset.records.get()
+        existing.response = CustomerRecord.RESPONSE_INTERESTED
+        existing.save(update_fields=["response"])
+        first_row = existing.row_number + 1
+        CustomerRecord.objects.bulk_create([
+            CustomerRecord(
+                dataset=self.user_one_dataset,
+                sheet_name=existing.sheet_name,
+                row_number=first_row + index,
+                original_data={"customer_name": f"Customer {index + 1}", "city": "Kochi"},
+            )
+            for index in range(55)
+        ])
+        self.client.force_login(self.user_one)
+
+        first_page = self.client.get(reverse("customers_api:customer_list"), {"page": 1})
+        second_page = self.client.get(reverse("customers_api:customer_list"), {"page": 2})
+        interested_page = self.client.get(
+            reverse("customers_api:customer_list"),
+            {"status": CustomerRecord.RESPONSE_INTERESTED},
+        )
+        name_search = self.client.get(
+            reverse("customers_api:customer_list"),
+            {"q": "customer 25"},
+        )
+
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(first_page.json()["pagination"]["pageSize"], 50)
+        self.assertEqual(first_page.json()["pagination"]["count"], 56)
+        self.assertEqual(len(first_page.json()["results"]), 50)
+        self.assertEqual(len(second_page.json()["results"]), 6)
+        self.assertTrue(first_page.json()["pagination"]["hasNext"])
+        self.assertFalse(second_page.json()["pagination"]["hasNext"])
+        self.assertTrue(all(
+            item["datasetId"] == self.user_one_dataset.id
+            for item in first_page.json()["results"] + second_page.json()["results"]
+        ))
+        self.assertTrue(first_page.json()["results"][0]["fieldRows"])
+        self.assertEqual(interested_page.status_code, 200)
+        self.assertEqual(interested_page.json()["selectedStatus"], CustomerRecord.RESPONSE_INTERESTED)
+        self.assertEqual(interested_page.json()["pagination"]["count"], 1)
+        self.assertEqual(interested_page.json()["results"][0]["record"]["id"], existing.id)
+        status_counts = {
+            item["value"]: item["count"]
+            for item in interested_page.json()["statusOptions"]
+        }
+        self.assertEqual(status_counts[CustomerRecord.RESPONSE_INTERESTED], 1)
+        self.assertEqual(status_counts[CustomerRecord.RESPONSE_NO_RESPONSE], 55)
+        self.assertEqual(interested_page.json()["totalCount"], 56)
+        self.assertEqual(name_search.status_code, 200)
+        self.assertEqual(name_search.json()["searchQuery"], "customer 25")
+        self.assertEqual(name_search.json()["pagination"]["count"], 1)
+        self.assertEqual(name_search.json()["results"][0]["record"]["display_name"], "Customer 25")
+        self.assertEqual(name_search.json()["totalCount"], 1)
+
     def test_dashboard_api_is_scoped_to_owner(self):
+        Visit.objects.create(
+            customer=self.user_one_dataset.records.get(),
+            visit_date=date(2026, 10, 1),
+            meeting_time=time(10, 0),
+            location="Kochi",
+            total_amount=Decimal("1000.00"),
+            paid_amount=Decimal("400.00"),
+            payment_status=Visit.PAYMENT_PARTIAL,
+        )
+        Visit.objects.create(
+            customer=self.user_two_dataset.records.get(),
+            visit_date=date(2026, 10, 1),
+            meeting_time=time(11, 0),
+            location="Delhi",
+            total_amount=Decimal("9000.00"),
+            paid_amount=Decimal("9000.00"),
+            payment_status=Visit.PAYMENT_COMPLETED,
+        )
         self.client.force_login(self.user_one)
 
         response = self.client.get(reverse("customers_api:dashboard"))
@@ -1797,6 +2063,18 @@ class APIFoundationTests(TestCase):
         data = response.json()
         self.assertEqual(data["totalDatasets"], 1)
         self.assertEqual(data["totalCustomers"], 1)
+        self.assertEqual(
+            data["payments"],
+            {
+                "totalAmount": 1000.0,
+                "paidAmount": 400.0,
+                "pendingAmount": 600.0,
+                "paidCount": 1,
+                "pendingCount": 1,
+                "oneTimeCount": 0,
+                "completedCount": 0,
+            },
+        )
         recent_names = [dataset["name"] for dataset in data["recentDatasets"]]
         self.assertIn("API User One Customers", recent_names)
         self.assertNotIn("API User Two Customers", recent_names)
@@ -1926,12 +2204,14 @@ class APIFoundationTests(TestCase):
         self.client.force_login(self.user_one)
         record = self.user_one_dataset.records.get()
         original_data = record.original_data.copy()
+        callback_date = timezone.localdate() + timedelta(days=1)
 
         response = self.client.patch(
             reverse("customers_api:customer_detail", args=[self.user_one_dataset.id, record.id]),
             data=json.dumps(
                 {
                     "response": CustomerRecord.RESPONSE_CALLBACK,
+                    "callback_date": callback_date.isoformat(),
                     "note": "Call again tomorrow.",
                 }
             ),
@@ -1941,8 +2221,125 @@ class APIFoundationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         record.refresh_from_db()
         self.assertEqual(record.response, CustomerRecord.RESPONSE_CALLBACK)
+        self.assertEqual(record.callback_date, callback_date)
         self.assertEqual(record.note, "Call again tomorrow.")
         self.assertEqual(record.original_data, original_data)
+        change = CustomerRecordChange.objects.get(record=record)
+        self.assertEqual(change.changed_by, self.user_one)
+        self.assertEqual(
+            change.previous_values,
+            {"response": CustomerRecord.RESPONSE_NO_RESPONSE, "callback_date": "", "note": ""},
+        )
+        self.assertEqual(
+            change.updated_values,
+            {
+                "response": CustomerRecord.RESPONSE_CALLBACK,
+                "callback_date": callback_date.isoformat(),
+                "note": "Call again tomorrow.",
+            },
+        )
+
+        detail = self.client.get(
+            reverse("customers_api:customer_detail", args=[self.user_one_dataset.id, record.id])
+        ).json()
+        self.assertEqual(detail["changeHistory"][0]["changed_by_username"], self.user_one.username)
+        self.assertEqual(detail["changeHistory"][0]["changes"][0]["previous"], "No Response")
+        self.assertEqual(detail["changeHistory"][0]["changes"][0]["updated"], "Callback")
+
+    def test_callback_api_filters_today_tomorrow_and_owner(self):
+        today = timezone.localdate()
+        tomorrow = today + timedelta(days=1)
+        own_today = self.user_one_dataset.records.get()
+        own_today.response = CustomerRecord.RESPONSE_CALLBACK
+        own_today.callback_date = today
+        own_today.note = "Call today"
+        own_today.save()
+        CustomerRecord.objects.create(
+            dataset=self.user_one_dataset,
+            sheet_name=own_today.sheet_name,
+            row_number=3,
+            original_data={"customer_name": "Tomorrow Customer", "phone_number": "9876543210"},
+            response=CustomerRecord.RESPONSE_CALLBACK,
+            callback_date=tomorrow,
+            note="Call tomorrow",
+        )
+        other_user_record = self.user_two_dataset.records.get()
+        other_user_record.response = CustomerRecord.RESPONSE_CALLBACK
+        other_user_record.callback_date = today
+        other_user_record.save()
+        self.client.force_login(self.user_one)
+
+        today_response = self.client.get(reverse("customers_api:callback_list"))
+        tomorrow_response = self.client.get(
+            reverse("customers_api:callback_list"),
+            {"preset": "tomorrow"},
+        )
+        all_response = self.client.get(
+            reverse("customers_api:callback_list"),
+            {"preset": "all", "sort": "desc"},
+        )
+
+        self.assertEqual(today_response.status_code, 200)
+        self.assertEqual([item["customerName"] for item in today_response.json()["results"]], ["One Customer"])
+        self.assertEqual(
+            today_response.json()["counts"],
+            {"today": 1, "tomorrow": 1, "total": 2, "calledBack": 0},
+        )
+        self.assertEqual(
+            [item["customerName"] for item in tomorrow_response.json()["results"]],
+            ["Tomorrow Customer"],
+        )
+        self.assertEqual(
+            [item["callbackDate"] for item in all_response.json()["results"]],
+            [tomorrow.isoformat(), today.isoformat()],
+        )
+        self.assertNotIn("Two Customer", [item["customerName"] for item in all_response.json()["results"]])
+        self.assertEqual(tomorrow_response.json()["results"][0]["phone"], "XXXXXXXX10")
+
+        mark_response = self.client.post(
+            reverse("customers_api:callback_complete", args=[own_today.id]),
+            data=json.dumps({"response": CustomerRecord.RESPONSE_INTERESTED}),
+            content_type="application/json",
+        )
+        called_back_response = self.client.get(
+            reverse("customers_api:callback_list"),
+            {"preset": "called_back"},
+        )
+
+        self.assertEqual(mark_response.status_code, 200)
+        self.assertEqual(mark_response.json()["record"]["response"], CustomerRecord.RESPONSE_INTERESTED)
+        self.assertEqual(mark_response.json()["record"]["response_label"], "Interested")
+        self.assertEqual(mark_response.json()["record"]["callback_date"], today.isoformat())
+        self.assertIsNotNone(mark_response.json()["record"]["callback_completed_at"])
+        self.assertEqual(mark_response.json()["record"]["callback_completed_by_username"], self.user_one.username)
+        self.assertEqual([item["customerName"] for item in called_back_response.json()["results"]], ["One Customer"])
+        self.assertEqual(called_back_response.json()["results"][0]["status"], CustomerRecord.RESPONSE_INTERESTED)
+        self.assertEqual(called_back_response.json()["results"][0]["callbackCompletedBy"], self.user_one.username)
+        self.assertEqual(called_back_response.json()["counts"]["today"], 0)
+        self.assertEqual(called_back_response.json()["counts"]["calledBack"], 1)
+        change = CustomerRecordChange.objects.get(record=own_today)
+        self.assertEqual(change.changed_by, self.user_one)
+        self.assertEqual(change.previous_values["response"], CustomerRecord.RESPONSE_CALLBACK)
+        self.assertEqual(change.updated_values["response"], CustomerRecord.RESPONSE_INTERESTED)
+
+        customer_detail = self.client.get(
+            reverse("customers_api:customer_detail", args=[self.user_one_dataset.id, own_today.id])
+        ).json()
+        self.assertEqual(customer_detail["record"]["response"], CustomerRecord.RESPONSE_INTERESTED)
+        self.assertEqual(customer_detail["changeHistory"][0]["changes"][0]["updated"], "Interested")
+
+    def test_customer_update_api_does_not_log_unchanged_values(self):
+        self.client.force_login(self.user_one)
+        record = self.user_one_dataset.records.get()
+
+        response = self.client.patch(
+            reverse("customers_api:customer_detail", args=[self.user_one_dataset.id, record.id]),
+            data=json.dumps({"response": record.response, "note": record.note}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(CustomerRecordChange.objects.filter(record=record).exists())
 
     def test_customer_update_api_rejects_invalid_response(self):
         self.client.force_login(self.user_one)
@@ -1956,6 +2353,19 @@ class APIFoundationTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("response", response.json()["errors"])
+
+    def test_customer_update_api_requires_date_for_callback(self):
+        self.client.force_login(self.user_one)
+        record = self.user_one_dataset.records.get()
+
+        response = self.client.patch(
+            reverse("customers_api:customer_detail", args=[self.user_one_dataset.id, record.id]),
+            data=json.dumps({"response": CustomerRecord.RESPONSE_CALLBACK, "callback_date": "", "note": ""}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("callback_date", response.json()["errors"])
 
     def test_customer_delete_api_deletes_only_accessible_customer(self):
         self.client.force_login(self.user_one)
@@ -2110,6 +2520,9 @@ class APIFoundationTests(TestCase):
                 "company": "Example Co", "client_location": "Kochi",
                 "visit_date": "2026-10-01", "meeting_time": "12:30",
                 "location": "Office", "expense": "100.50", "status": Visit.STATUS_CONVERTED,
+                "payment_status": Visit.PAYMENT_PARTIAL,
+                "total_amount": "1000.00", "paid_amount": "400.00",
+                "payment_description": "First installment received",
                 "note": "Follow up next week",
             }), content_type="application/json",
         )
@@ -2117,6 +2530,28 @@ class APIFoundationTests(TestCase):
         visit = Visit.objects.get(pk=response.json()["id"])
         self.assertEqual(visit.manual_client.owner, self.user_one)
         self.assertIsNone(visit.customer_id)
+        self.assertEqual(visit.payment_status, Visit.PAYMENT_PARTIAL)
+        self.assertEqual(visit.total_amount, Decimal("1000.00"))
+        self.assertEqual(visit.paid_amount, Decimal("400.00"))
+        self.assertEqual(response.json()["pending_amount"], "600.00")
+        self.assertEqual(response.json()["payment_status_label"], "Partially Paid")
+
+    def test_sales_api_rejects_paid_amount_above_total(self):
+        self.client.force_login(self.user_one)
+        response = self.client.post(
+            reverse("customers_api:visit_list"),
+            data=json.dumps({
+                "visit_mode": "manual", "client_name": "Manual Customer",
+                "visit_date": "2026-10-01", "meeting_time": "12:30",
+                "location": "Office", "expense": "0", "status": Visit.STATUS_HEALTHY,
+                "payment_status": Visit.PAYMENT_PARTIAL,
+                "total_amount": "100.00", "paid_amount": "150.00",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("paid_amount", response.json()["errors"])
 
     def test_sales_api_client_options_are_dataset_scoped(self):
         self.client.force_login(self.user_one)

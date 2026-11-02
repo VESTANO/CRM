@@ -27,7 +27,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (credentials) => {
-    await authApi.login(credentials, csrfToken);
+    const session = await refreshSession();
+    await authApi.login(credentials, session.csrfToken);
     return refreshSession();
   };
 

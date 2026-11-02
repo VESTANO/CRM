@@ -7,6 +7,8 @@ import Dashboard from "./pages/Dashboard.jsx";
 import CustomerDelete from "./pages/CustomerDelete.jsx";
 import CustomerDetail from "./pages/CustomerDetail.jsx";
 import CustomerEdit from "./pages/CustomerEdit.jsx";
+import Customers from "./pages/Customers.jsx";
+import Callbacks from "./pages/Callbacks.jsx";
 import DatasetDetail from "./pages/DatasetDetail.jsx";
 import DatasetList from "./pages/DatasetList.jsx";
 import DatasetManagement from "./pages/DatasetManagement.jsx";
@@ -14,9 +16,10 @@ import ImportExcel from "./pages/ImportExcel.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import Reminders from "./pages/Reminders.jsx";
 import Reports from "./pages/Reports.jsx";
-import BillPrint from "./pages/BillPrint.jsx";
+import Attendance from "./pages/Attendance.jsx";
 import Login from "./pages/Login.jsx";
 import Sales from "./pages/Sales.jsx";
+import Overtime from "./pages/Overtime.jsx";
 import VisitForm from "./pages/VisitForm.jsx";
 import VisitDetail from "./pages/VisitDetail.jsx";
 import VisitDelete from "./pages/VisitDelete.jsx";
@@ -26,6 +29,7 @@ import AdminUserDetail from "./pages/AdminUserDetail.jsx";
 import AdminUserForm from "./pages/AdminUserForm.jsx";
 import AdminUserPassword from "./pages/AdminUserPassword.jsx";
 import AdminUserDatasets from "./pages/AdminUserDatasets.jsx";
+import { AttendanceAuthProvider } from "./hooks/useAttendanceAuth.jsx";
 
 export default function App() {
   return (
@@ -37,7 +41,9 @@ export default function App() {
             path="/"
             element={
               <ProtectedRoute>
-                <AppLayout />
+                <AttendanceAuthProvider>
+                  <AppLayout />
+                </AttendanceAuthProvider>
               </ProtectedRoute>
             }
           >
@@ -50,14 +56,22 @@ export default function App() {
             <Route path="datasets/:datasetId/customers/:recordId" element={<CustomerDetail />} />
             <Route path="datasets/:datasetId/customers/:recordId/edit" element={<CustomerEdit />} />
             <Route path="datasets/:datasetId/customers/:recordId/delete" element={<CustomerDelete />} />
-            <Route path="customers" element={<DatasetList />} />
+            <Route path="customers" element={<Customers />} />
             <Route path="customers/:id" element={<CustomerDetail />} />
+            <Route path="callbacks" element={<Callbacks />} />
             <Route path="import" element={<ImportExcel />} />
             <Route path="reminders" element={<Reminders />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="reports" element={<Reports />} />
-            <Route path="bill-print" element={<BillPrint />} />
+            <Route path="attendance" element={<Attendance view="attendance" />} />
+            <Route path="attendance/overview" element={<Attendance view="overview" />} />
+            <Route path="attendance/timesheet" element={<Attendance view="timesheet" />} />
+            <Route path="attendance/profile" element={<Attendance view="profile" />} />
+            <Route path="attendance/approvals" element={<Attendance view="approvals" />} />
+            <Route path="attendance/overtime" element={<Attendance view="overtime" />} />
+            <Route path="attendance/employees" element={<Attendance view="employees" />} />
             <Route path="sales" element={<Sales />} />
+            <Route path="overtime" element={<Overtime />} />
             <Route path="sales/visits/add" element={<VisitForm />} />
             <Route path="sales/visits/:visitId" element={<VisitDetail />} />
             <Route path="sales/visits/:visitId/edit" element={<VisitForm />} />

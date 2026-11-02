@@ -70,11 +70,23 @@ TEMPLATES = [
 WSGI_APPLICATION = "crm_project.wsgi.application"
 
 
-DATABASES = {
-    "default": {
+if os.environ.get("DB_ENGINE", "postgresql") == "sqlite":
+    default_database = {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": os.environ.get("SQLITE_DB_NAME", BASE_DIR / "db.sqlite3"),
     }
+else:
+    default_database = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("POSTGRES_DB", "customer_crm"),
+        "USER": os.environ.get("POSTGRES_USER", "customer_crm_user"),
+        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
+        "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
+        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+    }
+
+DATABASES = {
+    "default": default_database,
 }
 
 
@@ -106,19 +118,14 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BACKEND_DIR / "static"]
 MEDIA_ROOT = BASE_DIR / "media"
+LOG_DIR = BASE_DIR / "tmp"
+LOG_DIR.mkdir(exist_ok=True)
 
 WEBPUSH_VAPID_PUBLIC_KEY = os.environ.get("WEBPUSH_VAPID_PUBLIC_KEY", "")
 WEBPUSH_VAPID_PRIVATE_KEY = os.environ.get("WEBPUSH_VAPID_PRIVATE_KEY", "")
 WEBPUSH_VAPID_SUBJECT = os.environ.get("WEBPUSH_VAPID_SUBJECT", "mailto:admin@example.com")
-QZ_TRAY_CERTIFICATE_PATH = Path(os.environ.get(
-    "QZ_TRAY_CERTIFICATE_PATH",
-    BASE_DIR / "tmp" / "qz-tray" / "digital-certificate.txt",
-))
-QZ_TRAY_PRIVATE_KEY_PATH = Path(os.environ.get(
-    "QZ_TRAY_PRIVATE_KEY_PATH",
-    BASE_DIR / "tmp" / "qz-tray" / "private-key.pem",
-))
-
+ATTENDANCE_SUPABASE_URL = os.environ.get("ATTENDANCE_SUPABASE_URL", "https://lorrfeyiqgdfxdjqnpmn.supabase.co")
+ATTENDANCE_SUPABASE_PUBLISHABLE_KEY = os.environ.get("ATTENDANCE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_Mh4xVEoQFpooPU0uRblTow_AQmf0YiG")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
@@ -135,4 +142,30 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "reminder_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "reminder-worker.log",
+            "maxBytes": 1_000_000,
+            "backupCount": 5,
+            "formatter": "standard",
+        },
+    },
+    "loggers": {
+        "customers.reminders": {
+            "handlers": ["reminder_file"],
+            "level": "INFO",
+            "propagate": True,
+        },
+    },
 }

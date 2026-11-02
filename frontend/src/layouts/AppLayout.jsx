@@ -1,23 +1,46 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Offcanvas } from "bootstrap";
 import { useAuth } from "../hooks/useAuth.jsx";
-import { tasksApi } from "../services/api.js";
+import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
+import { callbacksApi, tasksApi } from "../services/api.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
-  { to: "/datasets", label: "Customer Lists", icon: "bi-people" },
+  {
+    label: "Customer Lists",
+    icon: "bi-people",
+    children: [
+      { to: "/datasets", label: "Datasets", icon: "bi-folder2-open" },
+      { to: "/customers", label: "Customers", icon: "bi-person-lines-fill" },
+    ],
+  },
   { to: "/sales", label: "Sales", icon: "bi-briefcase" },
+  {
+    label: "Attendance",
+    icon: "bi-calendar-check",
+    children: [
+      { to: "/attendance/overview", label: "Overview", icon: "bi-speedometer2" },
+      { to: "/attendance/timesheet", label: "My Timesheet", icon: "bi-clock-history" },
+      { to: "/attendance/profile", label: "My Profile", icon: "bi-person-circle" },
+      { to: "/attendance", label: "Attendance", icon: "bi-calendar-check" },
+      { to: "/attendance/approvals", label: "Approvals", icon: "bi-check2-square" },
+      { to: "/attendance/overtime", label: "OT Approvals", icon: "bi-clock-history" },
+      { to: "/attendance/employees", label: "Employees", icon: "bi-people" },
+    ],
+  },
+  { to: "/callbacks", label: "Callbacks", icon: "bi-telephone-forward" },
   { to: "/import", label: "Import Excel", icon: "bi-cloud-arrow-up" },
   { to: "/reminders", label: "Reminders", icon: "bi-alarm" },
   { to: "/notifications", label: "Notifications", icon: "bi-bell" },
   { to: "/reports", label: "Reports", icon: "bi-bar-chart-line" },
-  { to: "/bill-print", label: "Bill Print", icon: "bi-printer" },
 ];
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
+  const { profile: attendanceProfile, isLoading: attendanceAuthLoading } = useAttendanceAuth();
   const [pendingTaskCount, setPendingTaskCount] = useState(0);
+  const [todayCallbackCount, setTodayCallbackCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
   const roleLabel = user?.is_admin ? "Admin" : "User";
 
@@ -48,6 +71,32 @@ export default function AppLayout() {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadTodayCallbacks = () => {
+      callbacksApi.list({ preset: "today" })
+        .then(({ data }) => {
+          if (isMounted) setTodayCallbackCount(data.counts?.today || 0);
+        })
+        .catch(() => {
+          if (isMounted) setTodayCallbackCount(0);
+        });
+    };
+
+    loadTodayCallbacks();
+    const intervalId = window.setInterval(loadTodayCallbacks, 30000);
+    window.addEventListener("crm:callbacks-updated", loadTodayCallbacks);
+    window.addEventListener("focus", loadTodayCallbacks);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("crm:callbacks-updated", loadTodayCallbacks);
+      window.removeEventListener("focus", loadTodayCallbacks);
+    };
+  }, []);
+
   return (
     <>
       <header className="mobile-topbar d-lg-none">
@@ -69,7 +118,7 @@ export default function AppLayout() {
             <span className="brand-mark">C</span>
             <span>Customer CRM</span>
           </NavLink>
-          <Navigation user={user} pendingTaskCount={pendingTaskCount} />
+          <Navigation user={user} attendanceProfile={attendanceProfile} attendanceAuthLoading={attendanceAuthLoading} pendingTaskCount={pendingTaskCount} todayCallbackCount={todayCallbackCount} />
         </div>
         <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} />
       </aside>
@@ -80,7 +129,7 @@ export default function AppLayout() {
           <button type="button" className="btn-close" data-bs-dismiss="offcanvas" aria-label="Close" />
         </div>
         <div className="offcanvas-body d-flex flex-column">
-          <Navigation user={user} mobile pendingTaskCount={pendingTaskCount} />
+          <Navigation user={user} mobile attendanceProfile={attendanceProfile} attendanceAuthLoading={attendanceAuthLoading} pendingTaskCount={pendingTaskCount} todayCallbackCount={todayCallbackCount} />
           <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} mobile />
         </div>
       </div>
@@ -94,8 +143,23 @@ export default function AppLayout() {
   );
 }
 
-function Navigation({ user, mobile = false, pendingTaskCount = 0 }) {
+function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoading, pendingTaskCount = 0, todayCallbackCount = 0 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const customerRouteActive = location.pathname.startsWith("/datasets") || location.pathname.startsWith("/customers");
+  const attendanceRouteActive = location.pathname.startsWith("/attendance");
+  const attendanceRole = String(attendanceProfile?.role || "").trim().toLowerCase();
+  const attendanceAdmin = ["admin", "super_admin"].includes(attendanceRole);
+  const [customersOpen, setCustomersOpen] = useState(customerRouteActive);
+  const [attendanceOpen, setAttendanceOpen] = useState(attendanceRouteActive);
+
+  useEffect(() => {
+    setCustomersOpen(customerRouteActive);
+  }, [customerRouteActive]);
+
+  useEffect(() => {
+    setAttendanceOpen(attendanceRouteActive);
+  }, [attendanceRouteActive]);
 
   const handleNavigation = (event, path) => {
     if (!mobile) return;
@@ -112,8 +176,63 @@ function Navigation({ user, mobile = false, pendingTaskCount = 0 }) {
 
   return (
     <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>
-      {navItems.map((item) => (
-        item.disabled ? (
+      {navItems.map((item) => {
+        if (item.children) {
+          const submenuId = mobile ? "mobile-customer-submenu" : "desktop-customer-submenu";
+          const isAttendanceMenu = item.label === "Attendance";
+          if (isAttendanceMenu && !attendanceProfile && !attendanceAuthLoading) {
+            return (
+              <NavLink
+                className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
+                key={item.label}
+                to="/attendance/overview"
+                onClick={(event) => handleNavigation(event, "/attendance/overview")}
+              >
+                <i className={`bi ${item.icon}`} />
+                <span>Attendance</span>
+              </NavLink>
+            );
+          }
+          const menuOpen = isAttendanceMenu ? attendanceOpen : customersOpen;
+          const setMenuOpen = isAttendanceMenu ? setAttendanceOpen : setCustomersOpen;
+          const menuActive = isAttendanceMenu ? attendanceRouteActive : customerRouteActive;
+          const resolvedSubmenuId = isAttendanceMenu
+            ? (mobile ? "mobile-attendance-submenu" : "desktop-attendance-submenu")
+            : submenuId;
+          return (
+            <div className="sidebar-menu-group" key={item.label}>
+              <button
+                className={`sidebar-link sidebar-menu-toggle ${menuActive ? "active" : ""}`}
+                type="button"
+                aria-expanded={menuOpen}
+                aria-controls={resolvedSubmenuId}
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <i className={`bi ${item.icon}`} />
+                <span>{item.label}</span>
+                <i className={`bi bi-chevron-${menuOpen ? "up" : "down"} ms-auto sidebar-menu-chevron`} aria-hidden="true" />
+              </button>
+              {menuOpen && (
+                <div className="sidebar-submenu" id={resolvedSubmenuId}>
+                  {item.children.filter((child) => !isAttendanceMenu || child.to !== "/attendance/approvals" || attendanceAdmin).map((child) => (
+                    <NavLink
+                      className={({ isActive }) => `sidebar-link sidebar-sublink ${isActive ? "active" : ""}`}
+                      key={child.to}
+                      to={child.to}
+                      end
+                      onClick={(event) => handleNavigation(event, child.to)}
+                    >
+                      <i className={`bi ${child.icon}`} />
+                      <span>{child.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        return item.disabled ? (
           <span className="sidebar-link" aria-disabled="true" key={item.label}>
             <i className={`bi ${item.icon}`} />
             <span>{item.label}</span>
@@ -121,7 +240,12 @@ function Navigation({ user, mobile = false, pendingTaskCount = 0 }) {
         ) : (
           <NavLink
             key={item.to}
-            className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""} ${item.to === "/notifications" && pendingTaskCount > 0 ? "has-alert" : ""}`}
+            className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""} ${
+              (item.to === "/notifications" && pendingTaskCount > 0) ||
+              (item.to === "/callbacks" && todayCallbackCount > 0)
+                ? "has-alert"
+                : ""
+            }`}
             to={item.to}
             onClick={(event) => handleNavigation(event, item.to)}
           >
@@ -130,9 +254,14 @@ function Navigation({ user, mobile = false, pendingTaskCount = 0 }) {
             {item.to === "/notifications" && pendingTaskCount > 0 && (
               <span className="sidebar-alert-badge ms-auto">{pendingTaskCount}</span>
             )}
+            {item.to === "/callbacks" && todayCallbackCount > 0 && (
+              <span className="sidebar-alert-badge ms-auto" aria-label={`${todayCallbackCount} callbacks today`}>
+                {todayCallbackCount}
+              </span>
+            )}
           </NavLink>
-        )
-      ))}
+        );
+      })}
       {user?.is_admin && (
         <NavLink
           className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}

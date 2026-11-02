@@ -91,6 +91,8 @@ export default function Dashboard() {
         ))}
       </div>
 
+      <PaymentSummarySection payments={dashboard.payments} />
+
       {targets?.length > 0 && (
         <section className="panel mb-4">
           <h2 className="h4 mb-1">Monthly Targets</h2>
@@ -194,11 +196,43 @@ function MetricCard({ icon, label, value }) {
   );
 }
 
-function SmallMetric({ label, value }) {
+function PaymentSummarySection({ payments }) {
+  const totals = payments || {
+    totalAmount: 0,
+    paidAmount: 0,
+    pendingAmount: 0,
+    paidCount: 0,
+    pendingCount: 0,
+    oneTimeCount: 0,
+    completedCount: 0,
+  };
   return (
-    <div className="summary-card compact">
+    <section className="panel payment-dashboard-section mb-4" aria-labelledby="payment-summary-heading">
+      <div className="payment-dashboard-header">
+        <div className="metric-icon"><i className="bi bi-wallet2" /></div>
+        <div>
+          <h2 className="h4 mb-1" id="payment-summary-heading">Payment Summary</h2>
+          <div className="text-secondary small">Total expected payment</div>
+          <div className="payment-dashboard-total">{formatCurrency(totals.totalAmount)}</div>
+        </div>
+      </div>
+      <div className="payment-dashboard-details">
+        <div><small className="text-secondary">Paid Payments</small><strong>{totals.paidCount}</strong><span>{formatCurrency(totals.paidAmount)} paid</span></div>
+        <div><small className="text-secondary">Pending Payments</small><strong>{totals.pendingCount}</strong><span>{formatCurrency(totals.pendingAmount)} pending</span></div>
+        <div><small className="text-secondary">One-time Payments</small><strong>{totals.oneTimeCount}</strong></div>
+        <div><small className="text-secondary">Completed Payments</small><strong>{totals.completedCount}</strong></div>
+      </div>
+    </section>
+  );
+}
+
+function SmallMetric({ label, value }) {
+  const isExpense = label.includes("Expenses");
+
+  return (
+    <div className={`summary-card compact ${isExpense ? "sales-expense-card" : ""}`}>
       <div className="text-secondary small">{label}</div>
-      <div className={`fs-4 fw-bold ${label.includes("Expenses") ? "summary-value-currency" : ""}`}><AnimatedNumber value={value} /></div>
+      <div className={`fs-4 fw-bold ${isExpense ? "summary-value-currency" : ""}`}><AnimatedNumber value={value} /></div>
     </div>
   );
 }

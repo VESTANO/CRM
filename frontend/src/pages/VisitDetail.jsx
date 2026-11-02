@@ -44,6 +44,14 @@ export default function VisitDetail() {
             <Info label="Expense" value={formatCurrency(visit.expense)} />
             <Info label="Status" value={<span className={`badge-response visit-status-${visit.status}`}>{visit.status_label}</span>} />
             <Info label="Visit Note" value={visit.note || ""} note />
+            <div className="mt-4 pt-3 border-top">
+              <h3 className="h6 mb-3">Payment Details</h3>
+              <Info label="Payment Status" value={<span className={`badge-response payment-${visit.payment_status}`}>{visit.payment_status_label}</span>} />
+              <Info label="Total Amount" value={formatCurrency(visit.total_amount)} />
+              <Info label="Paid Amount" value={formatCurrency(visit.paid_amount)} />
+              <Info label="Pending Amount" value={formatCurrency(visit.pending_amount)} />
+              <Info label="Payment Description" value={visit.payment_description || ""} note />
+            </div>
           </section>
         </div>
         <div className="col-lg-6">

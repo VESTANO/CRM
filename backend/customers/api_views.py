@@ -1,7 +1,10 @@
 import io
+import json
+from urllib.request import Request as UrlRequest, urlopen
 import mimetypes
-import base64
 import zipfile
+from collections import Counter
+from datetime import datetime, timedelta
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth import get_user_model
@@ -10,7 +13,8 @@ from django.utils.decorators import method_decorator
 from django.utils.dateparse import parse_date
 from django.views.decorators.csrf import csrf_protect
 from django.core.paginator import Paginator
-from django.db.models import Count, Prefetch, Q, Sum
+from django.db import transaction, IntegrityError
+from django.db.models import Count, F, Prefetch, Q, Sum
 from django.middleware.csrf import get_token
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -20,17 +24,17 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
 
 from .api_serializers import (
     AssignedTaskSerializer,
+    CustomerRecordChangeSerializer,
     CustomerRecordSerializer,
     DatasetListSerializer,
     ReminderSerializer,
     UserSerializer,
     VisitSerializer,
 )
+from .audit import customer_crm_values, save_customer_crm_change
 from .forms import (
     AdminPasswordResetForm,
     AdminUserCreateForm,
@@ -42,7 +46,9 @@ from .forms import (
     save_visit_images,
     VisitForm,
 )
-from .models import AssignedTask, CustomerRecord, Dataset, DatasetColumn, PushSubscription, Reminder, SalesTarget, Visit, VisitImage
+from .models import AssignedTask, CustomerRecord, CustomerRecordChange, Dataset, DatasetColumn, PushSubscription, Reminder, SalesTarget, Visit, VisitImage, OvertimeRequest
+from .attendance import employee_directory, record_identity
+from .attendance_store import attendance_data
 from .views import (
     build_records_by_sheet,
     build_dataset_export_workbook,
@@ -62,13 +68,71 @@ from .views import (
     inspect_workbook,
     safe_export_filename,
     save_pending_upload,
+    mask_sensitive_value,
 )
 
 User = get_user_model()
 
 
+def _ot_minutes(start, end):
+    return max(0, int((end - start).total_seconds() // 60))
+
+
+def _ot_context(user, work_date):
+    with attendance_data() as data:
+        employees, aliases = employee_directory(data)
+        identity = f"crm:{user.pk}"
+        employee = employees.get(identity, {})
+        punches = []
+        for record in data.get("attendance", []):
+            if record_identity(record, data, aliases) == identity and str(record.get("timestamp", ""))[:10] == work_date.isoformat():
+                punches.append(str(record.get("timestamp")))
+    punches.sort()
+    start_text = str(employee.get("shiftStartTime") or "09:30")[:5]
+    end_text = str(employee.get("shiftEndTime") or "17:30")[:5]
+    start = datetime.strptime(f"{work_date.isoformat()} {start_text}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.get_current_timezone())
+    end = datetime.strptime(f"{work_date.isoformat()} {end_text}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.get_current_timezone())
+    official = end + timedelta(minutes=5)
+    actual = None
+    if len(punches) >= 2:
+        actual = datetime.strptime(punches[-1][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.get_current_timezone())
+    return employee, start, end, official, actual
+
+
+def _serialize_ot(item):
+    return {
+        "id": item.id, "employeeId": item.employee_id, "employeeName": item.employee.get_full_name() or item.employee.username,
+        "username": item.employee.username, "workDate": item.work_date.isoformat(),
+        "assignedStartTime": item.assigned_start_time.strftime("%H:%M"), "assignedEndTime": item.assigned_end_time.strftime("%H:%M"),
+        "officialEndTime": item.official_end_time.strftime("%H:%M"), "declaredLeaveTime": item.declared_leave_time.isoformat(),
+        "actualPunchOut": item.actual_punch_out.isoformat() if item.actual_punch_out else None,
+        "requestedMinutes": item.requested_minutes, "approvedMinutes": item.approved_minutes,
+        "status": item.status, "rejectionMessage": item.rejection_message, "reviewedBy": item.reviewed_by.username if item.reviewed_by else None,
+        "reviewedAt": item.reviewed_at.isoformat() if item.reviewed_at else None, "createdAt": item.created_at.isoformat(),
+    }
+
+
 def admin_only(request):
     return request.user.is_staff or request.user.is_superuser
+
+
+def attendance_super_admin(request):
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        return False
+    try:
+        token = authorization.split(" ", 1)[1]
+        base = getattr(settings, "ATTENDANCE_SUPABASE_URL", "")
+        key = getattr(settings, "ATTENDANCE_SUPABASE_PUBLISHABLE_KEY", "")
+        req = UrlRequest(f"{base}/auth/v1/user", headers={"apikey": key, "Authorization": f"Bearer {token}"})
+        with urlopen(req, timeout=5) as response:
+            auth_user = json.loads(response.read().decode("utf-8"))
+        profile_req = UrlRequest(f"{base}/rest/v1/profiles?id=eq.{auth_user.get('id')}&select=role,active", headers={"apikey": key, "Authorization": f"Bearer {token}"})
+        with urlopen(profile_req, timeout=5) as response:
+            profiles = json.loads(response.read().decode("utf-8"))
+        return bool(profiles and profiles[0].get("active") and profiles[0].get("role") == "super_admin")
+    except Exception:
+        return False
 
 
 def visit_detail_payload(visit):
@@ -90,6 +154,37 @@ def serialize_form_errors(form):
     }
 
 
+def customer_change_history(record):
+    history = record.change_history.select_related("changed_by")
+    return CustomerRecordChangeSerializer(history, many=True).data
+
+
+def callback_phone(record):
+    phone_keys = ("phone_number", "phone", "mobile_number", "mobile", "contact_number", "telephone")
+    for key in phone_keys:
+        value = record.original_data.get(key)
+        if value not in (None, ""):
+            return mask_sensitive_value(value)
+    return ""
+
+
+def callback_payload(record):
+    return {
+        "id": record.id,
+        "datasetId": record.dataset_id,
+        "datasetName": record.dataset.name,
+        "customerName": record.display_name,
+        "phone": callback_phone(record),
+        "callbackDate": record.callback_date,
+        "callbackCompletedAt": record.callback_completed_at,
+        "callbackCompletedBy": record.callback_completed_by.username if record.callback_completed_by else None,
+        "status": record.response,
+        "statusLabel": record.get_response_display(),
+        "note": record.note,
+        "updatedAt": record.updated_at,
+    }
+
+
 class SessionView(APIView):
     permission_classes = [AllowAny]
 
@@ -107,12 +202,100 @@ class SessionView(APIView):
 
 
 @method_decorator(csrf_protect, name="dispatch")
+class OvertimeRequestView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        attendance_admin = attendance_super_admin(request)
+        if not request.user.is_authenticated and not attendance_admin:
+            return Response({"detail": "Attendance login required."}, status=401)
+        queryset = OvertimeRequest.objects.select_related("employee", "reviewed_by")
+        if not admin_only(request) and not attendance_admin:
+            queryset = queryset.filter(employee=request.user)
+        for item in queryset.filter(status=OvertimeRequest.STATUS_PENDING):
+            try:
+                _, _, _, _, actual = _ot_context(item.employee, item.work_date)
+                if actual and item.actual_punch_out != actual:
+                    OvertimeRequest.objects.filter(pk=item.pk, status=OvertimeRequest.STATUS_PENDING).update(actual_punch_out=actual)
+                    item.actual_punch_out = actual
+            except (ValueError, TypeError):
+                pass
+        items = list(queryset)
+        approved = sum(item.approved_minutes for item in items if item.status == OvertimeRequest.STATUS_APPROVED and item.employee_id == request.user.id)
+        return Response({"requests": [_serialize_ot(item) for item in items], "approvedMinutes": approved})
+
+    def post(self, request):
+        work_date = parse_date(str(request.data.get("workDate", "")))
+        if not work_date:
+            return Response({"detail": "Choose a valid working date."}, status=400)
+        try:
+            declared = datetime.fromisoformat(str(request.data.get("declaredLeaveTime", "")).replace("Z", "+00:00"))
+            if timezone.is_naive(declared):
+                declared = timezone.make_aware(declared)
+        except (TypeError, ValueError):
+            return Response({"detail": "Enter a valid expected leaving time."}, status=400)
+        employee, start, end, official, actual = _ot_context(request.user, work_date)
+        if declared <= official:
+            return Response({"detail": "Expected leaving time must be after the official end time."}, status=400)
+        if OvertimeRequest.objects.filter(employee=request.user, work_date=work_date).exists():
+            return Response({"detail": "An OT request already exists for this working date."}, status=409)
+        item = OvertimeRequest(employee=request.user, work_date=work_date, assigned_start_time=start.time(), assigned_end_time=end.time(), official_end_time=official.time(), declared_leave_time=declared, actual_punch_out=actual, requested_minutes=_ot_minutes(official, declared))
+        try:
+            with transaction.atomic():
+                item.save()
+                admins = User.objects.filter(is_staff=True, is_active=True)
+                Reminder.objects.bulk_create([Reminder(owner=admin, text=f"New OT request from {request.user.get_full_name() or request.user.username} for {work_date}", reminder_at=timezone.now()) for admin in admins])
+        except IntegrityError:
+            return Response({"detail": "An OT request already exists for this working date."}, status=409)
+        return Response(_serialize_ot(item), status=201)
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class OvertimeReviewView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, request_id, action):
+        if not admin_only(request) and not attendance_super_admin(request):
+            return Response({"detail": "Only Attendance Super Admin users can review overtime."}, status=403)
+        with transaction.atomic():
+            item = OvertimeRequest.objects.select_for_update().select_related("employee").filter(pk=request_id).first()
+            if not item:
+                return Response({"detail": "OT request not found."}, status=404)
+            if item.status != OvertimeRequest.STATUS_PENDING:
+                return Response({"detail": "This OT request has already been reviewed."}, status=409)
+            _, _, _, official, actual = _ot_context(item.employee, item.work_date)
+            if action == "approve":
+                if not actual:
+                    return Response({"detail": "Approval requires a final punch-out record."}, status=400)
+                item.actual_punch_out = actual
+                item.approved_minutes = _ot_minutes(official, actual)
+                item.status = OvertimeRequest.STATUS_APPROVED
+            elif action == "reject":
+                item.status = OvertimeRequest.STATUS_REJECTED
+                item.rejection_message = str(request.data.get("message", "")).strip()
+                if not item.rejection_message:
+                    return Response({"detail": "Enter a rejection reason."}, status=400)
+            else:
+                return Response({"detail": "Unknown review action."}, status=400)
+            item.reviewed_by = request.user
+            item.reviewed_at = timezone.now()
+            item.save(update_fields=["actual_punch_out", "approved_minutes", "status", "rejection_message", "reviewed_by", "reviewed_at", "updated_at"])
+            text = "approved" if item.status == OvertimeRequest.STATUS_APPROVED else "rejected"
+            Reminder.objects.create(owner=item.employee, text=f"Your OT request for {item.work_date} was {text}." + (f" {item.rejection_message}" if item.rejection_message else ""), reminder_at=timezone.now())
+        return Response(_serialize_ot(item))
+
+
+@method_decorator(csrf_protect, name="dispatch")
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
         username = request.data.get("username", "")
         password = request.data.get("password", "")
+        if "@" in username:
+            email_match = User.objects.filter(email__iexact=username, is_active=True).first()
+            if email_match:
+                username = email_match.get_username()
         user = authenticate(request, username=username, password=password)
         if user is None:
             return Response(
@@ -136,49 +319,6 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class QzCertificateView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        certificate_path = settings.QZ_TRAY_CERTIFICATE_PATH
-        if not certificate_path.exists():
-            return Response(
-                {"detail": "QZ Tray certificate is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        return HttpResponse(certificate_path.read_text(encoding="utf-8"), content_type="text/plain")
-
-
-@method_decorator(csrf_protect, name="dispatch")
-class QzSignatureView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        message = request.data.get("request", "")
-        private_key_path = settings.QZ_TRAY_PRIVATE_KEY_PATH
-        if not message:
-            return Response(
-                {"detail": "Missing QZ request to sign."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not private_key_path.exists():
-            return Response(
-                {"detail": "QZ Tray private key is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        private_key = serialization.load_pem_private_key(
-            private_key_path.read_bytes(),
-            password=None,
-        )
-        signature = private_key.sign(
-            message.encode("utf-8"),
-            padding.PKCS1v15(),
-            hashes.SHA512(),
-        )
-        return Response({"signature": base64.b64encode(signature).decode("ascii")})
-
-
 class DashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -199,6 +339,12 @@ class DashboardView(APIView):
             }
             for value, label in CustomerRecord.RESPONSE_CHOICES
         ]
+        payment_totals = visits.aggregate(
+            total_amount=Sum("total_amount"),
+            paid_amount=Sum("paid_amount"),
+        )
+        total_amount = payment_totals["total_amount"] or 0
+        paid_amount = payment_totals["paid_amount"] or 0
         recent_datasets = datasets.annotate(customer_count=Count("records"))[:3]
         return Response(
             {
@@ -206,6 +352,15 @@ class DashboardView(APIView):
                 "totalCustomers": customer_records.count(),
                 "responseStats": response_stats,
                 "recentDatasets": DatasetListSerializer(recent_datasets, many=True).data,
+                "payments": {
+                    "totalAmount": total_amount,
+                    "paidAmount": paid_amount,
+                    "pendingAmount": max(total_amount - paid_amount, 0),
+                    "paidCount": visits.filter(paid_amount__gt=0).count(),
+                    "pendingCount": visits.filter(total_amount__gt=F("paid_amount")).count(),
+                    "oneTimeCount": visits.filter(payment_status=Visit.PAYMENT_ONE_TIME).count(),
+                    "completedCount": visits.filter(payment_status=Visit.PAYMENT_COMPLETED).count(),
+                },
                 "sales": {
                     "totalVisits": visits.count(),
                     "todaysVisits": visits.filter(visit_date=today).count(),
@@ -331,6 +486,7 @@ class CustomerDetailView(APIView):
                 "dataset": DatasetListSerializer(dataset).data,
                 "record": CustomerRecordSerializer(record).data,
                 "fieldRows": build_field_rows(record, columns),
+                "changeHistory": customer_change_history(record),
                 "responseChoices": [
                     {"value": value, "label": label}
                     for value, label in CustomerRecord.RESPONSE_CHOICES
@@ -340,16 +496,18 @@ class CustomerDetailView(APIView):
 
     def patch(self, request, dataset_id, record_id):
         dataset, record = get_dataset_record(request.user, dataset_id, record_id)
+        previous_values = customer_crm_values(record)
         form = CustomerCRMForm(request.data, instance=record)
         if not form.is_valid():
             return Response({"errors": serialize_form_errors(form)}, status=status.HTTP_400_BAD_REQUEST)
-        form.save()
+        record = save_customer_crm_change(form, request.user, previous_values)
         columns = get_record_columns(dataset, record)
         return Response(
             {
                 "dataset": DatasetListSerializer(dataset).data,
                 "record": CustomerRecordSerializer(record).data,
                 "fieldRows": build_field_rows(record, columns),
+                "changeHistory": customer_change_history(record),
             }
         )
 
@@ -374,12 +532,205 @@ class CustomerByIdView(APIView):
                 "dataset": DatasetListSerializer(record.dataset).data,
                 "record": CustomerRecordSerializer(record).data,
                 "fieldRows": build_field_rows(record, columns),
+                "changeHistory": customer_change_history(record),
                 "responseChoices": [
                     {"value": value, "label": label}
                     for value, label in CustomerRecord.RESPONSE_CHOICES
                 ],
             }
         )
+
+
+class CustomerListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        records = list(CustomerRecord.objects.filter(
+            dataset__in=get_accessible_datasets(request.user),
+        ).select_related("dataset").order_by(
+            "-dataset__uploaded_at",
+            "dataset_id",
+            "sheet_name",
+            "row_number",
+            "id",
+        ))
+        search_query = request.query_params.get("q", "").strip()
+        if search_query:
+            normalized_query = search_query.casefold()
+            records = [
+                record for record in records
+                if normalized_query in record.display_name.casefold()
+            ]
+
+        response_counts = Counter(record.response for record in records)
+        status_filter = request.query_params.get("status", "").strip()
+        if status_filter not in dict(CustomerRecord.RESPONSE_CHOICES):
+            status_filter = ""
+
+        if status_filter:
+            records = [record for record in records if record.response == status_filter]
+        paginator = Paginator(records, 50)
+        page_obj = paginator.get_page(request.query_params.get("page", 1))
+        page_records = list(page_obj.object_list)
+
+        dataset_ids = {record.dataset_id for record in page_records}
+        column_map = {}
+        for column in DatasetColumn.objects.filter(dataset_id__in=dataset_ids).order_by(
+            "dataset_id", "sheet_name", "order"
+        ):
+            column_map.setdefault((column.dataset_id, column.sheet_name), []).append(column)
+
+        results = []
+        for record in page_records:
+            results.append({
+                "record": CustomerRecordSerializer(record).data,
+                "datasetId": record.dataset_id,
+                "datasetName": record.dataset.name,
+                "fieldRows": build_field_rows(
+                    record,
+                    column_map.get((record.dataset_id, record.sheet_name), []),
+                ),
+            })
+
+        return Response({
+            "results": results,
+            "searchQuery": search_query,
+            "selectedStatus": status_filter,
+            "statusOptions": [
+                {
+                    "value": value,
+                    "label": label,
+                    "count": response_counts.get(value, 0),
+                }
+                for value, label in CustomerRecord.RESPONSE_CHOICES
+            ],
+            "totalCount": sum(response_counts.values()),
+            "pagination": {
+                "page": page_obj.number,
+                "pageSize": 50,
+                "numPages": paginator.num_pages,
+                "count": paginator.count,
+                "hasNext": page_obj.has_next(),
+                "hasPrevious": page_obj.has_previous(),
+                "nextPage": page_obj.next_page_number() if page_obj.has_next() else None,
+                "previousPage": page_obj.previous_page_number() if page_obj.has_previous() else None,
+            },
+        })
+
+
+class CallbackListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = timezone.localdate()
+        tomorrow = today + timedelta(days=1)
+        accessible_records = CustomerRecord.objects.filter(
+            dataset__in=get_accessible_datasets(request.user),
+        ).select_related("dataset", "callback_completed_by")
+        callbacks = accessible_records.filter(
+            response=CustomerRecord.RESPONSE_CALLBACK,
+            callback_completed_at__isnull=True,
+        )
+        called_back = accessible_records.filter(callback_completed_at__isnull=False)
+
+        today_count = callbacks.filter(callback_date=today).count()
+        tomorrow_count = callbacks.filter(callback_date=tomorrow).count()
+        preset = request.query_params.get("preset", "today").strip().lower()
+        date_value = request.query_params.get("date", "").strip()
+        selected_date = None
+
+        if preset == "called_back" and not date_value:
+            callbacks = called_back
+            selected_date = None
+        elif date_value:
+            selected_date = parse_date(date_value)
+            if selected_date is None:
+                return Response({"detail": "Enter a valid callback date."}, status=status.HTTP_400_BAD_REQUEST)
+            preset = "custom"
+        elif preset == "today":
+            selected_date = today
+        elif preset == "tomorrow":
+            selected_date = tomorrow
+        elif preset != "all":
+            preset = "today"
+            selected_date = today
+
+        if selected_date:
+            callbacks = callbacks.filter(callback_date=selected_date)
+
+        sort = request.query_params.get("sort", "asc").strip().lower()
+        if preset == "called_back":
+            callbacks = callbacks.order_by("-updated_at", "-id")
+        elif sort == "desc":
+            callbacks = callbacks.order_by(F("callback_date").desc(nulls_last=True), "-updated_at", "-id")
+        else:
+            sort = "asc"
+            callbacks = callbacks.order_by(F("callback_date").asc(nulls_last=True), "updated_at", "id")
+
+        return Response({
+            "results": [callback_payload(record) for record in callbacks],
+            "counts": {
+                "today": today_count,
+                "tomorrow": tomorrow_count,
+                "total": CustomerRecord.objects.filter(
+                    dataset__in=get_accessible_datasets(request.user),
+                    response=CustomerRecord.RESPONSE_CALLBACK,
+                    callback_completed_at__isnull=True,
+                ).count(),
+                "calledBack": called_back.count(),
+            },
+            "filters": {
+                "preset": preset,
+                "date": selected_date,
+                "sort": sort,
+                "today": today,
+                "tomorrow": tomorrow,
+            },
+            "outcomeChoices": [
+                {"value": value, "label": label}
+                for value, label in CustomerRecord.RESPONSE_CHOICES
+                if value != CustomerRecord.RESPONSE_CALLBACK
+            ],
+        })
+
+
+class CallbackCompleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, record_id):
+        record = get_object_or_404(
+            CustomerRecord.objects.filter(dataset__in=get_accessible_datasets(request.user)),
+            pk=record_id,
+        )
+        if record.response != CustomerRecord.RESPONSE_CALLBACK or record.callback_completed_at:
+            return Response({"detail": "This callback is no longer pending."}, status=status.HTTP_400_BAD_REQUEST)
+
+        outcome = (request.data.get("response") or "").strip()
+        allowed_outcomes = {
+            value for value, _ in CustomerRecord.RESPONSE_CHOICES
+            if value != CustomerRecord.RESPONSE_CALLBACK
+        }
+        if outcome not in allowed_outcomes:
+            return Response({"errors": {"response": ["Choose a valid callback outcome."]}}, status=status.HTTP_400_BAD_REQUEST)
+
+        previous_values = customer_crm_values(record)
+        with transaction.atomic():
+            record.response = outcome
+            record.callback_completed_at = timezone.now()
+            record.callback_completed_by = request.user
+            record.save(update_fields=["response", "callback_completed_at", "callback_completed_by", "updated_at"])
+            CustomerRecordChange.objects.create(
+                record=record,
+                changed_by=request.user,
+                previous_values=previous_values,
+                updated_values=customer_crm_values(record),
+            )
+
+        return Response({
+            "record": CustomerRecordSerializer(record).data,
+            "callback": callback_payload(record),
+            "changeHistory": customer_change_history(record),
+        })
 
 
 class ExcelInspectView(APIView):
@@ -703,6 +1054,27 @@ class ReminderListView(APIView):
         return Response(ReminderSerializer(reminder).data, status=status.HTTP_201_CREATED)
 
 
+class ReminderDeliveryStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        now = timezone.now()
+        reminders = Reminder.objects.filter(owner=request.user)
+        subscriptions = PushSubscription.objects.filter(owner=request.user)
+        due_unsent = reminders.filter(reminder_at__lte=now, sent_at__isnull=True).count()
+        retrying = reminders.filter(delivery_status=Reminder.DELIVERY_RETRYING).count()
+        failed = reminders.filter(delivery_status__in=[Reminder.DELIVERY_FAILED, Reminder.DELIVERY_NO_SUBSCRIPTIONS]).count()
+        last_attempt = reminders.exclude(last_delivery_attempt_at__isnull=True).order_by("-last_delivery_attempt_at").first()
+        return Response({
+            "pushSubscriptions": subscriptions.count(),
+            "dueUnsent": due_unsent,
+            "retrying": retrying,
+            "failed": failed,
+            "lastAttemptAt": last_attempt.last_delivery_attempt_at if last_attempt else None,
+            "workerRequired": True,
+        })
+
+
 class ReminderDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -720,7 +1092,16 @@ class ReminderDetailView(APIView):
             return Response({"errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
         reminder = serializer.save()
         if reminder.reminder_at != previous_reminder_at:
-            Reminder.objects.filter(pk=reminder.pk).update(sent_at=None)
+            reminder.deliveries.all().delete()
+            Reminder.objects.filter(pk=reminder.pk).update(
+                sent_at=None,
+                delivery_status=Reminder.DELIVERY_PENDING,
+                delivery_attempt_count=0,
+                last_delivery_attempt_at=None,
+                next_delivery_attempt_at=None,
+                delivery_locked_at=None,
+                last_delivery_error="",
+            )
         return Response(ReminderSerializer(reminder).data)
 
     def delete(self, request, reminder_id):
@@ -746,7 +1127,8 @@ class AssignedTaskDetailView(APIView):
         if status_value not in dict(AssignedTask.STATUS_CHOICES):
             return Response({"detail": "Choose a valid task status."}, status=status.HTTP_400_BAD_REQUEST)
         task.status = status_value
-        task.save(update_fields=["status", "updated_at"])
+        task.completed_at = timezone.now() if status_value == AssignedTask.STATUS_DONE else None
+        task.save(update_fields=["status", "completed_at", "updated_at"])
         return Response(AssignedTaskSerializer(task).data)
 
 
@@ -802,7 +1184,15 @@ class AdminTaskDetailView(APIView):
         serializer = AssignedTaskSerializer(task, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response({"errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
-        task = serializer.save()
+        task = serializer.save(
+            completed_at=(
+                timezone.now()
+                if serializer.validated_data.get("status") == AssignedTask.STATUS_DONE
+                else None
+                if serializer.validated_data.get("status") == AssignedTask.STATUS_PENDING
+                else task.completed_at
+            )
+        )
         return Response(AssignedTaskSerializer(task).data)
 
 

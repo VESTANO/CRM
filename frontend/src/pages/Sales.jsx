@@ -46,6 +46,18 @@ export default function Sales() {
     setFilters((current) => ({ ...current, [event.target.name]: event.target.value }));
   };
 
+  const changeStatusFilter = (event) => {
+    const status = event.target.value;
+    const params = new URLSearchParams(searchParams);
+
+    if (status) params.set("status", status);
+    else params.delete("status");
+
+    setFilters((current) => ({ ...current, status }));
+    setPage(1);
+    setSearchParams(params);
+  };
+
   const applyFilters = (event) => {
     event.preventDefault();
     const params = new URLSearchParams();
@@ -69,7 +81,7 @@ export default function Sales() {
 
     <form className="panel mb-4" onSubmit={applyFilters}>
       <div className="row g-3 align-items-end">
-        <div className="col-sm-6 col-lg-4"><label className="form-label" htmlFor="visit-status-filter">Status</label><select className="form-select" id="visit-status-filter" name="status" value={filters.status} onChange={changeFilter}><option value="">All statuses</option>{statuses.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
+        <div className="col-sm-6 col-lg-4"><label className="form-label" htmlFor="visit-status-filter">Status</label><select className="form-select" id="visit-status-filter" name="status" value={filters.status} onChange={changeStatusFilter}><option value="">All statuses</option>{statuses.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
         <div className="col-sm-6 col-lg-3"><label className="form-label" htmlFor="visit-date-from">From date</label><input className="form-control" id="visit-date-from" type="date" name="date_from" value={filters.date_from} onChange={changeFilter} /></div>
         <div className="col-sm-6 col-lg-3"><label className="form-label" htmlFor="visit-date-to">To date</label><input className="form-control" id="visit-date-to" type="date" name="date_to" value={filters.date_to} onChange={changeFilter} /></div>
         <div className="col-sm-6 col-lg-2 d-flex gap-2"><button className="btn btn-primary" type="submit">Filter</button>{filtersActive && <Link className="btn btn-outline-secondary" to="/sales">Clear</Link>}</div>
@@ -78,7 +90,7 @@ export default function Sales() {
     </form>
 
     {visits.length ? <>
-      <div className="table-responsive panel p-0 responsive-table"><table className="table table-hover align-middle mb-0 sales-visits-table"><thead className="table-light"><tr>{["Client","Dataset / Source","Visit Date","Meeting Time","Location","Expense","Status","Note","Actions"].map((heading)=><th key={heading}>{heading}</th>)}</tr></thead><tbody>{visibleVisits.map((visit)=><tr key={visit.id}><td data-label="Client">{visit.client_name}</td><td data-label="Dataset / Source">{visit.dataset_name || <span className="badge-response response-callback">Manual Client</span>}</td><td data-label="Visit Date">{formatDate(visit.visit_date)}</td><td data-label="Meeting Time">{visit.meeting_time?.slice(0,5)}</td><td data-label="Location">{visit.location}</td><td data-label="Expense">{formatCurrency(visit.expense)}</td><td data-label="Status"><span className={`badge-response visit-status-${visit.status}`}>{visit.status_label}</span></td><td data-label="Note" className="note-cell"><span className="sales-note-value">{visit.note || ""}</span></td><td data-label="Actions"><div className="btn-group btn-group-sm sales-actions" role="group" aria-label="Visit actions"><Link className="btn btn-outline-primary" to={`/sales/visits/${visit.id}`}>View</Link><Link className="btn btn-outline-secondary" to={`/sales/visits/${visit.id}/edit`}>Edit</Link><Link className="btn btn-outline-danger" to={`/sales/visits/${visit.id}/delete`}>Delete</Link></div></td></tr>)}</tbody></table></div>
+      <div className="table-responsive panel p-0 responsive-table"><table className="table table-hover align-middle mb-0 sales-visits-table"><thead className="table-light"><tr>{["Client","Dataset / Source","Visit Date","Meeting Time","Location","Expense","Status","Payment status","Payment details","Payment description","Note","Actions"].map((heading)=><th key={heading}>{heading}</th>)}</tr></thead><tbody>{visibleVisits.map((visit)=><tr key={visit.id}><td data-label="Client">{visit.client_name}</td><td data-label="Dataset / Source">{visit.dataset_name || <span className="badge-response response-callback">Manual Client</span>}</td><td data-label="Visit Date">{formatDate(visit.visit_date)}</td><td data-label="Meeting Time">{visit.meeting_time?.slice(0,5)}</td><td data-label="Location">{visit.location}</td><td data-label="Expense">{formatCurrency(visit.expense)}</td><td data-label="Status"><span className={`badge-response visit-status-${visit.status}`}>{visit.status_label}</span></td><td data-label="Payment status">{visit.status === "converted" ? <span className={`badge-response payment-${visit.payment_status}`}>{visit.payment_status_label}</span> : <span className="payment-unavailable text-secondary">—</span>}</td><td data-label="Payment details">{visit.status === "converted" ? <div className="payment-summary"><small>Total: {formatCurrency(visit.total_amount)}</small><small>Paid: {formatCurrency(visit.paid_amount)}</small><small>Pending: {formatCurrency(visit.pending_amount)}</small></div> : <span className="payment-unavailable text-secondary">—</span>}</td><td data-label="Payment description">{visit.status === "converted" ? (visit.payment_description || "—") : "—"}</td><td data-label="Note" className="note-cell"><span className="sales-note-value">{visit.note || ""}</span></td><td data-label="Actions"><div className="btn-group btn-group-sm sales-actions" role="group" aria-label="Visit actions"><Link className="btn btn-outline-primary" to={`/sales/visits/${visit.id}`}>View</Link><Link className="btn btn-outline-secondary" to={`/sales/visits/${visit.id}/edit`}>Edit</Link><Link className="btn btn-outline-danger" to={`/sales/visits/${visit.id}/delete`}>Delete</Link></div></td></tr>)}</tbody></table></div>
       {pageCount > 1 && <div className="d-flex justify-content-between align-items-center mt-3"><span className="text-secondary small">Page {page} of {pageCount}</span><div className="d-flex gap-2"><button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => setPage((current) => current - 1)} disabled={page <= 1}>Previous</button><button className="btn btn-outline-primary btn-sm" type="button" onClick={() => setPage((current) => current + 1)} disabled={page >= pageCount}>Next</button></div></div>}
     </> : <div className="empty-state text-center">{filtersActive ? <><h2 className="h5">No visits match these filters</h2><p className="text-secondary">Try changing the status or date range.</p><Link className="btn btn-outline-secondary" to="/sales">Clear filters</Link></> : <><h2 className="h5">No client visits yet</h2><p className="text-secondary">Create your first client visit.</p><Link className="btn btn-primary" to="/sales/visits/add">Add Client Visit</Link></>}</div>}
   </>;

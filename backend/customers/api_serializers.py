@@ -3,7 +3,17 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import AssignedTask, CustomerRecord, Dataset, ManualClient, Reminder, SalesTarget, Visit, VisitImage
+from .models import (
+    AssignedTask,
+    CustomerRecord,
+    CustomerRecordChange,
+    Dataset,
+    ManualClient,
+    Reminder,
+    SalesTarget,
+    Visit,
+    VisitImage,
+)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -79,6 +89,11 @@ class DatasetListSerializer(serializers.ModelSerializer):
 class CustomerRecordSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(read_only=True)
     response_label = serializers.CharField(source="get_response_display", read_only=True)
+    callback_completed_by_username = serializers.CharField(
+        source="callback_completed_by.username",
+        read_only=True,
+        default=None,
+    )
 
     class Meta:
         model = CustomerRecord
@@ -90,10 +105,43 @@ class CustomerRecordSerializer(serializers.ModelSerializer):
             "original_data",
             "response",
             "response_label",
+            "callback_date",
+            "callback_completed_at",
+            "callback_completed_by",
+            "callback_completed_by_username",
             "note",
             "created_at",
             "updated_at",
         ]
+
+
+class CustomerRecordChangeSerializer(serializers.ModelSerializer):
+    changed_by_username = serializers.CharField(source="changed_by.username", read_only=True, default=None)
+    changes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomerRecordChange
+        fields = ["id", "changed_by_username", "changed_at", "changes"]
+
+    def get_changes(self, obj):
+        response_labels = dict(CustomerRecord.RESPONSE_CHOICES)
+        field_labels = {"response": "Response", "callback_date": "Callback Date", "note": "Note"}
+        changes = []
+        for field, label in field_labels.items():
+            previous = obj.previous_values.get(field, "")
+            updated = obj.updated_values.get(field, "")
+            if previous == updated:
+                continue
+            if field == "response":
+                previous = response_labels.get(previous, previous)
+                updated = response_labels.get(updated, updated)
+            changes.append({
+                "field": field,
+                "label": label,
+                "previous": previous,
+                "updated": updated,
+            })
+        return changes
 
 
 class ReminderSerializer(serializers.ModelSerializer):
@@ -101,8 +149,30 @@ class ReminderSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Reminder
-        fields = ["id", "text", "reminder_at", "is_due", "created_at"]
-        read_only_fields = ["id", "is_due", "created_at"]
+        fields = [
+            "id",
+            "text",
+            "reminder_at",
+            "is_due",
+            "created_at",
+            "sent_at",
+            "delivery_status",
+            "delivery_attempt_count",
+            "last_delivery_attempt_at",
+            "next_delivery_attempt_at",
+            "last_delivery_error",
+        ]
+        read_only_fields = [
+            "id",
+            "is_due",
+            "created_at",
+            "sent_at",
+            "delivery_status",
+            "delivery_attempt_count",
+            "last_delivery_attempt_at",
+            "next_delivery_attempt_at",
+            "last_delivery_error",
+        ]
 
     def validate_text(self, value):
         value = value.strip()
@@ -133,6 +203,7 @@ class AssignedTaskSerializer(serializers.ModelSerializer):
             "due_at",
             "status",
             "status_label",
+            "completed_at",
             "created_at",
             "updated_at",
         ]
@@ -141,6 +212,7 @@ class AssignedTaskSerializer(serializers.ModelSerializer):
             "assignee_username",
             "assigned_by_username",
             "status_label",
+            "completed_at",
             "created_at",
             "updated_at",
         ]
@@ -191,6 +263,8 @@ class VisitSerializer(serializers.ModelSerializer):
     client_record_id = serializers.IntegerField(source="customer_id", read_only=True)
     customer_note = serializers.CharField(source="customer.note", read_only=True, allow_null=True)
     images = VisitImageSerializer(many=True, read_only=True)
+    payment_status_label = serializers.CharField(source="get_payment_status_display", read_only=True)
+    pending_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = Visit
@@ -210,6 +284,12 @@ class VisitSerializer(serializers.ModelSerializer):
             "expense",
             "status",
             "status_label",
+            "payment_status",
+            "payment_status_label",
+            "total_amount",
+            "paid_amount",
+            "pending_amount",
+            "payment_description",
             "note",
             "created_at",
             "updated_at",

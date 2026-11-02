@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { customersApi } from "../services/api.js";
-import { formatDateTime } from "../utils/formatters.js";
+import { formatDate, formatDateTime } from "../utils/formatters.js";
 import TimedAlert from "../components/TimedAlert.jsx";
 
 export default function CustomerDetail() {
@@ -33,7 +33,7 @@ export default function CustomerDetail() {
     return <div className="panel">Loading customer details...</div>;
   }
 
-  const { dataset, record, fieldRows } = detail;
+  const { dataset, record, fieldRows, changeHistory = [] } = detail;
 
   return (
     <>
@@ -72,12 +72,20 @@ export default function CustomerDetail() {
           </dd>
           <dt className="col-sm-4">Note</dt>
           <dd className="col-sm-8">{record.note || ""}</dd>
+          {record.response === "callback" && (
+            <>
+              <dt className="col-sm-4">Callback Date</dt>
+              <dd className="col-sm-8">{record.callback_date ? formatDate(record.callback_date) : "Not scheduled"}</dd>
+            </>
+          )}
           <dt className="col-sm-4">Created</dt>
           <dd className="col-sm-8">{formatDateTime(record.created_at)}</dd>
           <dt className="col-sm-4">Updated</dt>
           <dd className="col-sm-8">{formatDateTime(record.updated_at)}</dd>
         </dl>
       </div>
+
+      <CustomerChangeHistory entries={changeHistory} />
 
       <div className="d-flex flex-wrap gap-2">
         <Link className="btn btn-primary" to={`/datasets/${dataset.id}/customers/${record.id}/edit`}>Edit</Link>
@@ -86,6 +94,63 @@ export default function CustomerDetail() {
       </div>
     </>
   );
+}
+
+export function CustomerChangeHistory({ entries, className = "mb-4" }) {
+  const rows = entries.flatMap((entry) => (
+    entry.changes.map((change) => ({
+      ...change,
+      historyId: entry.id,
+      changedBy: entry.changed_by_username || "Former user",
+      changedAt: entry.changed_at,
+    }))
+  ));
+
+  return (
+    <section className={`panel ${className}`} aria-labelledby="customer-change-history-heading">
+      <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+          <h2 className="h5 mb-1" id="customer-change-history-heading">Change History</h2>
+          <p className="text-secondary small mb-0">Previous and updated CRM values, with who made each change.</p>
+        </div>
+        {rows.length > 0 && <span className="badge text-bg-light">{rows.length} {rows.length === 1 ? "change" : "changes"}</span>}
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-secondary mb-0">No CRM changes have been recorded yet.</p>
+      ) : (
+        <div className="table-responsive customer-change-history">
+          <table className="table table-hover align-middle mb-0 customer-change-table">
+            <thead className="table-light">
+              <tr>
+                <th scope="col">Field</th>
+                <th scope="col">Before</th>
+                <th scope="col">Updated</th>
+                <th scope="col">Changed By</th>
+                <th scope="col">Changed At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={`${row.historyId}-${row.field}`}>
+                  <th scope="row">{row.label}</th>
+                  <td>{displayChangeValue(row.previous, row.field)}</td>
+                  <td>{displayChangeValue(row.updated, row.field)}</td>
+                  <td>{row.changedBy}</td>
+                  <td><time dateTime={row.changedAt}>{formatDateTime(row.changedAt)}</time></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function displayChangeValue(value, field) {
+  if (!value) return <span className="text-secondary">Empty</span>;
+  const displayValue = field === "callback_date" ? formatDate(value) : value;
+  return <span className="text-break preserve-line-breaks">{displayValue}</span>;
 }
 
 export function FieldRows({ rows }) {

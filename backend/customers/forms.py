@@ -56,7 +56,15 @@ class ReminderForm(forms.Form):
         reminder.reminder_at = self.cleaned_data["reminder_at"]
         if instance and reminder.reminder_at != previous_reminder_at:
             reminder.sent_at = None
+            reminder.delivery_status = Reminder.DELIVERY_PENDING
+            reminder.delivery_attempt_count = 0
+            reminder.last_delivery_attempt_at = None
+            reminder.next_delivery_attempt_at = None
+            reminder.delivery_locked_at = None
+            reminder.last_delivery_error = ""
         reminder.save()
+        if instance and reminder.reminder_at != previous_reminder_at:
+            reminder.deliveries.all().delete()
         return reminder
 
 
@@ -171,6 +179,23 @@ def clean_phone_number(value):
 
 
 class VisitValidationMixin:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field_name in ("payment_status", "total_amount", "paid_amount", "payment_description"):
+            self.fields[field_name].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        total_amount = cleaned_data.get("total_amount") or 0
+        paid_amount = cleaned_data.get("paid_amount") or 0
+        if total_amount < 0:
+            self.add_error("total_amount", "Total amount cannot be negative.")
+        if paid_amount < 0:
+            self.add_error("paid_amount", "Paid amount cannot be negative.")
+        if paid_amount > total_amount:
+            self.add_error("paid_amount", "Paid amount cannot be greater than the total amount.")
+        return cleaned_data
+
     def clean_location(self):
         return clean_meaningful_text(self.cleaned_data["location"], "Location")
 
@@ -185,6 +210,14 @@ class VisitValidationMixin:
         if len(note) > MAX_NOTE_LENGTH:
             raise forms.ValidationError(f"Note cannot be longer than {MAX_NOTE_LENGTH} characters.")
         return note
+
+    def clean_payment_description(self):
+        description = (self.cleaned_data.get("payment_description") or "").strip()
+        if len(description) > MAX_NOTE_LENGTH:
+            raise forms.ValidationError(
+                f"Payment description cannot be longer than {MAX_NOTE_LENGTH} characters."
+            )
+        return description
 
 
 class CRMAuthenticationForm(AuthenticationForm):
@@ -247,9 +280,10 @@ class ExcelUploadForm(forms.Form):
 class CustomerCRMForm(forms.ModelForm):
     class Meta:
         model = CustomerRecord
-        fields = ["response", "note"]
+        fields = ["response", "callback_date", "note"]
         widgets = {
             "response": forms.Select(attrs={"class": "form-select"}),
+            "callback_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
             "note": forms.Textarea(
                 attrs={
                     "class": "form-control",
@@ -265,6 +299,16 @@ class CustomerCRMForm(forms.ModelForm):
         if len(note) > MAX_NOTE_LENGTH:
             raise forms.ValidationError(f"Note cannot be longer than {MAX_NOTE_LENGTH} characters.")
         return note
+
+    def clean(self):
+        cleaned_data = super().clean()
+        response = cleaned_data.get("response")
+        if response == CustomerRecord.RESPONSE_CALLBACK:
+            if not cleaned_data.get("callback_date"):
+                self.add_error("callback_date", "Choose a date for the callback.")
+        elif not self.instance.callback_completed_at:
+            cleaned_data["callback_date"] = None
+        return cleaned_data
 
 
 class DatasetForm(forms.ModelForm):
@@ -322,6 +366,10 @@ class VisitForm(VisitValidationMixin, forms.ModelForm):
             "location",
             "expense",
             "status",
+            "payment_status",
+            "total_amount",
+            "paid_amount",
+            "payment_description",
             "note",
         ]
         widgets = {
@@ -330,6 +378,10 @@ class VisitForm(VisitValidationMixin, forms.ModelForm):
             "location": forms.TextInput(attrs={"class": "form-control", "placeholder": "Meeting location", "required": "required", "maxlength": "255"}),
             "expense": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
             "status": forms.Select(attrs={"class": "form-select"}),
+            "payment_status": forms.Select(attrs={"class": "form-select"}),
+            "total_amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
+            "paid_amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
+            "payment_description": forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "Add payment details", "maxlength": str(MAX_NOTE_LENGTH)}),
             "note": forms.Textarea(attrs={"class": "form-control", "rows": 5, "placeholder": "Add visit notes", "maxlength": str(MAX_NOTE_LENGTH)}),
         }
 
@@ -424,6 +476,10 @@ class ManualVisitForm(VisitValidationMixin, forms.ModelForm):
             "location",
             "expense",
             "status",
+            "payment_status",
+            "total_amount",
+            "paid_amount",
+            "payment_description",
             "note",
         ]
         widgets = {
@@ -432,6 +488,10 @@ class ManualVisitForm(VisitValidationMixin, forms.ModelForm):
             "location": forms.TextInput(attrs={"class": "form-control", "placeholder": "Meeting location", "required": "required", "maxlength": "255"}),
             "expense": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
             "status": forms.Select(attrs={"class": "form-select"}),
+            "payment_status": forms.Select(attrs={"class": "form-select"}),
+            "total_amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
+            "paid_amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
+            "payment_description": forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "Add payment details", "maxlength": str(MAX_NOTE_LENGTH)}),
             "note": forms.Textarea(attrs={"class": "form-control", "rows": 5, "placeholder": "Add visit notes", "maxlength": str(MAX_NOTE_LENGTH)}),
         }
 
