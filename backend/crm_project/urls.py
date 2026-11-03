@@ -8,12 +8,17 @@ from customers.forms import CRMAuthenticationForm
 from customers.attendance import attendance_api, attendance_device_receiver
 
 
-def service_worker(request):
+def service_worker(request, filename="service-worker.js"):
+    # Development and Pages share frontend/public. Docker contains the built
+    # copies under backend/static/frontend, so it serves those same assets.
+    public_dir = settings.BASE_DIR / "frontend" / "public"
+    asset_dir = public_dir if public_dir.is_dir() else settings.BACKEND_DIR / "static" / "frontend"
     response = FileResponse(
-        (settings.BACKEND_DIR / "static" / "js" / "service-worker.js").open("rb"),
+        (asset_dir / filename).open("rb"),
         content_type="application/javascript",
     )
     response["Service-Worker-Allowed"] = "/"
+    response["Cache-Control"] = "no-cache"
     return response
 
 
@@ -33,6 +38,7 @@ def react_app(request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("service-worker.js", service_worker, name="service_worker"),
+    path("reminder-worker-core.js", service_worker, {"filename": "reminder-worker-core.js"}, name="reminder_worker_core"),
     path("api/", include("customers.api_urls")),
     path("api/attendance/", attendance_api, name="attendance_api"),
     path("api/attendance/<str:action>/", attendance_api, name="attendance_action"),

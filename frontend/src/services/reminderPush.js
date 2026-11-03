@@ -46,7 +46,7 @@ export async function clearReminderDevice({ serviceWorker, workerUrl, removeSubs
 }
 
 export async function syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl, ownerId }) {
-  const registration = await serviceWorker.register(workerUrl);
+  const registration = await serviceWorker.register(workerUrl, { updateViaCache: "none" });
   if (registration.installing || !registration.active) {
     const worker = registration.installing || registration.waiting;
     if (!worker) throw new Error("Notification service is not ready. Please retry.");

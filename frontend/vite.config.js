@@ -41,10 +41,6 @@ export default defineConfig(({ command, mode }) => {
         target: djangoTarget,
         changeOrigin: true,
       },
-      "/service-worker.js": {
-        target: djangoTarget,
-        changeOrigin: true,
-      },
     },
   },
   });
