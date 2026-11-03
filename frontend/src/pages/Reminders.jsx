@@ -1,4 +1,3 @@
-import WindowsReminderConnection from "../components/WindowsReminderConnection.jsx";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { remindersApi } from "../services/api.js";
@@ -157,7 +156,6 @@ export default function Reminders() {
 
     {error && <div className="alert alert-danger" role="alert">{error}</div>}
     <TimedAlert message={message} />
-    <WindowsReminderConnection />
     {notificationWarning && <div className="alert alert-warning" role="status">{notificationWarning}</div>}
 
     <section className="panel mb-4">

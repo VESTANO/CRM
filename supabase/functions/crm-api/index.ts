@@ -1,4 +1,3 @@
-import { nativeReminderDeviceRequest } from "../_shared/native-reminder-device.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { matchAttendanceProfile } from "../_shared/attendance-identity.ts";
@@ -1365,11 +1364,6 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
       await deleteDataset(ctx, dataset);
       return json(204);
     }
-  }
-
-  if (parts[0] === "native-reminder-devices") {
-    const result = await nativeReminderDeviceRequest(adminClient,ctx.user.id,method,parts,body,fail);
-    return json(result.status,result.data);
   }
 
   if (parts[0] === "reminders") {
