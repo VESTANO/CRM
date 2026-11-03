@@ -197,7 +197,7 @@ class VisitValidationMixin:
         return cleaned_data
 
     def clean_location(self):
-        return clean_meaningful_text(self.cleaned_data["location"], "Location")
+        return clean_optional_meaningful_text(self.cleaned_data.get("location", ""), "Meeting Location")
 
     def clean_expense(self):
         expense = self.cleaned_data["expense"]
@@ -374,8 +374,8 @@ class VisitForm(VisitValidationMixin, forms.ModelForm):
         ]
         widgets = {
             "visit_date": forms.DateInput(attrs={"class": "form-control", "type": "date", "required": "required"}),
-            "meeting_time": forms.TimeInput(attrs={"class": "form-control", "type": "time", "required": "required"}),
-            "location": forms.TextInput(attrs={"class": "form-control", "placeholder": "Meeting location", "required": "required", "maxlength": "255"}),
+            "meeting_time": forms.TimeInput(attrs={"class": "form-control", "type": "time"}),
+            "location": forms.TextInput(attrs={"class": "form-control", "placeholder": "Meeting location", "maxlength": "255"}),
             "expense": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
             "status": forms.Select(attrs={"class": "form-select"}),
             "payment_status": forms.Select(attrs={"class": "form-select"}),
@@ -484,8 +484,8 @@ class ManualVisitForm(VisitValidationMixin, forms.ModelForm):
         ]
         widgets = {
             "visit_date": forms.DateInput(attrs={"class": "form-control", "type": "date", "required": "required"}),
-            "meeting_time": forms.TimeInput(attrs={"class": "form-control", "type": "time", "required": "required"}),
-            "location": forms.TextInput(attrs={"class": "form-control", "placeholder": "Meeting location", "required": "required", "maxlength": "255"}),
+            "meeting_time": forms.TimeInput(attrs={"class": "form-control", "type": "time"}),
+            "location": forms.TextInput(attrs={"class": "form-control", "placeholder": "Meeting location", "maxlength": "255"}),
             "expense": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0"}),
             "status": forms.Select(attrs={"class": "form-select"}),
             "payment_status": forms.Select(attrs={"class": "form-select"}),

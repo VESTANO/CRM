@@ -37,7 +37,7 @@
         <dl class="row mb-0">
           <dt class="col-sm-4">Date</dt><dd class="col-sm-8 visit-detail-value">{{ visit.visit_date|date:"d M Y" }}</dd>
           <dt class="col-sm-4">Time</dt><dd class="col-sm-8 visit-detail-value">{{ visit.meeting_time|time:"H:i" }}</dd>
-          <dt class="col-sm-4">Location</dt><dd class="col-sm-8 visit-detail-value">{{ visit.location }}</dd>
+          <dt class="col-sm-4">Meeting Location</dt><dd class="col-sm-8 visit-detail-value">{{ visit.location }}</dd>
           <dt class="col-sm-4">Expense</dt><dd class="col-sm-8 visit-detail-value">₹{{ visit.expense|floatformat:2 }}</dd>
           <dt class="col-sm-4">Status</dt><dd class="col-sm-8 visit-detail-value"><span class="badge-response visit-status-{{ visit.status }}">{{ visit.get_status_display }}</span></dd>
           <dt class="col-sm-4">Visit Note</dt><dd class="col-sm-8 visit-detail-value visit-note-value">{{ visit.note|default:"" }}</dd>

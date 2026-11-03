@@ -225,8 +225,8 @@ class Visit(models.Model):
         null=True,
     )
     visit_date = models.DateField()
-    meeting_time = models.TimeField()
-    location = models.CharField(max_length=255)
+    meeting_time = models.TimeField(blank=True, null=True)
+    location = models.CharField("Meeting Location", max_length=255, blank=True)
     expense = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_HEALTHY)
     payment_status = models.CharField(

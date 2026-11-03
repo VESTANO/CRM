@@ -809,7 +809,7 @@ async function serializeVisit(visit: any, includeFields = false) {
     client_record_id: customer?.id || null,
     customer_note: customer?.note || null,
     images,
-    visit_date: visit.visit_date, meeting_time: String(visit.meeting_time).slice(0, 8),
+    visit_date: visit.visit_date, meeting_time: visit.meeting_time ? String(visit.meeting_time).slice(0, 8) : null,
     location: visit.location, expense: visit.expense, status: visit.status,
     status_label: ({ healthy: "Healthy", follow_up_required: "Follow-up Required", interested: "Interested", not_interested: "Not Interested", converted: "Converted" } as any)[visit.status] || visit.status,
     payment_status: visit.payment_status,
@@ -1095,8 +1095,8 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
   const status = valueString(body.status || "healthy");
   const validStatuses = ["healthy", "follow_up_required", "interested", "not_interested", "converted"];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) addError("visit_date", "Enter a valid date.");
-  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(meeting)) addError("meeting_time", "Enter a valid meeting time.");
-  if (!location || location.length > 255) addError("location", "Enter a location up to 255 characters.");
+  if (meeting && !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(meeting)) addError("meeting_time", "Enter a valid meeting time.");
+  if (location.length > 255) addError("location", "Enter a meeting location up to 255 characters.");
   if (!validStatuses.includes(status)) addError("status", "Choose a valid visit status.");
   const numberFields = ["expense", "total_amount", "paid_amount"];
   const numbers: Record<string, number> = {};
@@ -1158,7 +1158,7 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
     customer_id: customerId,
     manual_client_id: manualClientId,
     visit_date: date,
-    meeting_time: meeting.length === 5 ? meeting + ":00" : meeting,
+    meeting_time: meeting ? (meeting.length === 5 ? meeting + ":00" : meeting) : null,
     location,
     expense: numbers.expense,
     status,

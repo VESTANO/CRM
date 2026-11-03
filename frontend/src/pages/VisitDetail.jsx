@@ -40,7 +40,7 @@ export default function VisitDetail() {
             <Info label="Dataset" value={visit.dataset_name || "Manual Client"} />
             <Info label="Visit Date" value={formatDate(visit.visit_date)} />
             <Info label="Meeting Time" value={visit.meeting_time?.slice(0, 5)} />
-            <Info label="Location" value={visit.location} />
+            <Info label="Meeting Location" value={visit.location} />
             <Info label="Expense" value={formatCurrency(visit.expense)} />
             <Info label="Status" value={<span className={`badge-response visit-status-${visit.status}`}>{visit.status_label}</span>} />
             <Info label="Visit Note" value={visit.note || ""} note />

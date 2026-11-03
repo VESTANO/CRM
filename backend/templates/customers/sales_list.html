@@ -57,7 +57,7 @@
             <th>Dataset / Source</th>
             <th>Visit Date</th>
             <th>Meeting Time</th>
-            <th>Location</th>
+            <th>Meeting Location</th>
             <th>Expense</th>
             <th>Status</th>
             <th>Note</th>
@@ -77,7 +77,7 @@
               </td>
               <td data-label="Visit Date">{{ visit.visit_date|date:"d M Y" }}</td>
               <td data-label="Meeting Time">{{ visit.meeting_time|time:"H:i" }}</td>
-              <td data-label="Location">{{ visit.location }}</td>
+              <td data-label="Meeting Location">{{ visit.location }}</td>
               <td data-label="Expense">₹{{ visit.expense|floatformat:2 }}</td>
               <td data-label="Status"><span class="badge-response visit-status-{{ visit.status }}">{{ visit.get_status_display }}</span></td>
               <td data-label="Note" class="note-cell"><span class="sales-note-value">{{ visit.note|default:"" }}</span></td>
