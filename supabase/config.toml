@@ -5,3 +5,7 @@ verify_jwt = true
 
 [functions.reminder-dispatch]
 verify_jwt = true
+
+# Receipt tokens authorize a single acknowledgement, not an account session.
+[functions.reminder-receipt]
+verify_jwt = false

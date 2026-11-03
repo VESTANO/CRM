@@ -7,6 +7,7 @@ function setup({ subscriptions = [{ id: 1, endpoint: "https://fcm.googleapis.com
   const finished = [], saved = [], expired = [];
   const store = {
     claim: async () => [reminder], isCurrent: async () => current,
+    prepareDelivery: async () => ({ id: 1, receiptToken: "test", receiptUrl: "https://example.test/receipt" }),
     subscriptions: async () => subscriptions, deliveries: async () => deliveries,
     expire: async (id) => expired.push(id),
     saveDelivery: async (...args) => saved.push(args),

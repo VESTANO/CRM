@@ -1066,9 +1066,26 @@ async function listReminders(ctx: Context) {
   const { data, error } = await adminClient.from("crm_reminders").select("*")
     .eq("owner_id", ctx.user.id).order("reminder_at").order("id");
   checkDb(error);
+  const ids = (data || []).map((r: any) => r.id);
+  const { data: receipts, error: receiptError } = ids.length
+    ? await adminClient.from("crm_reminder_deliveries").select("reminder_id,delivery_revision,received_at,displayed_at,clicked_at").in("reminder_id", ids)
+    : { data: [], error: null };
+  checkDb(receiptError);
+  const notificationStatus = (item: any) => {
+    const rows = (receipts || []).filter((r: any) => r.reminder_id === item.id && r.delivery_revision === item.delivery_revision);
+    if (rows.some((r: any) => r.clicked_at)) return "Notification opened";
+    if (rows.some((r: any) => r.displayed_at)) return "Browser created notification";
+    if (rows.some((r: any) => r.received_at)) return "Browser received notification";
+    if (item.delivery_status === "sent") return "Push service accepted; awaiting browser receipt";
+    if (item.delivery_status === "no_subscriptions") return "Waiting for a registered device";
+    if (item.delivery_status === "retrying") return "Delivery retry scheduled";
+    if (item.delivery_status === "failed") return "Delivery needs attention";
+    return new Date(item.reminder_at).getTime() > Date.now() ? "Scheduled" : "Waiting for delivery";
+  };
   return (data || []).map((item: any) => ({
     id: item.id, text: item.text, reminder_at: item.reminder_at,
     is_due: new Date(item.reminder_at).getTime() <= Date.now(),
+    notification_status: notificationStatus(item),
     created_at: item.created_at, sent_at: item.sent_at,
     delivery_status: item.delivery_status, delivery_attempt_count: item.delivery_attempt_count,
     last_delivery_attempt_at: item.last_delivery_attempt_at,

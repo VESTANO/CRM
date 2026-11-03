@@ -9,16 +9,23 @@ const store = {
   claim: () => checked(db.rpc("claim_due_crm_reminders", { batch_size: 20 })),
   isCurrent: async (r: any) => (await checked(db.from("crm_reminders").select("id").eq("id", r.id).eq("delivery_status", "processing").eq("delivery_locked_at", r.delivery_locked_at).eq("reminder_at", r.reminder_at))).length > 0,
   subscriptions: (owner: string) => checked(db.from("crm_push_subscriptions").select("*").eq("owner_id", owner)),
-  deliveries: (id: number) => checked(db.from("crm_reminder_deliveries").select("*").eq("reminder_id", id)),
+  deliveries: (id: number, revision: number) => checked(db.from("crm_reminder_deliveries").select("*").eq("reminder_id", id).eq("delivery_revision", revision)),
   expire: (id: number) => checked(db.from("crm_push_subscriptions").delete().eq("id", id)),
-  saveDelivery: async (id: number, s: any, status: string, lastError: string, attempts: number, now: Date) => {
+  prepareDelivery: async (r: any, s: any, now: Date) => {
     const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s.endpoint));
     const endpointHash = Array.from(new Uint8Array(hash), (v) => v.toString(16).padStart(2, "0")).join("");
-    // Expired subscription rows were removed; keep the delivery audit without its FK.
-    const values = { reminder_id: id, subscription_id: status === "expired" ? null : s.id, endpoint_hash: endpointHash, status, last_error: lastError, attempt_count: attempts, last_attempt_at: now.toISOString() };
-    if (status === "expired") await checked(db.from("crm_reminder_deliveries").insert(values));
-    else await checked(db.from("crm_reminder_deliveries").upsert(values, { onConflict: "reminder_id,subscription_id" }));
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const receiptToken = btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    const tokenDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(receiptToken));
+    const tokenHash = Array.from(new Uint8Array(tokenDigest), (v) => v.toString(16).padStart(2, "0")).join("");
+    const rows = await checked(db.from("crm_reminder_deliveries").upsert({
+      reminder_id: r.id, subscription_id: s.id, delivery_revision: r.delivery_revision || 1,
+      endpoint_hash: endpointHash, receipt_token_hash: tokenHash,
+      receipt_expires_at: new Date(now.getTime() + 8 * 86400000).toISOString(),
+    }, { onConflict: "reminder_id,subscription_id,delivery_revision" }).select("id"));
+    return { id: rows[0].id, receiptToken, receiptUrl: `${Deno.env.get("SUPABASE_URL")}/functions/v1/reminder-receipt` };
   },
+  saveDelivery: (_id: number, _s: any, status: string, lastError: string, attempts: number, now: Date, deliveryId: number) => checked(db.from("crm_reminder_deliveries").update({ status, last_error: lastError, attempt_count: attempts, last_attempt_at: now.toISOString() }).eq("id", deliveryId)),
   finish: (r: any, values: any) => checked(db.from("crm_reminders").update(values).eq("id", r.id).eq("delivery_status", "processing").eq("delivery_locked_at", r.delivery_locked_at).eq("reminder_at", r.reminder_at)),
 };
 
@@ -40,7 +47,7 @@ Deno.serve(async (request) => {
     }
     const result = await dispatchDueReminders(store, async (subscription: any, payload: any) => {
       const details = webpush.generateRequestDetails({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify(payload), {
-        TTL: 86400, vapidDetails: { subject, publicKey, privateKey },
+        TTL: 604800, urgency: "high", vapidDetails: { subject, publicKey, privateKey },
       });
       const response = await fetch(details.endpoint, { method: details.method, headers: details.headers, body: details.body, signal: AbortSignal.timeout(10000), redirect: "error" });
       await response.body?.cancel();

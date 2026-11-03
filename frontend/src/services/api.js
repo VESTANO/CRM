@@ -1,3 +1,4 @@
+import { clearReminderDevice, reminderWorkerUrl } from "./reminderPush.js";
 import axios from "axios";
 import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./crmSupabase.js";
 
@@ -154,6 +155,12 @@ export const authApi = {
     return { data: { user, csrfToken: "" } };
   },
   logout: async () => {
+    if ("serviceWorker" in navigator) {
+      await clearReminderDevice({
+        serviceWorker: navigator.serviceWorker, workerUrl: reminderWorkerUrl(import.meta.env.BASE_URL),
+        removeSubscription: (endpoint) => apiClient.delete("/push/subscriptions/", { data: { endpoint } }),
+      }).catch(() => {});
+    }
     const { error } = await crmSupabase.auth.signOut();
     await runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" }));
     if (error) throw error;

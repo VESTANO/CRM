@@ -1,3 +1,5 @@
+import { remindersApi } from "../services/api.js";
+import { clearReminderDevice, prepareReminderNotifications, reminderWorkerUrl } from "../services/reminderPush.js";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authApi } from "../services/api.js";
 import { crmSupabase } from "../services/crmSupabase.js";
@@ -60,6 +62,21 @@ export function AuthProvider({ children }) {
     await authApi.login(credentials);
     return refreshSession();
   };
+
+  useEffect(() => {
+    if (isLoading || !("serviceWorker" in navigator)) return;
+    const workerUrl = reminderWorkerUrl(import.meta.env.BASE_URL);
+    if (!user?.id) {
+      clearReminderDevice({ serviceWorker: navigator.serviceWorker, workerUrl, removeSubscription: async () => {} }).catch(() => {});
+      return;
+    }
+    if (!("Notification" in window) || !("PushManager" in window) || Notification.permission !== "granted") return;
+    prepareReminderNotifications({
+      notification: Notification, serviceWorker: navigator.serviceWorker, workerUrl, ownerId: user.id,
+      loadConfig: async () => (await remindersApi.pushConfig()).data,
+      saveSubscription: (subscription) => remindersApi.subscribePush(subscription, ""),
+    }).catch(() => {});
+  }, [user?.id, isLoading]);
 
   const logout = async () => {
     await authApi.logout();

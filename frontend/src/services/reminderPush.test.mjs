@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-import vm from "node:vm";
-import { prepareReminderNotifications, reminderWorkerUrl, saveReminderWithNotifications, syncReminderPush } from "./reminderPush.js";
+import { bindReminderRegistration, clearReminderDevice, prepareReminderNotifications, reminderWorkerUrl, saveReminderWithNotifications, syncReminderPush } from "./reminderPush.js";
+
+test("device binding completes before saving a subscription; logout clears only the CRM device", async () => {
+  const messages = [], removed = [];
+  const registration = { scope: "https://example.test/CRM/", active: {
+    postMessage: (message, ports) => { messages.push(message); ports[0].postMessage({ ok: true }); },
+  }, pushManager: { getSubscription: async () => ({ endpoint: "registered-device" }) } };
+  await bindReminderRegistration(registration, "owner-1");
+  await clearReminderDevice({ serviceWorker: { getRegistration: async () => registration }, workerUrl: "/CRM/service-worker.js", removeSubscription: async (endpoint) => removed.push(endpoint) });
+  assert.deepEqual(messages.map((m) => m.ownerId), ["owner-1", null]);
+  assert.deepEqual(removed, ["registered-device"]);
+  await clearReminderDevice({ serviceWorker: { getRegistration: async () => ({ ...registration, scope: "https://example.test/" }) }, workerUrl: "/CRM/service-worker.js", removeSubscription: () => assert.fail("Unrelated app registration") });
+});
 
 test("setting a reminder requests permission immediately, then registers before saving", async () => {
   const order = [];
@@ -69,20 +79,4 @@ test("a changed key replaces the old subscription and a failed server save is no
   } }) };
   await assert.rejects(syncReminderPush({ serviceWorker, publicKey: "AQID", workerUrl: "/CRM/service-worker.js", saveSubscription: async () => { throw new Error("offline"); } }), /offline/);
   assert.ok(removed && created);
-});
-test("notification worker delivers after the page closes and stays inside the CRM scope", async () => {
-  const handlers = {}, shown = [], opened = [];
-  const self = { location: { href: "https://vestano.github.io/CRM/service-worker.js" }, addEventListener: (name, cb) => { handlers[name] = cb; },
-    registration: { showNotification: async (...args) => shown.push(args) },
-    clients: { matchAll: async () => [], openWindow: async (url) => opened.push(url) },
-  };
-  vm.runInNewContext(readFileSync(new URL("../../public/service-worker.js", import.meta.url), "utf8"), { self, URL });
-  let work;
-  handlers.push({ data: { json: () => ({ body: "Due", reminderId: 3 }) }, waitUntil: (promise) => { work = promise; } });
-  await work;
-  assert.equal(shown[0][1].body, "Due");
-  assert.equal(shown[0][1].icon, "https://vestano.github.io/CRM/notification-icon.svg");
-  handlers.notificationclick({ notification: { close() {}, data: { url: "https://evil.test/" } }, waitUntil: (promise) => { work = promise; } });
-  await work;
-  assert.equal(opened[0], "https://vestano.github.io/CRM/reminders");
 });

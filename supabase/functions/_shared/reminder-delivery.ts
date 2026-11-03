@@ -15,19 +15,25 @@ export async function dispatchDueReminders(store: any, send: any, now = new Date
   for (const reminder of reminders) {
     if (!await store.isCurrent(reminder)) continue;
     const subscriptions = await store.subscriptions(reminder.owner_id);
-    const deliveries = await store.deliveries(reminder.id);
+    const revision = reminder.delivery_revision || 1;
+    const deliveries = await store.deliveries(reminder.id, revision);
     const accepted = new Set(deliveries.filter((row: any) => row.status === "accepted").map((row: any) => row.subscription_id));
     let failures = 0, acceptedCount = deliveries.filter((row: any) => row.status === "accepted").length;
     for (const subscription of subscriptions) {
       if (accepted.has(subscription.id)) continue;
       if (!await store.isCurrent(reminder)) break;
+      const delivery = await store.prepareDelivery(reminder, subscription, now);
       let status = "accepted", lastError = "";
       try {
         if (!trustedPushEndpoint(subscription.endpoint)) throw Object.assign(new Error("Invalid push service endpoint"), { statusCode: 410 });
         await send(subscription, {
           title: "Customer CRM | Reminder", body: reminder.text,
           url: `/CRM/reminders?reminder=${reminder.id}#reminder-${reminder.id}`,
-          tag: `crm-reminder-${reminder.id}`, reminderId: reminder.id,
+          path: `reminders?reminder=${reminder.id}#reminder-${reminder.id}`,
+          tag: `crm-reminder-${reminder.id}-${revision}`, reminderId: reminder.id,
+          notificationKey: `${reminder.id}:${revision}`, ownerId: reminder.owner_id,
+          expiresAt: new Date(now.getTime() + 7 * 86400000).toISOString(),
+          receipt: { url: delivery.receiptUrl, token: delivery.receiptToken },
         });
         acceptedCount++;
       } catch (error) {
@@ -39,7 +45,7 @@ export async function dispatchDueReminders(store: any, send: any, now = new Date
         else failures++;
       }
       const previous = deliveries.find((row: any) => row.subscription_id === subscription.id);
-      await store.saveDelivery(reminder.id, subscription, status, lastError, (previous?.attempt_count || 0) + 1, now);
+      await store.saveDelivery(reminder.id, subscription, status, lastError, (previous?.attempt_count || 0) + 1, now, delivery.id);
     }
     const state = failures ? (reminder.delivery_attempt_count >= 10 ? "failed" : "retrying") : acceptedCount ? "sent" : "no_subscriptions";
     const retryAt = ["retrying", "no_subscriptions"].includes(state)

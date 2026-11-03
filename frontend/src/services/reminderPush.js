@@ -7,7 +7,7 @@ export function decodeApplicationKey(value) {
   return Uint8Array.from(atob((value + padding).replace(/-/g, "+").replace(/_/g, "/")), (character) => character.charCodeAt(0));
 }
 
-export async function prepareReminderNotifications({ notification, serviceWorker, loadConfig, saveSubscription, workerUrl }) {
+export async function prepareReminderNotifications({ notification, serviceWorker, loadConfig, saveSubscription, workerUrl, ownerId }) {
   if (!notification || !serviceWorker) throw new Error("This browser does not support desktop reminder notifications.");
   // Request from the Set Reminder click, before network requests can consume
   // the browser's user activation. Saved permission needs no second prompt.
@@ -16,7 +16,7 @@ export async function prepareReminderNotifications({ notification, serviceWorker
     ? "Desktop notifications are blocked in your browser settings."
     : "Allow the browser notification prompt to receive desktop reminders.");
   const { publicKey } = await loadConfig();
-  return syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl });
+  return syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl, ownerId });
 }
 
 export async function saveReminderWithNotifications({ prepareNotifications, saveReminder }) {
@@ -27,9 +27,27 @@ export async function saveReminderWithNotifications({ prepareNotifications, save
   return { notificationError };
 }
 
-export async function syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl }) {
+export async function bindReminderRegistration(registration, ownerId) {
+  await new Promise((resolve, reject) => {
+    const channel = new MessageChannel();
+    const finish = (error) => { clearTimeout(timeout); channel.port1.close(); channel.port2.close(); if (error) reject(error); else resolve(); };
+    const timeout = setTimeout(() => finish(new Error("Notification worker is updating. Refresh and retry.")), 15000);
+    channel.port1.onmessage = (event) => event.data?.ok ? finish() : finish(new Error("Unable to bind notifications to this account."));
+    registration.active.postMessage({ type: "CRM_REMINDER_BIND", ownerId }, [channel.port2]);
+  });
+}
+
+export async function clearReminderDevice({ serviceWorker, workerUrl, removeSubscription }) {
+  const registration = await serviceWorker?.getRegistration(workerUrl);
+  if (!registration?.active || new URL(registration.scope).pathname !== workerUrl.slice(0, workerUrl.lastIndexOf("/") + 1)) return;
+  await bindReminderRegistration(registration, null);
+  const subscription = await registration.pushManager.getSubscription();
+  if (subscription) await removeSubscription(subscription.endpoint);
+}
+
+export async function syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl, ownerId }) {
   const registration = await serviceWorker.register(workerUrl);
-  if (!registration.active) {
+  if (registration.installing || !registration.active) {
     const worker = registration.installing || registration.waiting;
     if (!worker) throw new Error("Notification service is not ready. Please retry.");
     await new Promise((resolve, reject) => {
@@ -46,6 +64,7 @@ export async function syncReminderPush({ serviceWorker, publicKey, saveSubscript
       changed();
     });
   }
+  if (ownerId !== undefined) await bindReminderRegistration(registration, ownerId);
   const applicationServerKey = decodeApplicationKey(publicKey);
   let subscription = await registration.pushManager.getSubscription();
   if (subscription?.options?.applicationServerKey) {

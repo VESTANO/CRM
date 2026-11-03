@@ -20,7 +20,7 @@ function formatReminderDate(value) {
 }
 
 export default function Reminders() {
-  const { csrfToken } = useAuth();
+  const { user, csrfToken } = useAuth();
   const [reminders, setReminders] = useState(null);
   const [values, setValues] = useState({ text: "", date: "", time: "" });
   const [error, setError] = useState("");
@@ -37,6 +37,7 @@ export default function Reminders() {
   const today = localDateValue(now);
   const minTime = values.date === today ? localTimeValue(new Date(now.getTime() + 60_000)) : undefined;
   const dueReminders = reminders?.filter((reminder) => new Date(reminder.reminder_at).getTime() <= nowTick) || [];
+  const visibleReminders = showDueReminders ? dueReminders : reminders?.filter((r) => new Date(r.reminder_at).getTime() > nowTick) || [];
   const upcomingReminders = reminders?.filter((reminder) => new Date(reminder.reminder_at).getTime() > nowTick) || [];
 
   const loadReminders = () => remindersApi.list()
@@ -45,7 +46,7 @@ export default function Reminders() {
 
   const connectNotifications = () => prepareReminderNotifications({
     notification: "Notification" in window && "PushManager" in window ? window.Notification : null,
-    serviceWorker: navigator.serviceWorker, workerUrl,
+    serviceWorker: navigator.serviceWorker, workerUrl, ownerId: user?.id,
     loadConfig: async () => (await remindersApi.pushConfig()).data,
     saveSubscription: (subscription) => remindersApi.subscribePush(subscription, csrfToken),
   });
@@ -168,14 +169,14 @@ export default function Reminders() {
     </section>
 
     <section className="panel">
-      <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><h2 className="h5 mb-0">Your reminders</h2></div>
+      <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><h2 className="h5 mb-0">Your reminders</h2><div className="btn-group btn-group-sm"><button className={`btn ${!showDueReminders ? "btn-primary" : "btn-outline-primary"}`} type="button" onClick={() => setShowDueReminders(false)}>Upcoming ({upcomingReminders.length})</button><button className={`btn ${showDueReminders ? "btn-primary" : "btn-outline-primary"}`} type="button" onClick={() => setShowDueReminders(true)}>Due ({dueReminders.length})</button></div></div>
       {reminders === null ? <div className="text-secondary">Loading reminders...</div> : reminders.length ? (
         <div className="list-group list-group-flush">
-          {upcomingReminders.map((reminder) => <div className="list-group-item px-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-3" id={`reminder-${reminder.id}`} key={reminder.id}>
-              <div className="min-w-0"><div className="fw-semibold">{reminder.text}</div><div className="text-secondary small">{formatReminderDate(reminder.reminder_at)}</div></div>
-              <div className="d-flex align-items-center gap-2"><span className="badge text-bg-light">Upcoming</span><button className="btn btn-outline-primary btn-sm" type="button" aria-label="Edit reminder" title="Edit reminder" onClick={() => edit(reminder)}><i className="bi bi-pencil" aria-hidden="true" /></button><button className="btn btn-outline-danger btn-sm" type="button" aria-label="Remove reminder" title="Remove reminder" onClick={() => remove(reminder.id)}><i className="bi bi-trash" aria-hidden="true" /></button></div>
+          {visibleReminders.map((reminder) => <div className="list-group-item px-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-3" id={`reminder-${reminder.id}`} key={reminder.id}>
+              <div className="min-w-0"><div className="fw-semibold">{reminder.text}</div><div className="text-secondary small">{formatReminderDate(reminder.reminder_at)}</div><div className="text-secondary small">{reminder.notification_status || "Scheduled"}</div>{reminder.last_delivery_error && <div className="text-warning small">{reminder.last_delivery_error}</div>}</div>
+              <div className="d-flex align-items-center gap-2"><span className="badge text-bg-light">{showDueReminders ? "Due" : "Upcoming"}</span><button className="btn btn-outline-primary btn-sm" type="button" aria-label="Edit reminder" title="Edit reminder" onClick={() => edit(reminder)}><i className="bi bi-pencil" aria-hidden="true" /></button><button className="btn btn-outline-danger btn-sm" type="button" aria-label="Remove reminder" title="Remove reminder" onClick={() => remove(reminder.id)}><i className="bi bi-trash" aria-hidden="true" /></button></div>
             </div>)}
-          {!upcomingReminders.length && <div className="empty-state text-center"><p className="text-secondary mb-0">No upcoming reminders.</p></div>}
+          {!visibleReminders.length && <div className="empty-state text-center"><p className="text-secondary mb-0">{showDueReminders ? "No due reminders." : "No upcoming reminders."}</p></div>}
         </div>
       ) : <div className="empty-state text-center"><h3 className="h5">No reminders yet</h3><p className="text-secondary mb-0">Your reminders will appear here.</p></div>}
     </section>
