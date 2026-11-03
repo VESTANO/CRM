@@ -4,32 +4,49 @@ import { attendanceSupabase, getAttendanceSession, runAttendanceAuthTask } from 
 import { useAuth } from "./useAuth.jsx";
 
 const AttendanceAuthContext = createContext(null);
+const emptyAccess = { session: null, profile: null, permission: null, owner: null };
 
 export function AttendanceAuthProvider({ children }) {
   const { user } = useAuth();
-  const [access, setAccess] = useState({ session: null, profile: null, permission: null });
+  const [access, setAccess] = useState(emptyAccess);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const generation = useRef(0);
+  const logout = useCallback(async () => {
+    generation.current += 1;
+    setAccess(emptyAccess); setError(""); setIsLoading(false);
+    await runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" }));
+  }, []);
   const restore = useCallback(async () => {
     const request = ++generation.current;
-    setAccess({ session: null, profile: null, permission: null });
+    setAccess(emptyAccess);
     setIsLoading(true); setError("");
     try {
-      if (!user?.id) return;
-      await runAttendanceAuthTask(async () => {
-        if (request !== generation.current) return;
+      return await runAttendanceAuthTask(async () => {
+        if (request !== generation.current) return false;
         await attendanceSupabase.auth.signOut({ scope: "local" });
+        if (!user?.id || request !== generation.current) return false;
         const { data } = await apiClient.post("/auth/attendance-session/", {});
-        if (request !== generation.current) return;
+        if (request !== generation.current) return false;
         const { error: sessionError } = await attendanceSupabase.auth.setSession(data);
         if (sessionError) throw sessionError;
-        const restored = await getAttendanceSession();
-        if (request === generation.current) setAccess(restored);
-        else await attendanceSupabase.auth.signOut({ scope: "local" });
+        try {
+          const restored = await getAttendanceSession();
+          if (!restored.profile || !restored.permission?.allowed) throw new Error(restored.permission?.message || "Attendance access is unavailable.");
+          if (request !== generation.current) {
+            await attendanceSupabase.auth.signOut({ scope: "local" });
+            return false;
+          }
+          setAccess({ ...restored, owner: user.id });
+          return true;
+        } catch (error) {
+          await attendanceSupabase.auth.signOut({ scope: "local" });
+          throw error;
+        }
       });
     } catch (restoreError) {
       if (request === generation.current) setError(restoreError.response?.data?.detail || restoreError.message || "Unable to open attendance.");
+      return false;
     } finally {
       if (request === generation.current) setIsLoading(false);
     }
@@ -38,7 +55,13 @@ export function AttendanceAuthProvider({ children }) {
     restore();
     return () => { generation.current += 1; };
   }, [restore]);
-  const value = useMemo(() => ({ ...access, isLoading, error, restore }), [access, isLoading, error, restore]);
+  useEffect(() => {
+    const { data } = attendanceSupabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setAccess(emptyAccess);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+  const value = useMemo(() => ({ ...(access.owner === user?.id ? access : emptyAccess), isLoading, error, restore, logout }), [access, user?.id, isLoading, error, restore, logout]);
   return <AttendanceAuthContext.Provider value={value}>{children}</AttendanceAuthContext.Provider>;
 }
 

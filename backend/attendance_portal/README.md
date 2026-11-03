@@ -1,13 +1,16 @@
 # Attendance in the CRM
 
-## Supabase frontend: one login
+## Supabase frontend: Attendance single login
 
-Sign in using the existing CRM credentials. The server matches the authenticated
+Attendance opens automatically for the signed-in CRM user, including employees,
+admins, and super admins. No separate username or password is requested.
+The server validates the existing CRM token and matches the authenticated
 CRM profile's `employee_id` (its username) to the attendance profile's
 `employee_id` (its login username), ignoring case. Emails and display names do
 not need to match. Duplicate matches, inactive accounts, and missing matches
-are denied; the attendance page explains the issue without another login form.
-CRM logout clears the attendance session too.
+are denied with a visible error and retry button. Attendance sessions are held in
+memory for the current CRM user and restored automatically after page reload.
+CRM logout or switching CRM users clears Attendance access.
 
 The two Supabase projects require a trusted server connection. Set
 `ATTENDANCE_SUPABASE_SERVICE_ROLE_KEY` in the CRM project's Edge Function
@@ -16,9 +19,18 @@ Never expose that key in frontend variables. `ATTENDANCE_SUPABASE_URL` defaults
 to `https://lorrfeyiqgdfxdjqnpmn.supabase.co`. Deploy the updated frontend after
 the function. No new database migration is required.
 
-`POST /api/auth/attendance-session/` validates the CRM token and active CRM
-profile, looks up the unique attendance username, and issues a session for that
-existing attendance user. Existing attendance roles and policies still apply.
+`POST /api/auth/attendance-session/` requires a valid CRM token. It derives the
+employee ID from the active CRM account, ignores client-supplied identities,
+looks up the unique attendance username, and issues a session for that
+existing attendance user. CRM Admin and Super Admin accounts are also provisioned
+in Attendance with their corresponding admin role during CRM account creation.
+Existing CRM admins are synchronized when they next open Attendance. An existing
+Attendance Super Admin is never downgraded by login synchronization. Explicit role
+changes in CRM Edit User update the matching Attendance role, including demotions.
+If Attendance synchronization fails, the CRM edit is restored. Matching accounts keep their passwords,
+personal details, and attendance history; inactive or ambiguous matches are denied.
+Missing admin accounts receive a new Attendance identity for CRM single login.
+Employee accounts continue to require an existing matching Attendance account.
 No passwords are copied, changed, or requested a second time.
 
 ## Django attendance backup

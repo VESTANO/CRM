@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { matchAttendanceProfile } from "../_shared/attendance-identity.ts";
+import { ensureAttendanceAdmin } from "../_shared/attendance-admin.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -376,13 +377,26 @@ async function authenticate(request: Request): Promise<Context> {
   return { user: authData.user, profile };
 }
 
-async function startAttendanceSession(ctx: Context) {
+function attendanceAdminClient() {
   const url = Deno.env.get("ATTENDANCE_SUPABASE_URL") || "https://lorrfeyiqgdfxdjqnpmn.supabase.co";
   const key = Deno.env.get("ATTENDANCE_SUPABASE_SERVICE_ROLE_KEY") || "";
   if (!key) fail(503, "Attendance single login needs server configuration. Ask an administrator to configure the attendance connection.");
-  const attendance = createClient(url, key, {
+  return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
   });
+}
+
+async function syncAttendanceAdmin(profile: any, exactRole = false) {
+  if (!isAdminRole(profile.role) && !exactRole) return;
+  try {
+    await ensureAttendanceAdmin(attendanceAdminClient(), profile, exactRole);
+  } catch (error) {
+    fail(503, `Unable to set up Attendance admin access: ${error instanceof Error ? error.message : (error as any)?.message || "Attendance is unavailable."}`);
+  }
+}
+
+async function startAttendanceSession(ctx: Context) {
+  const attendance = attendanceAdminClient();
   const username = String(ctx.profile.employee_id || "").trim();
   if (!username) fail(403, "Your CRM account has no username to match with attendance.");
   // Escape LIKE metacharacters: a username must never match other employees.
@@ -394,7 +408,14 @@ async function startAttendanceSession(ctx: Context) {
   checkDb(crmError); checkDb(profileError);
   const crmMatch = matchAttendanceProfile(username, crmProfiles || []);
   if (!crmMatch || crmMatch.id !== ctx.user.id) fail(403, "Your CRM username is ambiguous. Ask an administrator to make it unique.");
-  const profile = matchAttendanceProfile(username, profiles || []);
+  let profile = matchAttendanceProfile(username, profiles || []);
+  if (isAdminRole(ctx.profile.role)) {
+    // Existing CRM admins receive the same access on their next Attendance login.
+    await syncAttendanceAdmin(ctx.profile);
+    const { data: synced, error: syncedError } = await attendance.from("profiles").select("id,employee_id,email,active").ilike("employee_id", pattern).limit(2);
+    checkDb(syncedError);
+    profile = matchAttendanceProfile(username, synced || []);
+  }
   if (!profile) fail(403, "No unique active attendance account matches your CRM username. Ask an administrator to make the CRM username and attendance employee ID match.");
   const { data: account, error: accountError } = await attendance.auth.admin.getUserById(profile.id);
   if (accountError || !account.user?.email) fail(403, "The matching attendance account needs an administrator to correct its login details.");
@@ -414,6 +435,7 @@ function userPayload(profile: any, extras: any = {}) {
     id: profile.id,
     username: profile.employee_id || profile.email || "user",
     email: profile.email || "",
+    role,
     is_staff: admin,
     is_superuser: role === "super_admin",
     is_admin: admin,
@@ -1550,7 +1572,9 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const email = valueString(body.email).toLowerCase();
       const password1 = String(body.password1 || "");
       const password2 = String(body.password2 || "");
+      const role = body.role === undefined ? "employee" : body.role;
       const errors: Record<string, string[]> = {};
+      if (role !== "employee" && role !== "admin" && role !== "super_admin") errors.role = ["Choose Employee, Admin, or Super Admin."];
       if (!username || username.length > 150) errors.username = ["Enter a username up to 150 characters."];
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = ["Enter a valid email address."];
       if (password1.length < 8) errors.password1 = ["This password must contain at least 8 characters."];
@@ -1569,12 +1593,19 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       checkDb(readError);
       if (!profile) {
         const { data: inserted, error: insertError } = await adminClient.from("profiles").insert({
-          id: created.user.id, employee_id: username, name: username, email, role: "employee", active: body.is_active !== false,
+          id: created.user.id, employee_id: username, name: username, email, role, active: body.is_active !== false,
         }).select("*").single();
         checkDb(insertError); profile = inserted;
       } else {
-        const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role: "employee", active: body.is_active !== false }).eq("id", profile.id).select("*").single();
+        const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false }).eq("id", profile.id).select("*").single();
         checkDb(updateError); profile = updated;
+      }
+      try {
+        await syncAttendanceAdmin(profile);
+      } catch (error) {
+        const { error: cleanupError } = await adminClient.auth.admin.deleteUser(created.user.id);
+        if (cleanupError) fail(503, "Attendance setup failed and the CRM account could not be rolled back. Contact an administrator before retrying.");
+        throw error;
       }
       return json(201, await profileWithCounts(profile));
     }
@@ -1586,6 +1617,9 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         const username = body.username === undefined ? target.employee_id : valueString(body.username).toUpperCase();
         const email = body.email === undefined ? target.email : valueString(body.email).toLowerCase();
         const active = body.is_active === undefined ? target.active : Boolean(body.is_active);
+        const role = body.role === undefined ? target.role : body.role;
+        if (!["employee", "admin", "super_admin"].includes(role) && body.role !== undefined) fail(400, "Choose a valid role.", { errors: { role: ["Choose Employee, Admin, or Super Admin."] } });
+        if (target.id === ctx.user.id && !isAdminRole(role)) fail(400, "You cannot remove your own administrator access.", { errors: { role: ["You cannot remove your own administrator access."] } });
         if (!username || username.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "Enter a valid username and email.", { errors: { username: ["Enter a valid username and email."], email: ["Enter a valid username and email."] } });
         const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).neq("id", target.id).maybeSingle();
         checkDb(duplicate.error);
@@ -1594,8 +1628,21 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
           const { error } = await adminClient.auth.admin.updateUserById(target.id, { email, email_confirm: true });
           checkDb(error);
         }
-        const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active }).eq("id", target.id).select("*").single();
-        checkDb(error); return json(200, await profileWithCounts(data));
+        const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active, role }).eq("id", target.id).select("*").single();
+        checkDb(error);
+        if (role !== target.role) {
+          try {
+            await syncAttendanceAdmin(data, true);
+          } catch (syncError) {
+            const { error: rollbackError } = await adminClient.from("profiles").update({ employee_id: target.employee_id, email: target.email, active: target.active, role: target.role }).eq("id", target.id);
+            const { error: authRollbackError } = email !== target.email
+              ? await adminClient.auth.admin.updateUserById(target.id, { email: target.email, email_confirm: true })
+              : { error: null };
+            if (rollbackError || authRollbackError) fail(503, "Attendance role synchronization failed and the CRM changes could not be restored. Contact an administrator.");
+            fail(503, "The role was not changed because Attendance could not be updated.", { errors: { role: [(syncError as Error).message || "Attendance is unavailable. Try again shortly."] } });
+          }
+        }
+        return json(200, await profileWithCounts(data));
       }
     }
     if (parts.length === 4 && parts[3] === "datasets" && method === "GET") {
@@ -1890,6 +1937,7 @@ Deno.serve(async (request: Request) => {
     }
     const ctx = await authenticate(request);
     if (request.method === "POST" && apiPath.replace(/^\/+|\/+$/g, "") === "auth/attendance-session") {
+      // Use only the identity validated by the existing CRM session.
       return await startAttendanceSession(ctx);
     }
     const { values, files } = await requestBody(request);
