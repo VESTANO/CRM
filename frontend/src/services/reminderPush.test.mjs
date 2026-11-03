@@ -2,7 +2,50 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import { reminderWorkerUrl, syncReminderPush } from "./reminderPush.js";
+import { prepareReminderNotifications, reminderWorkerUrl, saveReminderWithNotifications, syncReminderPush } from "./reminderPush.js";
+
+test("setting a reminder requests permission immediately, then registers before saving", async () => {
+  const order = [];
+  const options = {
+    notification: { permission: "default", requestPermission: async () => { order.push("permission"); return "granted"; } },
+    serviceWorker: { register: async () => ({ active: {}, pushManager: {
+      getSubscription: async () => ({ toJSON: () => ({ endpoint: "test" }) }),
+    } }) },
+    workerUrl: "/CRM/service-worker.js",
+    loadConfig: async () => { order.push("config"); return { publicKey: "AQID" }; },
+    saveSubscription: async () => order.push("subscription"),
+  };
+  const result = saveReminderWithNotifications({ prepareNotifications: () => prepareReminderNotifications(options), saveReminder: async () => order.push("reminder") });
+  assert.deepEqual(order, ["permission"]);
+  assert.deepEqual(await result, { notificationError: "" });
+  assert.deepEqual(order, ["permission", "config", "subscription", "reminder"]);
+});
+test("saved browser permission is reused with no extra prompt", async () => {
+  await prepareReminderNotifications({
+    notification: { permission: "granted", requestPermission: () => assert.fail("Repeated permission prompt") },
+    serviceWorker: { register: async () => ({ active: {}, pushManager: { getSubscription: async () => ({ toJSON: () => ({ endpoint: "test" }) }) } }) },
+    workerUrl: "/CRM/service-worker.js", loadConfig: async () => ({ publicKey: "AQID" }), saveSubscription: async () => {},
+  });
+});
+test("blocked, dismissed, and unsupported notifications save the reminder with a warning", async () => {
+  for (const permission of ["denied", "default", "unsupported"]) {
+    let saved = 0;
+    const { notificationError } = await saveReminderWithNotifications({
+      prepareNotifications: () => prepareReminderNotifications({
+        notification: permission === "unsupported" ? null : { permission, requestPermission: async () => "default" },
+        serviceWorker: {}, loadConfig: () => assert.fail("Config should not load without permission"),
+      }),
+      saveReminder: async () => saved++,
+    });
+    assert.equal(saved, 1);
+    assert.ok(notificationError);
+  }
+});
+test("subscription failure cannot claim alerts are enabled, and reminder save failures still surface", async () => {
+  const result = await saveReminderWithNotifications({ prepareNotifications: async () => { throw new Error("offline"); }, saveReminder: async () => {} });
+  assert.equal(result.notificationError, "offline");
+  await assert.rejects(saveReminderWithNotifications({ prepareNotifications: async () => {}, saveReminder: async () => { throw new Error("Save failed"); } }), /Save failed/);
+});
 
 test("Pages uses its deployed worker path; Django uses its root path", () => {
   assert.equal(reminderWorkerUrl("/CRM/"), "/CRM/service-worker.js");

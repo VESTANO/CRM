@@ -20,8 +20,11 @@ sending any notifications or claiming reminders.
 The Pages build must include `/CRM/service-worker.js` and its notification icon.
 The worker handles push events independently of an open page. The Reminders page
 re-saves an existing browser subscription on load and reports success only after
-the API has saved it. Permission is requested only through Enable Notifications.
-Disable Notifications removes only the CRM worker's subscription.
+the API has saved it. Setting or updating a reminder connects notifications
+automatically and requests browser permission if needed, directly from the submit
+click. There is no separate enable or disable button. If permission is blocked or
+connection fails, the reminder is saved with a visible warning, and setting another
+reminder retries the connection. Browser permission remains under user control.
 
 Database leases prevent concurrent workers claiming the same reminder. Accepted
 devices are skipped during retries. Expired subscriptions are removed, transient

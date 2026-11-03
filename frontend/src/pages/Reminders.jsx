@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { remindersApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
-import { reminderWorkerUrl, syncReminderPush } from "../services/reminderPush.js";
+import { prepareReminderNotifications, reminderWorkerUrl, saveReminderWithNotifications } from "../services/reminderPush.js";
 
 const workerUrl = reminderWorkerUrl(import.meta.env.BASE_URL);
 
@@ -26,10 +26,8 @@ export default function Reminders() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
-  const [pushEnabled, setPushEnabled] = useState(false);
-  const [pushPermission, setPushPermission] = useState("default");
-  const [pushSupported, setPushSupported] = useState(true);
-  const [pushBusy, setPushBusy] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState("Desktop alerts connect automatically when you set a reminder.");
+  const [notificationWarning, setNotificationWarning] = useState("");
   const [showDueReminders, setShowDueReminders] = useState(false);
   const [editingReminder, setEditingReminder] = useState(null);
   const [nowTick, setNowTick] = useState(Date.now());
@@ -45,25 +43,20 @@ export default function Reminders() {
     .then(({ data }) => setReminders(data.results))
     .catch(() => setError("Unable to load reminders."));
 
+  const connectNotifications = () => prepareReminderNotifications({
+    notification: "Notification" in window && "PushManager" in window ? window.Notification : null,
+    serviceWorker: navigator.serviceWorker, workerUrl,
+    loadConfig: async () => (await remindersApi.pushConfig()).data,
+    saveSubscription: (subscription) => remindersApi.subscribePush(subscription, csrfToken),
+  });
+
   useEffect(() => {
     loadReminders();
     const clockInterval = window.setInterval(() => setNowTick(Date.now()), 1000);
     const refreshInterval = window.setInterval(loadReminders, 30000);
-    const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
-    setPushSupported(supported);
-    if (!supported) {
-      return () => {
-        window.clearInterval(clockInterval);
-        window.clearInterval(refreshInterval);
-      };
-    }
-    setPushPermission(Notification.permission);
-    if (Notification.permission === "granted") {
-      remindersApi.pushConfig().then(({ data }) => syncReminderPush({
-        serviceWorker: navigator.serviceWorker, publicKey: data.publicKey, workerUrl,
-        saveSubscription: (subscription) => remindersApi.subscribePush(subscription, csrfToken),
-      })).then(() => setPushEnabled(true))
-        .catch(() => setError("Browser notification connection needs attention. Select Enable Notifications to reconnect."));
+    if ("Notification" in window && Notification.permission === "granted") {
+      connectNotifications().then(() => setNotificationStatus("Desktop notifications connected."))
+        .catch(() => setNotificationWarning("Desktop alerts could not reconnect. Setting a reminder will retry automatically."));
     }
     return () => {
       window.clearInterval(clockInterval);
@@ -91,52 +84,6 @@ export default function Reminders() {
     }
   }, [dueReminders]);
 
-  const enablePush = async () => {
-    setPushBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-        throw new Error("This browser does not support push notifications.");
-      }
-      const permission = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
-      setPushPermission(permission);
-      if (permission !== "granted") throw new Error("Allow notifications in your browser to receive reminders.");
-      const { data } = await remindersApi.pushConfig();
-      await syncReminderPush({
-        serviceWorker: navigator.serviceWorker, publicKey: data.publicKey, workerUrl,
-        saveSubscription: (subscription) => remindersApi.subscribePush(subscription, csrfToken),
-      });
-      setPushEnabled(true);
-      setMessage("Browser notifications are enabled on this device.");
-    } catch (requestError) {
-      setError(requestError.response?.data?.detail || requestError.message || "Unable to enable browser notifications.");
-    } finally {
-      setPushBusy(false);
-    }
-  };
-
-  const disablePush = async () => {
-    setPushBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      const registration = await navigator.serviceWorker.getRegistration(workerUrl);
-      const expectedScope = new URL("./", new URL(workerUrl, window.location.origin)).href;
-      const subscription = registration?.scope === expectedScope ? await registration.pushManager.getSubscription() : null;
-      if (subscription) {
-        await remindersApi.removePush(subscription.endpoint, csrfToken);
-        await subscription.unsubscribe();
-      }
-      setPushEnabled(false);
-      setMessage("Browser notifications are disabled on this device.");
-    } catch (requestError) {
-      setError(requestError.response?.data?.detail || requestError.message || "Unable to disable browser notifications.");
-    } finally {
-      setPushBusy(false);
-    }
-  };
-
   useEffect(() => {
     if (!reminders?.length) return;
     const reminderId = new URLSearchParams(window.location.search).get("reminder") || window.location.hash.match(/^#reminder-(\d+)$/)?.[1];
@@ -152,18 +99,21 @@ export default function Reminders() {
     setError("");
     setMessage("");
     const scheduledAt = new Date(`${values.date}T${values.time}`);
-    if (scheduledAt.getTime() <= Date.now()) {
+    if (!Number.isFinite(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
       setError("Choose a future date and time.");
       return;
     }
     setSaving(true);
     try {
       const payload = { text: values.text, reminder_at: scheduledAt.toISOString() };
-      if (editingReminder) {
-        await remindersApi.update(editingReminder.id, payload, csrfToken);
-      } else {
-        await remindersApi.create(payload, csrfToken);
-      }
+      const { notificationError } = await saveReminderWithNotifications({
+        prepareNotifications: connectNotifications,
+        saveReminder: () => editingReminder
+          ? remindersApi.update(editingReminder.id, payload, csrfToken)
+          : remindersApi.create(payload, csrfToken),
+      });
+      setNotificationWarning(notificationError ? `Reminder saved. ${notificationError}` : "");
+      if (!notificationError) setNotificationStatus("Desktop notifications connected.");
       setValues({ text: "", date: "", time: "" });
       setMessage(editingReminder ? "Reminder updated successfully." : "Reminder set successfully.");
       setEditingReminder(null);
@@ -205,9 +155,10 @@ export default function Reminders() {
 
     {error && <div className="alert alert-danger" role="alert">{error}</div>}
     <TimedAlert message={message} />
+    {notificationWarning && <div className="alert alert-warning" role="status">{notificationWarning}</div>}
 
     <section className="panel mb-4">
-      <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3"><h2 className="h5 mb-0">{editingReminder ? "Edit reminder" : "Set a reminder"}</h2><div className="d-flex align-items-center gap-2">{!pushSupported ? <span className="text-secondary small">Browser notifications are not supported.</span> : pushPermission === "denied" ? <span className="text-secondary small">Notifications are blocked in browser settings.</span> : pushEnabled ? <><span className="text-success small">Notifications enabled</span><button className="btn btn-outline-secondary btn-sm" type="button" onClick={disablePush} disabled={pushBusy}>Disable</button></> : <button className="btn btn-outline-primary btn-sm" type="button" onClick={enablePush} disabled={pushBusy}><i className="bi bi-bell me-1" />{pushBusy ? "Enabling..." : "Enable browser notifications"}</button>}</div></div>
+      <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3"><h2 className="h5 mb-0">{editingReminder ? "Edit reminder" : "Set a reminder"}</h2><span className="text-secondary small">{notificationStatus}</span></div>
       <form className="row g-3 align-items-end" onSubmit={submit}>
         <div className="col-12"><label className="form-label" htmlFor="reminder-text">Reminder</label><input id="reminder-text" className="form-control" maxLength={500} placeholder="What do you need to remember?" value={values.text} onChange={(event) => setValues((current) => ({ ...current, text: event.target.value }))} required /></div>
         <div className="col-sm-6 col-lg-4"><label className="form-label" htmlFor="reminder-date">Date</label><input id="reminder-date" className="form-control" type="date" min={today} value={values.date} onChange={(event) => setValues((current) => ({ ...current, date: event.target.value }))} required /></div>

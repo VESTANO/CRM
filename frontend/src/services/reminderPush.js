@@ -7,6 +7,26 @@ export function decodeApplicationKey(value) {
   return Uint8Array.from(atob((value + padding).replace(/-/g, "+").replace(/_/g, "/")), (character) => character.charCodeAt(0));
 }
 
+export async function prepareReminderNotifications({ notification, serviceWorker, loadConfig, saveSubscription, workerUrl }) {
+  if (!notification || !serviceWorker) throw new Error("This browser does not support desktop reminder notifications.");
+  // Request from the Set Reminder click, before network requests can consume
+  // the browser's user activation. Saved permission needs no second prompt.
+  const permission = notification.permission === "default" ? await notification.requestPermission() : notification.permission;
+  if (permission !== "granted") throw new Error(permission === "denied"
+    ? "Desktop notifications are blocked in your browser settings."
+    : "Allow the browser notification prompt to receive desktop reminders.");
+  const { publicKey } = await loadConfig();
+  return syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl });
+}
+
+export async function saveReminderWithNotifications({ prepareNotifications, saveReminder }) {
+  let notificationError = "";
+  try { await prepareNotifications(); }
+  catch (error) { notificationError = error.response?.data?.detail || error.message || "Desktop notifications could not be connected."; }
+  await saveReminder();
+  return { notificationError };
+}
+
 export async function syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl }) {
   const registration = await serviceWorker.register(workerUrl);
   if (!registration.active) {
