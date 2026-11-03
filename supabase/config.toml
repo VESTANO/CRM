@@ -9,3 +9,7 @@ verify_jwt = true
 # Receipt tokens authorize a single acknowledgement, not an account session.
 [functions.reminder-receipt]
 verify_jwt = false
+
+# A random per-device capability grants only reminder polling and receipts.
+[functions.native-reminders]
+verify_jwt = false

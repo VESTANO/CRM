@@ -8,6 +8,7 @@ export function decodeApplicationKey(value) {
 }
 
 export async function prepareReminderNotifications({ notification, serviceWorker, loadConfig, saveSubscription, workerUrl, ownerId }) {
+  if (ownerId && typeof window !== "undefined" && window.localStorage.getItem("crm:native-reminder-owner") === ownerId) return { native: true };
   if (!notification || !serviceWorker) throw new Error("This browser does not support desktop reminder notifications.");
   // Request from the Set Reminder click, before network requests can consume
   // the browser's user activation. Saved permission needs no second prompt.
@@ -40,9 +41,12 @@ export async function bindReminderRegistration(registration, ownerId) {
 export async function clearReminderDevice({ serviceWorker, workerUrl, removeSubscription }) {
   const registration = await serviceWorker?.getRegistration(workerUrl);
   if (!registration?.active || new URL(registration.scope).pathname !== workerUrl.slice(0, workerUrl.lastIndexOf("/") + 1)) return;
-  await bindReminderRegistration(registration, null);
+  let bindingError;
+  try { await bindReminderRegistration(registration, null); }
+  catch (error) { bindingError = error; }
   const subscription = await registration.pushManager.getSubscription();
   if (subscription) await removeSubscription(subscription.endpoint);
+  if (bindingError) throw bindingError;
 }
 
 export async function syncReminderPush({ serviceWorker, publicKey, saveSubscription, workerUrl, ownerId }) {

@@ -43,7 +43,8 @@ jobs:
           test -s dist/service-worker.js
           test -s dist/reminder-worker-core.js
           test -s dist/notification-icon.svg
-          node --test src/services/reminderPush.test.mjs src/services/reminderWorker.test.mjs ../supabase/functions/_shared/reminder-delivery.test.mjs
+          node --test src/services/reminderPush.test.mjs src/services/reminderWorker.test.mjs ../supabase/functions/_shared/reminder-delivery.test.mjs ../supabase/functions/_shared/native-reminder-device.test.mjs
+          python -m unittest discover -s ../windows_notifier -p test_engine.py
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
