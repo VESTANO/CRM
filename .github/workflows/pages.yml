@@ -37,6 +37,12 @@ jobs:
           npm run build -- --mode pages
           cp dist/index.html dist/404.html
           touch dist/.nojekyll
+      - name: Verify reminder delivery assets and tests
+        working-directory: frontend
+        run: |
+          test -s dist/service-worker.js
+          test -s dist/notification-icon.svg
+          node --test src/services/reminderPush.test.mjs ../supabase/functions/_shared/reminder-delivery.test.mjs
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

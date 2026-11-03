@@ -3,6 +3,9 @@ import { Link } from "react-router-dom";
 import { remindersApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
+import { reminderWorkerUrl, syncReminderPush } from "../services/reminderPush.js";
+
+const workerUrl = reminderWorkerUrl(import.meta.env.BASE_URL);
 
 function localDateValue(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -14,12 +17,6 @@ function localTimeValue(date) {
 
 function formatReminderDate(value) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
-
-function decodeApplicationKey(value) {
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
-  return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
 
 export default function Reminders() {
@@ -61,10 +58,13 @@ export default function Reminders() {
       };
     }
     setPushPermission(Notification.permission);
-    navigator.serviceWorker.register("/service-worker.js")
-      .then((registration) => registration.pushManager.getSubscription())
-      .then((subscription) => setPushEnabled(Boolean(subscription) && Notification.permission === "granted"))
-      .catch(() => {});
+    if (Notification.permission === "granted") {
+      remindersApi.pushConfig().then(({ data }) => syncReminderPush({
+        serviceWorker: navigator.serviceWorker, publicKey: data.publicKey, workerUrl,
+        saveSubscription: (subscription) => remindersApi.subscribePush(subscription, csrfToken),
+      })).then(() => setPushEnabled(true))
+        .catch(() => setError("Browser notification connection needs attention. Select Enable Notifications to reconnect."));
+    }
     return () => {
       window.clearInterval(clockInterval);
       window.clearInterval(refreshInterval);
@@ -87,12 +87,7 @@ export default function Reminders() {
     setMessage(`Reminder due: ${firstReminder.text}`);
     for (const reminder of newlyDue) {
       notifiedDueReminders.current.add(reminder.id);
-      if ("Notification" in window && Notification.permission === "granted") {
-        new Notification("Customer CRM | Reminder", {
-          body: `${reminder.text} (${formatReminderDate(reminder.reminder_at)})`,
-          tag: `crm-reminder-${reminder.id}`,
-        });
-      }
+      // System notifications are delivered once by the server and service worker.
     }
   }, [dueReminders]);
 
@@ -108,19 +103,10 @@ export default function Reminders() {
       setPushPermission(permission);
       if (permission !== "granted") throw new Error("Allow notifications in your browser to receive reminders.");
       const { data } = await remindersApi.pushConfig();
-      const legacyRegistration = await navigator.serviceWorker.getRegistration("/static/js/");
-      const legacySubscription = await legacyRegistration?.pushManager.getSubscription();
-      if (legacySubscription) {
-        await remindersApi.removePush(legacySubscription.endpoint, csrfToken);
-        await legacySubscription.unsubscribe();
-        await legacyRegistration.unregister();
-      }
-      const registration = await navigator.serviceWorker.register("/service-worker.js");
-      const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: decodeApplicationKey(data.publicKey),
+      await syncReminderPush({
+        serviceWorker: navigator.serviceWorker, publicKey: data.publicKey, workerUrl,
+        saveSubscription: (subscription) => remindersApi.subscribePush(subscription, csrfToken),
       });
-      await remindersApi.subscribePush(subscription.toJSON(), csrfToken);
       setPushEnabled(true);
       setMessage("Browser notifications are enabled on this device.");
     } catch (requestError) {
@@ -135,10 +121,10 @@ export default function Reminders() {
     setError("");
     setMessage("");
     try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const registration of registrations) {
-        const subscription = await registration.pushManager?.getSubscription();
-        if (!subscription) continue;
+      const registration = await navigator.serviceWorker.getRegistration(workerUrl);
+      const expectedScope = new URL("./", new URL(workerUrl, window.location.origin)).href;
+      const subscription = registration?.scope === expectedScope ? await registration.pushManager.getSubscription() : null;
+      if (subscription) {
         await remindersApi.removePush(subscription.endpoint, csrfToken);
         await subscription.unsubscribe();
       }

@@ -2,3 +2,6 @@ project_id = "qdtgrddhpbwrutvojpes"
 
 [functions.crm-api]
 verify_jwt = true
+
+[functions.reminder-dispatch]
+verify_jwt = true
