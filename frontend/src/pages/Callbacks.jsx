@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { callbacksApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
@@ -9,9 +9,14 @@ import { formatDate, formatDateTime } from "../utils/formatters.js";
 const defaultFilters = { preset: "today", date: "", sort: "asc" };
 
 export default function Callbacks() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { csrfToken } = useAuth();
-  const [filters, setFilters] = useState(defaultFilters);
-  const [data, setData] = useState(() => peekCachedResponse("/callbacks/", { params: defaultFilters })?.data || null);
+  const filters = useMemo(() => ({
+    preset: searchParams.get("preset") || defaultFilters.preset,
+    date: searchParams.get("date") || "",
+    sort: searchParams.get("sort") || defaultFilters.sort,
+  }), [searchParams]);
+  const [data, setData] = useState(() => peekCachedResponse("/callbacks/", { params: filters })?.data || null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [updatingId, setUpdatingId] = useState(null);
@@ -31,7 +36,17 @@ export default function Callbacks() {
     return () => { active = false; };
   }, [filters]);
 
-  const selectPreset = (preset) => setFilters((current) => ({ ...current, preset, date: "" }));
+  const updateFilters = (nextFilters) => {
+    setSearchParams(() => {
+      const next = new URLSearchParams();
+      if (nextFilters.preset && nextFilters.preset !== defaultFilters.preset) next.set("preset", nextFilters.preset);
+      if (nextFilters.date) next.set("date", nextFilters.date);
+      if (nextFilters.sort && nextFilters.sort !== defaultFilters.sort) next.set("sort", nextFilters.sort);
+      return next;
+    });
+    window.setTimeout(() => document.getElementById("callback-results")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+  const selectPreset = (preset) => updateFilters({ ...filters, preset, date: "" });
   const results = data?.results || [];
   const counts = data?.counts || { today: 0, tomorrow: 0, total: 0, calledBack: 0 };
   const showingCalledBack = filters.preset === "called_back" && !filters.date;
@@ -103,7 +118,7 @@ export default function Callbacks() {
               id="callback-date-filter"
               type="date"
               value={filters.date}
-              onChange={(event) => setFilters((current) => ({ ...current, preset: "custom", date: event.target.value }))}
+              onChange={(event) => updateFilters({ ...filters, preset: "custom", date: event.target.value })}
             />
           </div>
           <div className="col-sm-6 col-lg-4">
@@ -112,7 +127,7 @@ export default function Callbacks() {
               className="form-select"
               id="callback-sort"
               value={filters.sort}
-              onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value }))}
+              onChange={(event) => updateFilters({ ...filters, sort: event.target.value })}
             >
               <option value="asc">Earliest first</option>
               <option value="desc">Latest first</option>
@@ -126,7 +141,7 @@ export default function Callbacks() {
       {!data && !error ? (
         <div className="panel">Loading callbacks...</div>
       ) : results.length > 0 ? (
-        <div className="table-responsive panel p-0 responsive-table">
+        <div className="table-responsive panel p-0 responsive-table" id="callback-results" tabIndex="-1">
           <table className="table table-hover align-middle mb-0">
             <thead className="table-light">
               <tr><th>Customer</th><th>Dataset</th><th>Phone</th><th>{showingCalledBack ? "Called Back At" : "Callback Date"}</th>{showingCalledBack && <th>Called Back By</th>}<th>Status</th><th>Note</th><th>Actions</th></tr>

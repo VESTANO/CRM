@@ -2086,6 +2086,12 @@ async function overtimeContext(profile: any, workDate: string) {
   const { data, error } = await adminClient.from("attendance_records").select("punched_at")
     .eq("user_id", profile.id).gte("punched_at", workDate + "T00:00:00+05:30")
     .lte("punched_at", workDate + "T23:59:59+05:30").order("punched_at");
+  // OT requests must still be accepted when the attendance-punch integration
+  // has not been installed in this CRM Supabase project. The request remains
+  // pending and the approver will see that a final punch-out is unavailable.
+  if (error && /attendance_records|schema cache|does not exist/i.test(error.message || "")) {
+    return { start, end, officialEnd, actualPunchOut: null, punchCount: 0 };
+  }
   checkDb(error);
   const punches = data || [];
   const actualPunchOut = punches.length >= 2 ? punches[punches.length - 1].punched_at : null;
