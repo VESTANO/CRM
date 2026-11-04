@@ -29,6 +29,8 @@ Deno.serve(async (request) => {
     const { error: deviceError } = await supabase.from("attendance_devices").upsert({
       serial_number: serialNumber, model: url.searchParams.get("DeviceType") || "K90 Pro",
       ip_address: (request.headers.get("x-forwarded-for") || "").split(",")[0].trim(), last_seen: new Date().toISOString(),
+      // Operational cutover diagnostic only; serial validation remains above.
+      last_ingest_route: request.headers.get("x-attendance-route") === "legacy-proxy" ? "legacy-proxy" : "direct",
     });
     check(deviceError);
     if (request.method === "GET" && pathname.endsWith("/iclock/cdata")) {

@@ -8,7 +8,10 @@ Deno.serve(async request => {
   try {
     const response = await fetch(`${destination}${suffix}${url.search}`, {
       method: request.method,
-      headers: { "Content-Type": request.headers.get("Content-Type") || "text/plain" },
+      headers: {
+        "Content-Type": request.headers.get("Content-Type") || "text/plain",
+        "x-attendance-route": "legacy-proxy",
+      },
       body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer(),
       signal: AbortSignal.timeout(20000),
     });
