@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import * as XLSX from "xlsx";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
-import { apiClient } from "../services/api.js";
-import { deleteLiveTimesheetEntry, fetchAttendanceDashboardTotals, fetchLiveAttendance, fetchLiveTimesheet, isAttendanceAdmin, isAttendanceSuperAdmin, manageLiveEmployee, requestAttendancePasswordOtp, reviewLiveTimesheetEntry, saveLiveAttendanceMapping, saveLiveTimesheetEntry, updateAttendanceProfileImage } from "../services/attendanceSupabase.js";
+import { apiClient, attendanceApi } from "../services/api.js";
+import { clearAttendanceReadCache, deleteLiveTimesheetEntry, fetchAttendanceDashboardTotals, fetchAttendanceEmployees, fetchLiveAttendance, fetchLiveTimesheet, isAttendanceAdmin, isAttendanceSuperAdmin, manageLiveEmployee, requestAttendancePasswordOtp, reviewLiveTimesheetEntry, saveLiveAttendanceMapping, saveLiveTimesheetEntry, updateAttendanceProfileImage } from "../services/attendanceSupabase.js";
 import { buildAttendanceDays, calculateAttendanceDay, countedAttendanceTime, dateInputValue, formatDuration, timeFromTimestamp } from "../utils/attendance.js";
 import OvertimePanel from "../components/OvertimePanel.jsx";
 
@@ -36,10 +35,13 @@ export default function Attendance({ view = "attendance" }) {
   const [mapping, setMapping] = useState({ punchCode: "", userId: "" });
   const [message, setMessage] = useState("");
   const [dashboardTotals, setDashboardTotals] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const loadFallback = useCallback(async () => {
     const initialLoad = !loadedRef.current;
     if (initialLoad) setLoading(true); else setRefreshing(true);
-    try { const response = await apiClient.get("/attendance/", { params: filters }); setData(response.data); setError(""); }
+    try { const response = await attendanceApi.list(filters); setData(response.data); setError(""); }
     catch (requestError) { setError(errorText(requestError)); }
     finally { loadedRef.current = true; setLoading(false); setRefreshing(false); }
   }, [filters]);
@@ -47,11 +49,21 @@ export default function Attendance({ view = "attendance" }) {
     if (!attendanceProfile || !permission?.allowed) { setLoading(false); return; }
     const initialLoad = !loadedRef.current;
     if (initialLoad) setLoading(true); else setRefreshing(true);
-    try { setData(await fetchLiveAttendance({ ...filters, profile: attendanceProfile })); setError(""); }
+    try {
+      const needsPunches = view === "attendance" || (view === "overview" && !isAttendanceAdmin(attendanceProfile));
+      if (needsPunches) {
+        setData(await fetchLiveAttendance({ ...filters, profile: attendanceProfile }));
+      } else if (["timesheet", "employees", "overview"].includes(view)) {
+        const employees = await fetchAttendanceEmployees(attendanceProfile);
+        setData({ records: [], employees, punchCodes: [], devices: [], availableFrom: "", availableTo: "" });
+      }
+      setError("");
+    }
     catch (requestError) { setError(requestError.message || "Unable to load live attendance."); }
     finally { loadedRef.current = true; setLoading(false); setRefreshing(false); }
-  }, [attendanceProfile, filters, permission]);
+  }, [attendanceProfile, filters, permission, view]);
   const load = mode === "live" ? loadLive : loadFallback;
+  const refresh = () => { clearAttendanceReadCache(); setRefreshKey((value) => value + 1); void load(); };
   useEffect(() => { if (mode === "live" ? attendanceProfile && permission?.allowed : true) load(); }, [load, mode, attendanceProfile, permission]);
   useEffect(() => {
     const liveRefreshPage = view === "attendance" || (view === "overview" && !isAttendanceAdmin(attendanceProfile));
@@ -66,7 +78,7 @@ export default function Attendance({ view = "attendance" }) {
     refresh();
     if (isAttendanceAdmin(attendanceProfile)) return () => { active = false; };
     const id = window.setInterval(refresh, 15000); return () => { active = false; window.clearInterval(id); };
-  }, [attendanceProfile, view]);
+  }, [attendanceProfile, refreshKey, view]);
   const days = useMemo(() => buildAttendanceDays(data.records), [data.records]);
   const totals = useMemo(() => days.reduce((summary, day) => {
     const employee = data.employees.find((item) => item.id === day.userId) || {};
@@ -78,17 +90,27 @@ export default function Attendance({ view = "attendance" }) {
     try { const response = await apiClient.post("/attendance/mappings/", mapping, { headers: { "X-CSRFToken": csrfToken } }); setMessage(`${response.data.matched} punches linked to ${response.data.employee.name}.`); await load(); }
     catch (requestError) { setError(errorText(requestError)); }
   };
-  const exportExcel = () => {
-    const rows = days.map((day) => {
-      const shift = data.employees.find((employee) => employee.id === day.userId) || {};
-      const result = calculateAttendanceDay(day.punches, new Date(), shift);
-      return [day.date, day.employeeName, countedAttendanceTime(day.punches[0], shift, "start"), result.isOpen ? "Open" : countedAttendanceTime(day.punches.at(-1), shift, "end"), formatDuration(result.breakHours), result.breakCount, formatDuration(result.workingHours), result.employeeStatus, day.punches.length];
-    });
-    const worksheet = XLSX.utils.aoa_to_sheet([["Date", "Employee", "Check in", "Check out", "Break time", "Break count", "Net working hours", "Employee status", "Punch count"], ...rows]);
-    worksheet["!cols"] = [{ wch: 14 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 16 }];
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance");
-    XLSX.writeFile(workbook, `attendance-${dateInputValue(new Date())}.xlsx`);
+  const exportExcel = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const XLSX = await import("xlsx");
+      const rows = days.map((day) => {
+        const shift = data.employees.find((employee) => employee.id === day.userId) || {};
+        const result = calculateAttendanceDay(day.punches, new Date(), shift);
+        return [day.date, day.employeeName, countedAttendanceTime(day.punches[0], shift, "start"), result.isOpen ? "Open" : countedAttendanceTime(day.punches.at(-1), shift, "end"), formatDuration(result.breakHours), result.breakCount, formatDuration(result.workingHours), result.employeeStatus, day.punches.length];
+      });
+      const worksheet = XLSX.utils.aoa_to_sheet([["Date", "Employee", "Check in", "Check out", "Break time", "Break count", "Net working hours", "Employee status", "Punch count"], ...rows]);
+      worksheet["!cols"] = [{ wch: 14 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 16 }];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance");
+      XLSX.writeFile(workbook, `attendance-${dateInputValue(new Date())}.xlsx`);
+    } catch {
+      setExportError("Unable to download the attendance report. Please refresh the page and try again.");
+    } finally {
+      setExporting(false);
+    }
   };
   const [title, description] = viewCopy[view] || viewCopy.attendance;
   const switchToFallback = () => { setMode("fallback"); setError(""); loadFallback(); };
@@ -96,17 +118,18 @@ export default function Attendance({ view = "attendance" }) {
   const saveLiveMapping = async (event) => { event.preventDefault(); try { const matched = await saveLiveAttendanceMapping(mapping.punchCode, mapping.userId); setMessage(`${matched || 0} punches linked successfully.`); setMapping({ punchCode: "", userId: "" }); await load(); } catch (requestError) { setError(requestError.message || "Unable to link the attendance punch code."); } };
   if (loginRequired) return <AttendanceAccessCard />;
   return <>
-    <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4"><div><div className="eyebrow">{view === "attendance" ? "ESSL PUNCH RECORDS" : "Vestano International"}</div><h1 className="h2 mb-2">{title}</h1><p className="text-secondary mb-0">{description}</p></div><div className="d-flex align-items-center gap-2"><span className={`badge ${mode === "live" && attendanceProfile ? "text-bg-success" : "text-bg-secondary"}`}>{mode === "live" && attendanceProfile ? "Live Supabase" : "Attendance unavailable"}</span>{refreshing && <span className="text-secondary small">Refreshing…</span>}{!loginRequired && <button className="btn btn-outline-secondary" onClick={load} disabled={loading}><i className="bi bi-arrow-clockwise me-1" />{refreshing ? "Refreshing" : "Refresh"}</button>}</div></div>
+    <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4"><div><div className="eyebrow">{view === "attendance" ? "ESSL PUNCH RECORDS" : "Vestano International"}</div><h1 className="h2 mb-2">{title}</h1><p className="text-secondary mb-0">{description}</p></div><div className="d-flex align-items-center gap-2">{mode !== "live" || !attendanceProfile ? <span className="badge text-bg-secondary">Attendance unavailable</span> : null}{refreshing && <span className="text-secondary small">Refreshing…</span>}{!loginRequired && <button className="btn btn-outline-secondary" onClick={refresh} disabled={loading}><i className="bi bi-arrow-clockwise me-1" />{refreshing ? "Refreshing" : "Refresh"}</button>}</div></div>
     {error && <div className="alert alert-danger">{error}</div>}{message && <div className="alert alert-success">{message}</div>}
+    {exportError && <div className="alert alert-danger" role="alert">{exportError}</div>}
     {!loginRequired && mode === "live" && attendanceProfile && permission && !permission.allowed && <section className="panel mb-4 border-danger"><h2 className="h5">Live attendance permission unavailable</h2><p className="text-secondary mb-3">{permission.message}</p></section>}
     {!loginRequired && mode === "fallback" && <div className="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2"><span><strong>Imported CRM backup:</strong> this data is from the ZIP snapshot, not live Vestano records.</span><button className="btn btn-sm btn-outline-dark" type="button" onClick={switchToLive}>Return to live attendance</button></div>}
     {!loginRequired && view === "overview" && <Overview days={days} data={data} totals={totals} dashboardTotals={dashboardTotals} loading={loading} admin={admin} profile={attendanceProfile} />}
-    {!loginRequired && view === "timesheet" && <TimesheetView profile={attendanceProfile} employees={data.employees} />}
+    {!loginRequired && view === "timesheet" && <TimesheetView profile={attendanceProfile} employees={data.employees} refreshKey={refreshKey} />}
     {!loginRequired && view === "profile" && <ProfileView profile={attendanceProfile} />}
     {!loginRequired && view === "employees" && (mode === "live" ? (superAdmin ? <AdminLiveEmployees data={data} onRefresh={load} /> : <LiveEmployees data={data} admin={admin} />) : <Employees data={data} admin={admin} mapping={mapping} setMapping={setMapping} saveMapping={saveMapping} />)}
-    {!loginRequired && view === "approvals" && <LiveApprovals profile={attendanceProfile} employees={data.employees} />}
+    {!loginRequired && view === "approvals" && <LiveApprovals profile={attendanceProfile} employees={data.employees} refreshKey={refreshKey} />}
     {!loginRequired && view === "overtime" && <OvertimePanel admin={crmAdmin || superAdmin} />}
-    {!loginRequired && view === "attendance" && <><div className="metric-grid attendance-metrics mb-4"><Metric icon="bi-calendar-check" label="Daily records" value={days.length} /><Metric icon="bi-clock-history" label="Punches" value={data.records.length} /><Metric icon="bi-hourglass-split" label="Net hours" value={formatDuration(totals.hours)} /><Metric icon="bi-calendar-range" label="Saved range" value={<><SavedRangeDate value={data.availableFrom || "—"} /><span className="saved-range-separator">to</span><SavedRangeDate value={data.availableTo || "—"} /></>} /></div>{superAdmin && <section className="panel mb-4"><div className="table-panel-header"><div className="eyebrow">ADMIN DEVICE SETUP</div><h2 className="h5 mb-1">eSSL network push settings</h2><p className="text-secondary small mb-3">The machine user code must match the employee Employee ID.</p></div><div className="row g-3 small"><div className="col-md-3"><span className="text-secondary d-block">Protocol</span><strong>ADMS / iClock push</strong></div><div className="col-md-3"><span className="text-secondary d-block">Connected devices</span><strong>{data.devices?.length || 0}</strong></div><div className="col-md-3"><span className="text-secondary d-block">Last sync</span><strong>{data.lastSync ? data.lastSync.slice(0, 19).replace("T", " ") : "Waiting for device"}</strong></div><div className="col-md-3"><span className="text-secondary d-block">Saved records</span><strong>{data.records.length}</strong></div></div></section>}{superAdmin && <section className="panel mb-4"><div className="table-panel-header"><div className="eyebrow">EMPLOYEE ATTENDANCE LINK</div><h2 className="h5 mb-1">Link machine code to employee</h2><p className="text-secondary small mb-3">Only the Super Admin can map biometric punch codes.</p></div>{!data.punchCodes?.length && <div className="alert alert-info mb-3">No unlinked punch codes are currently available. New device punches will appear here.</div>}<form className="row g-3 align-items-end" onSubmit={saveLiveMapping}><div className="col-md-4"><label className="form-label" htmlFor="liveMappingCode">Machine punch code</label><select id="liveMappingCode" className="form-select" required disabled={!data.punchCodes?.length} value={mapping.punchCode} onChange={(event) => setMapping({ ...mapping, punchCode: event.target.value })}><option value="">Select punch code</option>{data.punchCodes.map((code) => <option key={code.punchCode} value={code.punchCode}>{code.punchCode} — {code.employeeName || "Not linked"}</option>)}</select></div><div className="col-md-5"><label className="form-label" htmlFor="liveMappingEmployee">Employee name</label><select id="liveMappingEmployee" className="form-select" required disabled={!data.punchCodes?.length} value={mapping.userId} onChange={(event) => setMapping({ ...mapping, userId: event.target.value })}><option value="">Select employee</option>{data.employees.filter((employee) => employee.role === "employee").map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({employee.employeeId})</option>)}</select></div><div className="col-auto"><button className="btn btn-primary" type="submit" disabled={!data.punchCodes?.length}>Link employee</button></div></form></section>}<section className="panel mb-4"><div className="row g-3 align-items-end">{admin && <div className="col-md-4"><label className="form-label" htmlFor="attendanceEmployee">Filter by employee</label><select id="attendanceEmployee" className="form-select" value={filters.userId} onChange={(event) => setFilters({ ...filters, userId: event.target.value })}><option value="">All employees</option>{data.employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({employee.employeeId})</option>)}</select></div>}<div className="col-md-3"><label className="form-label" htmlFor="attendanceFrom">From</label><input id="attendanceFrom" className="form-control" type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></div><div className="col-md-3"><label className="form-label" htmlFor="attendanceTo">To</label><input id="attendanceTo" className="form-control" type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></div><div className="col-auto"><button className="btn btn-primary" onClick={load}>Apply filters</button></div><div className="col-auto"><button className="btn btn-outline-secondary" onClick={() => setFilters({ ...filters, from: "", to: "", userId: "" })}>Clear</button></div></div></section><section className="panel mb-4 d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">ATTENDANCE EXPORT</div><h2 className="h5 mb-1">Download attendance report</h2><p className="text-secondary small mb-0">Export the records selected by your filters.</p></div><button className="btn btn-primary" type="button" onClick={exportExcel}><i className="bi bi-file-earmark-excel me-1" />Download XLSX</button></section><AttendanceTable days={days} data={data} admin={admin} loading={loading} /></>}
+    {!loginRequired && view === "attendance" && <><div className="metric-grid attendance-metrics mb-4"><Metric icon="bi-calendar-check" label="Daily records" value={days.length} /><Metric icon="bi-clock-history" label="Punches" value={data.records.length} /><Metric icon="bi-hourglass-split" label="Net hours" value={formatDuration(totals.hours)} /><Metric icon="bi-calendar-range" label="Saved range" value={<><SavedRangeDate value={data.availableFrom || "—"} /><span className="saved-range-separator">to</span><SavedRangeDate value={data.availableTo || "—"} /></>} /></div>{superAdmin && <section className="panel mb-4"><div className="table-panel-header"><div className="eyebrow">ADMIN DEVICE SETUP</div><h2 className="h5 mb-1">eSSL network push settings</h2><p className="text-secondary small mb-3">The machine user code must match the employee Employee ID.</p></div><div className="row g-3 small"><div className="col-md-3"><span className="text-secondary d-block">Protocol</span><strong>ADMS / iClock push</strong></div><div className="col-md-3"><span className="text-secondary d-block">Connected devices</span><strong>{data.devices?.length || 0}</strong></div><div className="col-md-3"><span className="text-secondary d-block">Last sync</span><strong>{data.lastSync ? data.lastSync.slice(0, 19).replace("T", " ") : "Waiting for device"}</strong></div><div className="col-md-3"><span className="text-secondary d-block">Saved records</span><strong>{data.records.length}</strong></div></div></section>}{superAdmin && <section className="panel mb-4"><div className="table-panel-header"><div className="eyebrow">EMPLOYEE ATTENDANCE LINK</div><h2 className="h5 mb-1">Link machine code to employee</h2><p className="text-secondary small mb-3">Only the Super Admin can map biometric punch codes.</p></div>{!data.punchCodes?.length && <div className="alert alert-info mb-3">No unlinked punch codes are currently available. New device punches will appear here.</div>}<form className="row g-3 align-items-end" onSubmit={saveLiveMapping}><div className="col-md-4"><label className="form-label" htmlFor="liveMappingCode">Machine punch code</label><select id="liveMappingCode" className="form-select" required disabled={!data.punchCodes?.length} value={mapping.punchCode} onChange={(event) => setMapping({ ...mapping, punchCode: event.target.value })}><option value="">Select punch code</option>{data.punchCodes.map((code) => <option key={code.punchCode} value={code.punchCode}>{code.punchCode} — {code.employeeName || "Not linked"}</option>)}</select></div><div className="col-md-5"><label className="form-label" htmlFor="liveMappingEmployee">Employee name</label><select id="liveMappingEmployee" className="form-select" required disabled={!data.punchCodes?.length} value={mapping.userId} onChange={(event) => setMapping({ ...mapping, userId: event.target.value })}><option value="">Select employee</option>{data.employees.filter((employee) => employee.role === "employee").map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({employee.employeeId})</option>)}</select></div><div className="col-auto"><button className="btn btn-primary" type="submit" disabled={!data.punchCodes?.length}>Link employee</button></div></form></section>}<section className="panel mb-4"><div className="row g-3 align-items-end">{admin && <div className="col-md-4"><label className="form-label" htmlFor="attendanceEmployee">Filter by employee</label><select id="attendanceEmployee" className="form-select" value={filters.userId} onChange={(event) => setFilters({ ...filters, userId: event.target.value })}><option value="">All employees</option>{data.employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({employee.employeeId})</option>)}</select></div>}<div className="col-md-3"><label className="form-label" htmlFor="attendanceFrom">From</label><input id="attendanceFrom" className="form-control" type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></div><div className="col-md-3"><label className="form-label" htmlFor="attendanceTo">To</label><input id="attendanceTo" className="form-control" type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></div><div className="col-auto"><button className="btn btn-primary" onClick={load}>Apply filters</button></div><div className="col-auto"><button className="btn btn-outline-secondary" onClick={() => setFilters({ ...filters, from: "", to: "", userId: "" })}>Clear</button></div></div></section><section className="panel mb-4 d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">ATTENDANCE EXPORT</div><h2 className="h5 mb-1">Download attendance report</h2><p className="text-secondary small mb-0">Export the records selected by your filters.</p></div><button className="btn btn-primary" type="button" onClick={exportExcel} disabled={exporting}><i className="bi bi-file-earmark-excel me-1" />{exporting ? "Preparing…" : "Download XLSX"}</button></section><AttendanceTable days={days} data={data} admin={admin} loading={loading} /></>}
   </>;
 }
 
@@ -161,7 +184,7 @@ function ProfileView({ profile }) {
   return <section className="panel"><div className="eyebrow">PERSONAL ACCOUNT</div><h2 className="h4 mb-1">My Profile</h2><p className="text-secondary mb-4">Manage your profile image and reset your password securely by email OTP.</p><form onSubmit={save}><div className="row g-4"><div className="col-md-4 text-center"><div className="summary-card mb-3">{image ? <img src={image} alt="Profile" style={{ width: 128, height: 128, objectFit: "cover", borderRadius: "50%" }} /> : <div className="display-4">{initials}</div>}<h3 className="h5 mt-3">{profile?.name || "Attendance user"}</h3><p className="text-secondary mb-3">{profile?.employeeId || "—"}</p><input className="form-control" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => readImage(event.target.files?.[0])} /><button className="btn btn-outline-secondary btn-sm mt-2" type="button" disabled={busy || !image} onClick={removeImage}>Remove image</button></div></div><div className="col-md-8"><div className="row g-3"><div className="col-md-6"><div className="text-secondary small">Employee ID</div><strong>{profile?.employeeId || "—"}</strong></div><div className="col-md-6"><div className="text-secondary small">Role</div><strong>{profile?.role === "super_admin" ? "Super Admin" : profile?.role === "admin" ? "Admin" : "Employee"}</strong></div><div className="col-md-6"><div className="text-secondary small">Email</div><strong>{profile?.email || "—"}</strong></div><div className="col-md-6"><div className="text-secondary small">Department</div><strong>{profile?.department || "—"}</strong></div><div className="col-md-6"><div className="text-secondary small">Manager</div><strong>{profile?.manager || "—"}</strong></div></div><div className="d-flex flex-wrap gap-2 mt-4"><button className="btn btn-primary" disabled={busy || !hasImageChange}>{busy ? "Saving…" : "Save profile image"}</button>{canResetPassword && <button className="btn btn-outline-secondary" type="button" disabled={busy} onClick={resetPassword}>Reset password by email OTP</button>}</div></div></div></form>{message && <div className="alert alert-success mt-4 mb-0">{message}</div>}{error && <div className="alert alert-danger mt-4 mb-0">{error}</div>}</section>;
 }
 
-function TimesheetView({ profile, employees }) {
+function TimesheetView({ profile, employees, refreshKey }) {
   const admin = isAttendanceAdmin(profile);
   const [filters, setFilters] = useState({ from: "", to: "", status: "", employeeId: "" });
   const [entries, setEntries] = useState([]);
@@ -170,6 +193,8 @@ function TimesheetView({ profile, employees }) {
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const loadedRef = useRef(false);
   const load = useCallback(async () => {
     if (!profile) return;
@@ -179,7 +204,7 @@ function TimesheetView({ profile, employees }) {
     catch (requestError) { setError(requestError.message || "Unable to load live timesheet entries."); }
     finally { loadedRef.current = true; setLoading(false); setRefreshing(false); }
   }, [filters, profile]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
   const openEntry = (entry = null) => setDraft(entry ? { ...entry } : { date: dateInputValue(new Date()), category: "Project Work", project: "", details: "", startTime: profile?.shiftStartTime || "09:00", endTime: profile?.shiftEndTime || "17:30", breakHours: 0.5, workStatus: "Completed", billable: false, comments: "" });
   const saveEntry = async (event) => { event.preventDefault(); setSaving(true); try { await saveLiveTimesheetEntry(draft); setDraft(null); await load(); } catch (saveError) { setError(saveError.message); } finally { setSaving(false); } };
   const removeEntry = async (id) => {
@@ -190,39 +215,68 @@ function TimesheetView({ profile, employees }) {
     if (!window.confirm(approvedWarning)) return;
     try { await deleteLiveTimesheetEntry(entry.id); await load(); } catch (deleteError) { setError(deleteError.message); }
   };
-  const exportTimesheet = () => {
-    const rows = entries.map((entry) => [
-      entry.date,
-      entry.employeeName || "",
-      entry.employeeId || "",
-      entry.project || "",
-      entry.details || "",
-      entry.startTime || "",
-      entry.endTime || "",
-      Number(entry.breakHours || 0),
-      Number(entry.totalHours || 0),
-      Number(entry.overtime || 0),
-      entry.workStatus || "",
-      entry.approvalStatus || "Submitted",
-      entry.approvalComment || "",
-      entry.billable ? "Yes" : "No",
-      entry.comments || "",
-    ]);
-    const worksheet = XLSX.utils.aoa_to_sheet([[
-      "Date", "Employee", "Employee ID", "Project", "Work details", "Start", "End",
-      "Break hours", "Total hours", "Overtime", "Work status", "Approval status",
-      "Approval comment", "Billable", "Comments",
-    ], ...rows]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Timesheet");
-    XLSX.writeFile(workbook, `timesheet-${dateInputValue(new Date())}.xlsx`);
+  const exportTimesheet = async () => {
+    if (exporting || !entries.length) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const XLSX = await import("xlsx");
+      const rows = entries.map((entry) => [
+        entry.date,
+        entry.employeeName || "",
+        entry.employeeId || "",
+        entry.project || "",
+        entry.details || "",
+        entry.startTime || "",
+        entry.endTime || "",
+        Number(entry.breakHours || 0),
+        Number(entry.totalHours || 0),
+        Number(entry.overtime || 0),
+        entry.workStatus || "",
+        entry.approvalStatus || "Submitted",
+        entry.approvalComment || "",
+        entry.billable ? "Yes" : "No",
+        entry.comments || "",
+      ]);
+      const worksheet = XLSX.utils.aoa_to_sheet([[
+        "Date", "Employee", "Employee ID", "Project", "Work details", "Start", "End",
+        "Break hours", "Total hours", "Overtime", "Work status", "Approval status",
+        "Approval comment", "Billable", "Comments",
+      ], ...rows]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Timesheet");
+      XLSX.writeFile(workbook, `timesheet-${dateInputValue(new Date())}.xlsx`);
+    } catch {
+      setExportError("Unable to download the timesheet report. Please refresh the page and try again.");
+    } finally {
+      setExporting(false);
+    }
   };
   const canDelete = !admin || profile?.role === "super_admin";
   return <section className="panel p-0 responsive-table">
-    <div className="table-panel-header d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">DAILY WORK LOG</div><h2 className="h5 mb-1">My Timesheet</h2><p className="text-secondary small mb-0">Add work details, track hours, and follow approval status.</p></div><div className="d-flex flex-wrap align-items-center gap-2"><span className="text-secondary small">{refreshing ? "Refreshing…" : "Live Supabase"}</span>{admin && <button className="btn btn-outline-primary btn-sm" type="button" onClick={exportTimesheet} disabled={!entries.length}><i className="bi bi-file-earmark-excel me-1" />Download XLSX</button>}<button className="btn btn-primary btn-sm" type="button" onClick={() => openEntry()}>+ New entry</button></div></div>
+    <div className="table-panel-header d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">DAILY WORK LOG</div><h2 className="h5 mb-1">My Timesheet</h2><p className="text-secondary small mb-0">Add work details, track hours, and follow approval status.</p></div><div className="d-flex flex-wrap align-items-center gap-2">{refreshing && <span className="text-secondary small">Refreshing…</span>}{admin && <button className="btn btn-outline-primary btn-sm" type="button" onClick={exportTimesheet} disabled={!entries.length || exporting}><i className="bi bi-file-earmark-excel me-1" />{exporting ? "Preparing…" : "Download XLSX"}</button>}</div></div>
+    <div className="timesheet-new-entry"><button className="btn btn-primary" type="button" onClick={() => openEntry()}>+ New entry</button></div>
+    {exportError && <div className="alert alert-danger mx-3" role="alert">{exportError}</div>}
     {error && <div className="alert alert-danger m-3">{error}</div>}
-    {draft && <form className="p-3 border-bottom row g-3" onSubmit={saveEntry}><div className="col-md-3"><label className="form-label">Date</label><input className="form-control" type="date" required value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></div><div className="col-md-3"><label className="form-label">Project</label><input className="form-control" required value={draft.project} onChange={(event) => setDraft({ ...draft, project: event.target.value })} /></div><div className="col-md-6"><label className="form-label">Work details</label><input className="form-control" required value={draft.details} onChange={(event) => setDraft({ ...draft, details: event.target.value })} /></div><div className="col-md-2"><label className="form-label">Category</label><input className="form-control" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} /></div><div className="col-md-2"><label className="form-label">Start</label><input className="form-control" type="time" required value={draft.startTime} onChange={(event) => setDraft({ ...draft, startTime: event.target.value })} /></div><div className="col-md-2"><label className="form-label">End</label><input className="form-control" type="time" required value={draft.endTime} onChange={(event) => setDraft({ ...draft, endTime: event.target.value })} /></div><div className="col-md-2"><label className="form-label">Break hours</label><input className="form-control" type="number" min="0" max="8" step="0.25" value={draft.breakHours} onChange={(event) => setDraft({ ...draft, breakHours: event.target.value })} /></div><div className="col-md-2"><label className="form-label">Work status</label><select className="form-select" value={draft.workStatus} onChange={(event) => setDraft({ ...draft, workStatus: event.target.value })}><option>Completed</option><option>In progress</option><option>Blocked</option></select></div><div className="col-md-2 form-check mt-4 ms-2"><input id="timesheetBillable" className="form-check-input" type="checkbox" checked={Boolean(draft.billable)} onChange={(event) => setDraft({ ...draft, billable: event.target.checked })} /><label className="form-check-label" htmlFor="timesheetBillable">Billable</label></div><div className="col-md-6"><label className="form-label">Comments</label><input className="form-control" value={draft.comments || ""} onChange={(event) => setDraft({ ...draft, comments: event.target.value })} /></div><div className="col-12 d-flex gap-2"><button className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save and submit"}</button><button className="btn btn-outline-secondary" type="button" onClick={() => setDraft(null)}>Cancel</button></div></form>}
-    <div className="p-3 border-bottom"><div className="row g-3 align-items-end"><div className="col-md-3"><label className="form-label" htmlFor="timesheetFrom">From</label><input id="timesheetFrom" className="form-control" type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></div><div className="col-md-3"><label className="form-label" htmlFor="timesheetTo">To</label><input id="timesheetTo" className="form-control" type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></div><div className="col-md-3"><label className="form-label" htmlFor="timesheetStatus">Approval</label><select id="timesheetStatus" className="form-select" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">All statuses</option><option value="Submitted">Submitted</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option></select></div>{admin && <div className="col-md-3"><label className="form-label" htmlFor="timesheetEmployee">Employee</label><select id="timesheetEmployee" className="form-select" value={filters.employeeId} onChange={(event) => setFilters({ ...filters, employeeId: event.target.value })}><option value="">All employees</option>{employees.map((employee) => <option key={employee.id} value={employee.employeeId}>{employee.name} ({employee.employeeId})</option>)}</select></div>}<div className="col-auto"><button className="btn btn-outline-secondary" type="button" onClick={() => setFilters({ from: "", to: "", status: "", employeeId: "" })}>Clear</button></div></div></div>
+    {draft && <><div className="modal d-block timesheet-entry-modal" tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="timesheet-entry-title">
+      <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg"><div className="modal-content"><form onSubmit={saveEntry}>
+        <div className="modal-header"><h2 className="modal-title fs-5" id="timesheet-entry-title">{draft.id ? "Edit work entry" : "New work entry"}</h2><button className="btn-close" type="button" aria-label="Close" onClick={() => setDraft(null)} disabled={saving} /></div>
+        <div className="modal-body row g-3">
+      <div className="col-md-3"><label className="form-label">Date</label><input className="form-control" type="date" required value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></div>
+      <div className="col-md-3"><label className="form-label">Project</label><input className="form-control" required value={draft.project} onChange={(event) => setDraft({ ...draft, project: event.target.value })} /></div>
+      <div className="col-md-6"><label className="form-label">Work details</label><input className="form-control" required value={draft.details} onChange={(event) => setDraft({ ...draft, details: event.target.value })} /></div>
+      <div className="col-md-2"><label className="form-label">Category *</label><select className="form-select" required value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })}><option>Project Work</option><option>Meeting</option><option>Administration</option><option>Training</option><option>Client Support</option><option>Research</option><option>Leave</option></select></div>
+      <div className="col-md-2"><label className="form-label">Start</label><input className="form-control" type="time" required value={draft.startTime} onChange={(event) => setDraft({ ...draft, startTime: event.target.value })} /></div>
+      <div className="col-md-2"><label className="form-label">End</label><input className="form-control" type="time" required value={draft.endTime} onChange={(event) => setDraft({ ...draft, endTime: event.target.value })} /></div>
+      <div className="col-md-2"><label className="form-label">Break hours</label><input className="form-control" type="number" min="0" max="8" step="0.25" value={draft.breakHours} onChange={(event) => setDraft({ ...draft, breakHours: event.target.value })} /></div>
+      <div className="col-md-2"><label className="form-label">Work status</label><select className="form-select" value={draft.workStatus} onChange={(event) => setDraft({ ...draft, workStatus: event.target.value })}><option>Completed</option><option>In progress</option><option>Blocked</option></select></div>
+      <div className="col-md-2 form-check mt-4 ms-2"><input id="timesheetBillable" className="form-check-input" type="checkbox" checked={Boolean(draft.billable)} onChange={(event) => setDraft({ ...draft, billable: event.target.checked })} /><label className="form-check-label" htmlFor="timesheetBillable">Billable</label></div>
+      <div className="col-md-6"><label className="form-label">Comments</label><input className="form-control" value={draft.comments || ""} onChange={(event) => setDraft({ ...draft, comments: event.target.value })} /></div>
+        </div>
+        <div className="modal-footer"><button className="btn btn-outline-secondary" type="button" onClick={() => setDraft(null)} disabled={saving}>Cancel</button><button className="btn btn-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Submit entry"}</button></div>
+      </form></div></div>
+    </div><div className="modal-backdrop show timesheet-entry-backdrop" /></>}
+    <div className="timesheet-filters p-3 border-bottom"><div className="row g-2 align-items-end"><div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetFrom">From</label><input id="timesheetFrom" className="form-control" type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></div><div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetTo">To</label><input id="timesheetTo" className="form-control" type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></div><div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetStatus">Approval</label><select id="timesheetStatus" className="form-select" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">All statuses</option><option value="Submitted">Submitted</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option></select></div>{admin && <div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetEmployee">Employee</label><select id="timesheetEmployee" className="form-select" value={filters.employeeId} onChange={(event) => setFilters({ ...filters, employeeId: event.target.value })}><option value="">All employees</option>{employees.map((employee) => <option key={employee.id} value={employee.employeeId}>{employee.name} ({employee.employeeId})</option>)}</select></div>}<div className="col-6 col-sm-auto"><button className="btn btn-outline-secondary w-100" type="button" onClick={() => setFilters({ from: "", to: "", status: "", employeeId: "" })}>Clear</button></div></div></div>
     <div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Date</th>{admin && <th>Employee</th>}<th>Project & work details</th><th>Time</th><th>Hours</th><th>Work status</th><th>Approval</th><th>Actions</th></tr></thead><tbody>{loading ? <tr><td colSpan={admin ? 8 : 7} className="text-center py-5">Loading timesheet…</td></tr> : entries.map((entry) => <tr key={entry.id}><td>{entry.date}</td>{admin && <td><strong>{entry.employeeName || "—"}</strong><div className="small text-secondary">{entry.employeeId || "—"}</div></td>}<td><strong>{entry.project || "—"}</strong><div className="small text-secondary">{entry.details || entry.category || "—"}</div>{entry.comments && <div className="small text-secondary">{entry.comments}</div>}</td><td>{entry.startTime || "—"} – {entry.endTime || "—"}</td><td className="fw-semibold">{Number(entry.totalHours || 0).toFixed(2)}h{entry.overtime ? <div className="small text-secondary">{Number(entry.overtime).toFixed(2)} OT</div> : null}</td><td>{entry.workStatus || "—"}</td><td><span className={`badge ${entry.approvalStatus === "Approved" ? "text-bg-success" : entry.approvalStatus === "Rejected" ? "text-bg-danger" : "text-bg-primary"}`}>{entry.approvalStatus || "Submitted"}</span>{entry.approvalComment && <div className="small text-secondary">{entry.approvalComment}</div>}</td><td>{!admin && entry.approvalStatus !== "Approved" && <button className="btn btn-sm btn-outline-secondary me-1" type="button" onClick={() => openEntry(entry)}>Edit</button>}{canDelete && <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => removeEntry(entry.id)}>Delete</button>}</td></tr>)}{!loading && !entries.length && <tr><td colSpan={admin ? 8 : 7} className="text-center py-5 text-secondary">No entries match this view.</td></tr>}</tbody></table></div>
   </section>;
 }
@@ -253,7 +307,7 @@ function Overview({ days, data, totals, dashboardTotals, loading, admin, profile
   </>;
 }
 
-function LiveApprovals({ profile, employees }) {
+function LiveApprovals({ profile, employees, refreshKey }) {
   const admin = isAttendanceAdmin(profile);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -270,15 +324,15 @@ function LiveApprovals({ profile, employees }) {
     catch (requestError) { setError(requestError.message || "Unable to load pending approvals."); }
     finally { loadedRef.current = true; setLoading(false); setRefreshing(false); }
   }, [admin, profile]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
   const review = async (status) => {
     if (!reviewing) return;
     try { await reviewLiveTimesheetEntry(reviewing.id, status, comment); setReviewing(null); setComment(""); await load(); }
     catch (requestError) { setError(requestError.message || "Unable to review the timesheet entry."); }
   };
   if (!admin) return <section className="panel"><h2 className="h5">Admin workspace</h2><p className="text-secondary mb-0">Timesheet approvals are available to attendance administrators.</p></section>;
-  return <section className="panel p-0 responsive-table">
-    <div className="table-panel-header d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">ADMIN WORKSPACE</div><h2 className="h5 mb-1">Timesheet Approvals</h2><p className="text-secondary small mb-0">Review submitted work from the live attendance system.</p></div><span className="text-secondary small">{refreshing ? "Refreshing…" : "Live Supabase"}</span></div>
+  return <section className="timesheet-approvals-panel responsive-table">
+    <div className="table-panel-header d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">ADMIN WORKSPACE</div><h2 className="h5 mb-1">Timesheet Approvals</h2><p className="text-secondary small mb-0">Review submitted work from the live attendance system.</p></div>{refreshing && <span className="text-secondary small">Refreshing…</span>}</div>
     {error && <div className="alert alert-danger m-3">{error}</div>}
     {reviewing && <div className="p-3 border-bottom bg-light"><strong>{reviewing.employeeName || reviewing.employeeId} · {reviewing.date}</strong><div className="small text-secondary mt-1">{reviewing.project || "—"}: {reviewing.details || "—"} · {Number(reviewing.totalHours || 0).toFixed(2)} hours</div><textarea className="form-control mt-3" rows="2" placeholder="Optional approval comment" value={comment} onChange={(event) => setComment(event.target.value)} /><div className="d-flex gap-2 mt-3"><button className="btn btn-success btn-sm" type="button" onClick={() => review("Approved")}>Approve</button><button className="btn btn-danger btn-sm" type="button" onClick={() => review("Rejected")}>Reject</button><button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => setReviewing(null)}>Cancel</button></div></div>}
     <div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Date</th><th>Employee</th><th>Project & work details</th><th>Time</th><th>Hours</th><th>Work status</th><th>Action</th></tr></thead><tbody>{loading ? <tr><td colSpan="7" className="text-center py-5">Loading approvals…</td></tr> : entries.map((entry) => <tr key={entry.id}><td>{entry.date}</td><td><strong>{entry.employeeName || "—"}</strong><div className="small text-secondary">{entry.employeeId || "—"}</div></td><td><strong>{entry.project || "—"}</strong><div className="small text-secondary">{entry.details || entry.category || "—"}</div></td><td>{entry.startTime || "—"} – {entry.endTime || "—"}</td><td className="fw-semibold">{Number(entry.totalHours || 0).toFixed(2)}h</td><td>{entry.workStatus || "—"}</td><td><button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setReviewing(entry)}>Review</button></td></tr>)}{!loading && !entries.length && <tr><td colSpan="7" className="text-center py-5 text-secondary">No submitted timesheets require approval.</td></tr>}</tbody></table></div>
@@ -312,7 +366,7 @@ function AdminLiveEmployees({ data, onRefresh }) {
 
 function LiveEmployees({ data, admin }) {
   const recordCounts = data.records.reduce((counts, record) => { counts[record.userId] = (counts[record.userId] || 0) + 1; return counts; }, {});
-  return <section className="panel p-0 responsive-table"><div className="table-panel-header d-flex justify-content-between align-items-center"><div><div className="eyebrow">ADMINISTRATION</div><h2 className="h5 mb-1">Employees</h2><p className="text-secondary small mb-0">Live profiles from the Vestano attendance directory.</p></div><span className="badge text-bg-success">Live Supabase</span></div><div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Employee</th><th>ID</th><th>Department</th><th>Manager</th><th>Shift</th><th>Role</th><th>Attendance records</th><th>Access</th></tr></thead><tbody>{data.employees.map((employee) => <tr key={employee.id}><td><strong>{employee.name || "—"}</strong><div className="small text-secondary">{employee.email || "—"}</div></td><td>{employee.employeeId || "—"}</td><td>{employee.department || "—"}</td><td>{employee.manager || "—"}</td><td>{employee.shiftStartTime || "09:00"}–{employee.shiftEndTime || "17:30"}</td><td><span className="badge text-bg-secondary">{employee.role || "employee"}</span></td><td>{recordCounts[employee.id] || 0}</td><td><span className={`badge ${employee.active ? "text-bg-success" : "text-bg-danger"}`}>{employee.active ? "Active" : "Inactive"}</span></td></tr>)}</tbody></table></div>{!admin && <div className="p-3 text-secondary small">Employee administration is restricted to attendance administrators.</div>}</section>;
+  return <section className="panel p-0 responsive-table"><div className="table-panel-header"><div><div className="eyebrow">ADMINISTRATION</div><h2 className="h5 mb-1">Employees</h2><p className="text-secondary small mb-0">Profiles from the Vestano attendance directory.</p></div></div><div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Employee</th><th>ID</th><th>Department</th><th>Manager</th><th>Shift</th><th>Role</th><th>Attendance records</th><th>Access</th></tr></thead><tbody>{data.employees.map((employee) => <tr key={employee.id}><td><strong>{employee.name || "—"}</strong><div className="small text-secondary">{employee.email || "—"}</div></td><td>{employee.employeeId || "—"}</td><td>{employee.department || "—"}</td><td>{employee.manager || "—"}</td><td>{employee.shiftStartTime || "09:00"}–{employee.shiftEndTime || "17:30"}</td><td><span className="badge text-bg-secondary">{employee.role || "employee"}</span></td><td>{recordCounts[employee.id] || 0}</td><td><span className={`badge ${employee.active ? "text-bg-success" : "text-bg-danger"}`}>{employee.active ? "Active" : "Inactive"}</span></td></tr>)}</tbody></table></div>{!admin && <div className="p-3 text-secondary small">Employee administration is restricted to attendance administrators.</div>}</section>;
 }
 
 function Employees({ data, admin, mapping, setMapping, saveMapping, live = false }) { const recordCounts = data.records.reduce((counts, record) => { counts[record.userId] = (counts[record.userId] || 0) + 1; return counts; }, {}); return <><section className="panel p-0 mb-4 responsive-table"><div className="table-panel-header"><h2 className="h5 mb-1">Employees</h2><p className="text-secondary small mb-0">People available in the {live ? "live Vestano" : "CRM attendance"} directory.</p></div><div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Name</th><th>Employee ID</th><th>Attendance records</th><th>Access</th></tr></thead><tbody>{data.employees.map((employee) => <tr key={employee.id}><td><strong>{employee.name}</strong><div className="small text-secondary">{employee.email || ""}</div></td><td>{employee.employeeId || "—"}</td><td>{recordCounts[employee.id] || employee.recordCount || 0}</td><td><span className={`badge ${live ? "text-bg-success" : employee.id.startsWith("crm:") ? "text-bg-success" : "text-bg-secondary"}`}>{live ? "Live profile" : employee.id.startsWith("crm:") ? "CRM account" : "Imported"}</span></td></tr>)}</tbody></table></div></section>{admin && !live && data.punchCodes?.length > 0 && <section className="panel"><h2 className="h5">Link Vestano punch codes</h2><p className="text-secondary small">Connect an imported employee to a CRM account without a second login.</p><form className="row g-3 align-items-end" onSubmit={saveMapping}><div className="col-md-4"><label className="form-label" htmlFor="mappingCode">Punch code</label><select id="mappingCode" className="form-select" required value={mapping.punchCode} onChange={(event) => setMapping({ ...mapping, punchCode: event.target.value })}><option value="">Select punch code</option>{data.punchCodes.map((code) => <option key={code.punchCode} value={code.punchCode}>{code.punchCode} — {code.employeeName}</option>)}</select></div><div className="col-md-5"><label className="form-label" htmlFor="mappingUser">CRM account</label><select id="mappingUser" className="form-select" required value={mapping.userId} onChange={(event) => setMapping({ ...mapping, userId: event.target.value })}><option value="">Select CRM account</option>{data.employees.filter((employee) => employee.id.startsWith("crm:")).map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({employee.employeeId})</option>)}</select></div><div className="col-auto"><button className="btn btn-primary">Link employee</button></div></form></section>}</>; }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { remindersApi } from "../services/api.js";
+import { peekCachedResponse, remindersApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
 import { prepareReminderNotifications, reminderWorkerUrl, saveReminderWithNotifications } from "../services/reminderPush.js";
@@ -21,7 +21,7 @@ function formatReminderDate(value) {
 
 export default function Reminders() {
   const { user, csrfToken } = useAuth();
-  const [reminders, setReminders] = useState(null);
+  const [reminders, setReminders] = useState(() => peekCachedResponse("/reminders/")?.data?.results || null);
   const [values, setValues] = useState({ text: "", date: "", time: "" });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");

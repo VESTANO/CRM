@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { datasetsApi } from "../services/api.js";
+import { datasetsApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 
 export default function DatasetManagement({ mode }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const { csrfToken } = useAuth();
-  const [dataset, setDataset] = useState(null);
-  const [name, setName] = useState("");
+  const cachedDataset = peekCachedResponse("/datasets/")?.data?.results?.find((item) => String(item.id) === id) || null;
+  const [dataset, setDataset] = useState(cachedDataset);
+  const [name, setName] = useState(cachedDataset?.name || "");
   const [errors, setErrors] = useState({});
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setDataset(null);
+    const cached = peekCachedResponse("/datasets/")?.data?.results?.find((item) => String(item.id) === id) || null;
+    setDataset(cached);
+    if (cached) setName(cached.name);
     setError("");
     datasetsApi.list().then(({ data }) => {
       const found = data.results.find((item) => String(item.id) === id);

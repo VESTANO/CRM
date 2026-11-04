@@ -7,12 +7,13 @@ import "./styles/app.css";
 import "./styles/luxe-theme.css";
 import "./styles/admin.css";
 import App from "./App.jsx";
+import { ServerErrorPage } from "./pages/StatusPage.jsx";
 
 class AppErrorBoundary extends React.Component {
   state = { error: null };
   static getDerivedStateFromError(error) { return { error }; }
   render() {
-    if (this.state.error) return <div className="panel m-4"><h1 className="h4">CRM could not load</h1><p className="text-secondary">{this.state.error.message || "Unexpected application error."}</p><button className="btn btn-primary" type="button" onClick={() => window.location.reload()}>Reload CRM</button></div>;
+    if (this.state.error) return <ServerErrorPage />;
     return this.props.children;
   }
 }

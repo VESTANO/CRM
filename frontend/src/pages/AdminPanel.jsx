@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { adminApi } from "../services/api.js";
+import { adminApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
+import TaskImagePicker from "../components/TaskImagePicker.jsx";
+import { appendPhotoUploads } from "../utils/photoCompression.js";
 
 function getTargetsForUser(targets, userId) {
   return targets?.filter((target) => target.userId === userId) || [];
@@ -27,7 +29,12 @@ function currentMonthValue() {
 }
 
 export default function AdminPanel() {
-  const [data, setData] = useState(null);
+  const cachedSummary = peekCachedResponse("/admin/summary/")?.data;
+  const cachedTargets = peekCachedResponse("/admin/targets/")?.data;
+  const [data, setData] = useState(() => cachedSummary || null);
+  const [targetPerformance, setTargetPerformance] = useState(() => cachedTargets || null);
+  const [targetsLoading, setTargetsLoading] = useState(!cachedTargets);
+  const [targetsError, setTargetsError] = useState("");
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const [targetUser, setTargetUser] = useState(null);
@@ -39,47 +46,52 @@ export default function AdminPanel() {
   const [taskUser, setTaskUser] = useState(null);
   const [taskValues, setTaskValues] = useState({ title: "", note: "", due_at: "" });
   const [taskSaving, setTaskSaving] = useState(false);
+  const [taskImages, setTaskImages] = useState([]);
+  const [taskImagePreparing, setTaskImagePreparing] = useState(false);
   const { csrfToken } = useAuth();
 
-  const load = async () => {
+  const loadTargets = async () => {
+    setTargetsLoading(true);
+    setTargetsError("");
     try {
-      const [summaryResponse, targetsResponse] = await Promise.all([ // waits until both requests finish. Their results are then assigned to summaryResponse and targetsResponse, in the same order as the requests.
-        adminApi.summary(), //fetches the admin overview: user and dataset information, plus summary counts.
-        adminApi.targets(),// fetches sales-target information.
-      ]);
-
-      setData({
-        ...summaryResponse.data,  // is the data returned by the summary API.
-        targetPerformance: targetsResponse.data, //adds the target response under a field with that name.
-      });
-      setError("");
-    } catch (requestError) {
-      setError(
-        requestError.response?.status === 403
-          ? "Administrator access required."
-          : "Unable to load admin panel."
-      );
+      const { data: targets } = await adminApi.targets();
+      setTargetPerformance(targets);
+    } catch {
+      setTargetsError("Unable to load sales targets.");
+    } finally {
+      setTargetsLoading(false);
     }
+  };
+
+  const load = () => {
+    setError("");
+    const summary = adminApi.summary()
+      .then(({ data: summaryData }) => setData(summaryData))
+      .catch((requestError) => {
+        if (requestError.response?.status === 403) setData(null);
+        setError(requestError.response?.status === 403 ? "Administrator access required." : "Unable to load admin panel.");
+      });
+    return Promise.allSettled([summary, loadTargets()]);
   };
 
   useEffect(() => {
     load();
   }, []);
 
-  if (error) return <RequestError message={error} onRetry={load} />;
+  if (error && !data) return <RequestError message={error} onRetry={load} />;
   if (!data) return <LoadingPanel label="Loading admin panel" />;
 
   const pageCount = Math.ceil(data.users.length / 5);
   const visibleUsers = data.users.slice((page - 1) * 5, page * 5); //Selects the five users for the current page.
-  const warningTargets = data.targetPerformance?.filter((target) => target.needsWarning) || [];
+  const warningTargets = targetPerformance?.filter((target) => target.needsWarning) || [];
   const targetBeingEdited = targetUser && targetMonth
-    ? getTargetForMonth(data.targetPerformance, targetUser.id, targetMonth)
+    ? getTargetForMonth(targetPerformance, targetUser.id, targetMonth)
     : null;
 
   const openTargetModal = (user) => {
-    const userTargets = getTargetsForUser(data.targetPerformance, user.id);
+    const userTargets = getTargetsForUser(targetPerformance, user.id);
     const initialMonth = userTargets[0]?.month || currentMonthValue();
-    const initialTarget = getTargetForMonth(data.targetPerformance, user.id, initialMonth);
+    const initialTarget = getTargetForMonth(targetPerformance, user.id, initialMonth);
 
     setTargetUser(user);
     setTargetMonth(initialMonth);
@@ -90,7 +102,7 @@ export default function AdminPanel() {
   const changeTargetMonth = (event) => {
     const month = event.target.value;
     const existingTarget = targetUser
-      ? getTargetForMonth(data.targetPerformance, targetUser.id, month)
+      ? getTargetForMonth(targetPerformance, targetUser.id, month)
       : null;
 
     setTargetMonth(month);
@@ -152,17 +164,20 @@ export default function AdminPanel() {
   };
 
   const openTaskModal = (user) => {
+    setTaskImages([]);
     setTaskUser(user);
     setTaskValues({ title: "", note: "", due_at: "" });
     setTargetMessage("");
   };
 
   const closeTaskModal = () => {
+    setTaskImages([]);
     setTaskUser(null);
     setTaskValues({ title: "", note: "", due_at: "" });
   };
 
   const assignTask = async () => {
+    if (taskSaving || taskImagePreparing) return;
     const title = taskValues.title.trim();
     if (!title) {
       setTargetMessageType("danger");
@@ -174,15 +189,13 @@ export default function AdminPanel() {
     setTargetMessage("");
 
     try {
-      await adminApi.createTask(
-        {
-          assignee: taskUser.id,
-          title,
-          note: taskValues.note,
-          due_at: taskValues.due_at ? new Date(taskValues.due_at).toISOString() : null,
-        },
-        csrfToken
-      );
+      const payload = new FormData();
+      payload.append("assignee", taskUser.id);
+      payload.append("title", title);
+      payload.append("note", taskValues.note);
+      payload.append("due_at", taskValues.due_at ? new Date(taskValues.due_at).toISOString() : "");
+      appendPhotoUploads(payload, taskImages);
+      await adminApi.createTask(payload, csrfToken);
       setTargetMessageType("success");
       setTargetMessage("Task assigned successfully");
       closeTaskModal();
@@ -212,6 +225,9 @@ export default function AdminPanel() {
           Add User
         </Link>
       </div>
+
+      {error && <div className="alert alert-warning" role="alert">{error} Showing the last loaded admin overview.</div>}
+      {targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={loadTargets}>Retry targets</button></div>}
 
       {targetMessage && !targetUser && !taskUser && (
         <div className={`alert alert-${targetMessageType}`}>{targetMessage}</div>
@@ -244,6 +260,19 @@ export default function AdminPanel() {
           </div>
         ))}
       </div>
+
+      <section className="panel mb-4" aria-labelledby="admin-all-users-heading">
+        <div className="d-flex flex-wrap justify-content-between align-items-center gap-3">
+          <div>
+            <h2 className="h5 mb-1" id="admin-all-users-heading">All Users</h2>
+            <p className="text-secondary small mb-0">View all {data.metrics.totalUsers} CRM accounts, including administrators and inactive users.</p>
+          </div>
+          <Link className="btn btn-outline-primary" to="/admin-panel/users">
+            <i className="bi bi-people me-1" />
+            View All Users
+          </Link>
+        </div>
+      </section>
 
       <section className="panel mb-4">
         <div className="d-flex flex-wrap justify-content-between align-items-center gap-3">
@@ -281,7 +310,7 @@ export default function AdminPanel() {
             </thead>
             <tbody>
               {visibleUsers.map((user) => {
-                const userTargets = getTargetsForUser(data.targetPerformance, user.id);
+                const userTargets = getTargetsForUser(targetPerformance, user.id);
                 return (
                   <tr key={user.id}>
                     <td data-label="Username">
@@ -305,6 +334,10 @@ export default function AdminPanel() {
                     <td data-label="Targets">
                       {user.is_admin ? (
                         <span className="text-secondary small">Admin user</span>
+                      ) : targetsLoading && !targetPerformance ? (
+                        <span className="text-secondary small">Loading targets…</span>
+                      ) : targetsError && !targetPerformance ? (
+                        <span className="text-secondary small">Targets unavailable</span>
                       ) : userTargets.length ? (
                         <div className="d-flex flex-column align-items-start gap-1">
                           {userTargets.map((target) => (
@@ -333,27 +366,30 @@ export default function AdminPanel() {
                     </td>
                     <td data-label="Date joined">{formatDateTime(user.date_joined)}</td>
                     <td data-label="Actions">
-                      <div className="table-actions" role="group" aria-label={`Actions for ${user.username}`}>
-                        <Link className="btn btn-outline-primary" to={`/admin-panel/users/${user.id}`}>View</Link>
-                        <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
-                        <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
+                      <div className="admin-user-actions" role="group" aria-label={`Actions for ${user.username}`}>
+                        <div className="admin-user-actions-primary">
+                          <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}`}>View</Link>
+                          <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
+                          <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
+                        </div>
                         {!user.is_admin && (
-                          <>
+                          <div className="admin-user-actions-secondary">
                             <button
-                              className="btn btn-outline-success"
+                              className="btn btn-outline-secondary btn-sm"
                               type="button"
                               onClick={() => openTargetModal(user)}
+                              disabled={targetsLoading || Boolean(targetsError)}
                             >
                               Manage Targets
                             </button>
                             <button
-                              className="btn btn-outline-primary"
+                              className="btn btn-outline-secondary btn-sm"
                               type="button"
                               onClick={() => openTaskModal(user)}
                             >
                               Assign Task
                             </button>
-                          </>
+                          </div>
                         )}
                       </div>
                     </td>
@@ -470,7 +506,7 @@ export default function AdminPanel() {
                   <h5 className="modal-title">Assign Task</h5>
                   <div className="text-secondary small">{taskUser.username}</div>
                 </div>
-                <button type="button" className="btn-close" onClick={closeTaskModal} />
+                <button type="button" className="btn-close" aria-label="Close task assignment" onClick={closeTaskModal} disabled={taskSaving} />
               </div>
               <div className="modal-body">
                 {targetMessage && (
@@ -509,16 +545,20 @@ export default function AdminPanel() {
                   />
                   <div className="form-text">Leave empty if this task does not have a deadline.</div>
                 </div>
+                <div className="mt-3">
+                  <TaskImagePicker label="Before photos (optional)" files={taskImages} onChange={setTaskImages} disabled={taskSaving} onBusyChange={setTaskImagePreparing} />
+                  <div className="form-text">Attach photos of the section that needs arranging. The user will upload After photos when the work is done.</div>
+                </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-outline-secondary" onClick={closeTaskModal}>Cancel</button>
+                <button type="button" className="btn btn-outline-secondary" onClick={closeTaskModal} disabled={taskSaving}>Cancel</button>
                 <button
                   type="button"
                   className="btn btn-primary"
                   onClick={assignTask}
-                  disabled={taskSaving}
+                  disabled={taskSaving || taskImagePreparing}
                 >
-                  {taskSaving ? "Assigning..." : "Assign Task"}
+                  {taskImagePreparing ? "Preparing photos..." : taskSaving ? "Assigning..." : "Assign Task"}
                 </button>
               </div>
             </div>

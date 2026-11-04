@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { dashboardApi, salesApi } from "../services/api.js";
+import { dashboardApi, peekCachedResponse, salesApi } from "../services/api.js";
 import { formatCurrency } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
-import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
+import { LoadingPanel } from "../components/RequestState.jsx";
 
 const chartPalette = [
   { fill: "#DCE4E8", border: "#405565", text: "#172B3A" },
@@ -22,17 +22,19 @@ function monthKey(date) {
 }
 
 export default function Reports() {
-  const [customerStats, setCustomerStats] = useState(null);
-  const [visits, setVisits] = useState(null);
+  const [customerStats, setCustomerStats] = useState(() => peekCachedResponse("/dashboard/")?.data || null);
+  const [visits, setVisits] = useState(() => peekCachedResponse("/sales/visits/")?.data?.results || null);
   const [error, setError] = useState("");
 
   const load = useCallback(() => {
-    Promise.all([dashboardApi.summary(), salesApi.list()])
-      .then(([dashboardResponse, visitResponse]) => {
-        setCustomerStats(dashboardResponse.data);
-        setVisits(visitResponse.data.results);
-      })
-      .catch(() => setError("Unable to load reports."));
+    setError("");
+    const customers = dashboardApi.summary()
+      .then(({ data }) => setCustomerStats(data))
+      .catch(() => setError("Unable to load customer insights."));
+    const sales = salesApi.list()
+      .then(({ data }) => setVisits(data.results))
+      .catch(() => setError("Unable to load sales insights."));
+    return Promise.allSettled([customers, sales]);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -73,26 +75,24 @@ export default function Reports() {
     };
   }, [visits]);
 
-  if (error) return <RequestError message={error} onRetry={load} />;
-  if (!customerStats || !visitStats) return <LoadingPanel label="Loading reports" />;
-
-  const maxCustomerCount = Math.max(1, ...customerStats.responseStats.map((item) => item.count));
-  const maxVisitCount = Math.max(1, ...visitStats.statuses.map((item) => item.count));
+  const maxCustomerCount = Math.max(1, ...(customerStats?.responseStats || []).map((item) => item.count));
+  const maxVisitCount = Math.max(1, ...(visitStats?.statuses || []).map((item) => item.count));
 
   return <>
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active" aria-current="page">Reports</li></ol></nav>
     <div className="page-header mb-4"><div><div className="eyebrow">CRM Overview</div><h1 className="h2 mb-2">Reports</h1><p className="text-secondary mb-0">Customer responses and sales activity at a glance.</p></div></div>
+    {error && <div className="alert alert-warning" role="alert">{error} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={load}>Retry</button></div>}
 
-    <section className="panel mb-4" aria-labelledby="customer-insights-heading">
+    {customerStats ? <section className="panel mb-4" aria-labelledby="customer-insights-heading">
       <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3"><div><h2 className="h4 mb-1" id="customer-insights-heading">Customer Insights</h2><p className="text-secondary mb-0">Customer response across your accessible datasets.</p></div><Link className="btn btn-outline-primary btn-sm" to="/datasets">Customer Lists</Link></div>
       <div className="reports-summary-grid mb-4">
         <Summary label="Total customers" value={customerStats.totalCustomers} icon="bi-people" />
         <Summary label="Datasets" value={customerStats.totalDatasets} icon="bi-folder2-open" />
       </div>
       <Breakdown title="Customer response" items={customerStats.responseStats.map((item, index) => ({ ...item, color: customerColors[index % customerColors.length] }))} max={maxCustomerCount} />
-    </section>
+    </section> : !error && <LoadingPanel label="Loading customer insights" />}
 
-    <section className="panel" aria-labelledby="sales-insights-heading">
+    {visitStats ? <section className="panel" aria-labelledby="sales-insights-heading">
       <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3"><div><h2 className="h4 mb-1" id="sales-insights-heading">Sales Insights</h2><p className="text-secondary mb-0">Visit outcomes, activity, and recorded expenses.</p></div><Link className="btn btn-outline-primary btn-sm" to="/sales">Sales</Link></div>
       <div className="reports-summary-grid mb-4">
         <Summary label="Total visits" value={visitStats.totalVisits} icon="bi-calendar2-check" />
@@ -103,7 +103,7 @@ export default function Reports() {
         <div className="col-lg-6"><Breakdown title="Visit outcomes" items={visitStats.statuses.map((item, index) => ({ ...item, color: visitColors[index % visitColors.length] }))} max={maxVisitCount} empty="No visit outcomes recorded yet." /></div>
         <div className="col-lg-6"><h3 className="h6 mb-3">Visits over the last 6 months</h3>{visitStats.recentMonths.every((item) => item.count === 0) ? <p className="text-secondary mb-0">No visits recorded in this period.</p> : <MonthlyTrend months={visitStats.recentMonths} />}</div>
       </div>
-    </section>
+    </section> : !error && <LoadingPanel label="Loading sales insights" />}
   </>;
 }
 

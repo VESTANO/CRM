@@ -1,11 +1,13 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import AppLayout from "./layouts/AppLayout.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import AdminRoute from "./components/AdminRoute.jsx";
 import { AuthProvider } from "./hooks/useAuth.jsx";
 import { AttendanceAuthProvider } from "./hooks/useAttendanceAuth.jsx";
 import { AppBootLoader } from "./components/RequestState.jsx";
+import ConnectionGuard from "./components/ConnectionGuard.jsx";
+import StatusPage, { ServerErrorPage } from "./pages/StatusPage.jsx";
 
 // Route-level chunks make the initial CRM shell fast; each screen is fetched
 // only when it is opened instead of making every page block the first render.
@@ -30,6 +32,7 @@ const VisitForm = lazy(() => import("./pages/VisitForm.jsx"));
 const VisitDetail = lazy(() => import("./pages/VisitDetail.jsx"));
 const VisitDelete = lazy(() => import("./pages/VisitDelete.jsx"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel.jsx"));
+const AdminUsers = lazy(() => import("./pages/AdminUsers.jsx"));
 const AdminTasks = lazy(() => import("./pages/AdminTasks.jsx"));
 const AdminUserDetail = lazy(() => import("./pages/AdminUserDetail.jsx"));
 const AdminUserForm = lazy(() => import("./pages/AdminUserForm.jsx"));
@@ -39,10 +42,13 @@ const AdminUserDatasets = lazy(() => import("./pages/AdminUserDatasets.jsx"));
 export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.MODE === "pages" || import.meta.env.VITE_PAGES_BUILD === "true" ? "/CRM" : "/"}>
+      <ConnectionGuard>
       <AuthProvider>
         <Suspense fallback={<AppBootLoader label="Opening CRM page" />}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/offline" element={<StatusPage kind="offline" />} />
+          <Route path="/500" element={<ServerErrorPage />} />
           <Route
             path="/"
             element={
@@ -83,6 +89,7 @@ export default function App() {
             <Route path="sales/visits/:visitId/edit" element={<VisitForm />} />
             <Route path="sales/visits/:visitId/delete" element={<VisitDelete />} />
             <Route path="admin-panel" element={<AdminRoute><AdminPanel /></AdminRoute>} />
+            <Route path="admin-panel/users" element={<AdminRoute><AdminUsers /></AdminRoute>} />
             <Route path="admin-panel/tasks" element={<AdminRoute><AdminTasks /></AdminRoute>} />
             <Route path="admin-panel/users/add" element={<AdminRoute><AdminUserForm /></AdminRoute>} />
             <Route path="admin-panel/users/:userId" element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
@@ -91,10 +98,11 @@ export default function App() {
             <Route path="admin-panel/users/:userId/datasets" element={<AdminRoute><AdminUserDatasets /></AdminRoute>} />
             <Route path="admin-panel/users/:userId/tasks" element={<AdminRoute><AdminTasks /></AdminRoute>} />
           </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<StatusPage />} />
         </Routes>
         </Suspense>
       </AuthProvider>
+      </ConnectionGuard>
     </BrowserRouter>
   );
 }

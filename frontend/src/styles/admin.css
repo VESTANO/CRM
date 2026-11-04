@@ -95,6 +95,72 @@
   white-space: nowrap;
 }
 
+.app-main.is-admin .admin-users-table .admin-user-actions {
+  display: grid;
+  gap: 0.65rem;
+  width: 280px;
+}
+
+.admin-user-actions-primary,
+.admin-user-actions-secondary {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.admin-user-actions-primary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.admin-user-actions-secondary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--luxe-sand);
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  margin: 0;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: var(--luxe-ink);
+  background-color: var(--luxe-wine);
+  border-color: var(--luxe-wine);
+  box-shadow: 0 2px 4px rgba(23, 43, 58, 0.08);
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions .btn:hover,
+.app-main.is-admin .admin-users-table .admin-user-actions .btn:active {
+  color: var(--luxe-ink);
+  background-color: #e18b51;
+  border-color: #e18b51;
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions-primary .btn:nth-child(odd),
+.app-main.is-admin .admin-users-table .admin-user-actions-secondary .btn:nth-child(even) {
+  color: #fff;
+  background-color: var(--luxe-taupe);
+  border-color: var(--luxe-taupe);
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions-primary .btn:nth-child(odd):hover,
+.app-main.is-admin .admin-users-table .admin-user-actions-primary .btn:nth-child(odd):active,
+.app-main.is-admin .admin-users-table .admin-user-actions-secondary .btn:nth-child(even):hover,
+.app-main.is-admin .admin-users-table .admin-user-actions-secondary .btn:nth-child(even):active {
+  color: #fff;
+  background-color: var(--luxe-ink);
+  border-color: var(--luxe-ink);
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions .btn:focus-visible {
+  outline: 3px solid var(--luxe-ink);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
 .app-main.is-admin .responsive-table .table-responsive > .admin-tasks-table { min-width: 1060px !important; }
 .app-main.is-admin .admin-tasks-table th:nth-child(2),
 .app-main.is-admin .admin-tasks-table th:nth-child(3) { min-width: 260px; }

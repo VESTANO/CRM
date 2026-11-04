@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { adminApi } from "../services/api.js";
+import { adminApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import PasswordInput from "../components/PasswordInput.jsx";
 
@@ -9,16 +9,17 @@ export default function AdminUserForm() {
   const edit = Boolean(userId);
   const navigate = useNavigate();
   const { csrfToken } = useAuth();
-  const [values, setValues] = useState({ username: "", email: "", is_active: true, password1: "", password2: "" });
+  const cachedUser = edit ? peekCachedResponse(`/admin/users/${userId}/`)?.data : null;
+  const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: "employee", is_active: true, password1: "", password2: "" });
   const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(edit);
+  const [loading, setLoading] = useState(edit && !cachedUser);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!edit) { setLoading(false); return; }
-    setLoading(true);
+    setLoading(!peekCachedResponse(`/admin/users/${userId}/`));
     adminApi.detail(userId)
-      .then(({ data }) => setValues({ ...data, password1: "", password2: "" }))
+      .then(({ data }) => setValues({ ...data, role: data.role || (data.is_superuser ? "super_admin" : data.is_admin ? "admin" : "employee"), password1: "", password2: "" }))
       .catch(() => setErrors({ non_field_errors: ["Unable to load user details. Please reload this page."] }))
       .finally(() => setLoading(false));
   }, [edit, userId]);
@@ -51,7 +52,7 @@ export default function AdminUserForm() {
         return;
       }
       const response = edit
-        ? await adminApi.update(userId, { username, email: values.email, is_active: values.is_active }, csrfToken)
+        ? await adminApi.update(userId, { username, email: values.email, role: values.role, is_active: values.is_active }, csrfToken)
         : await adminApi.createUser({ ...values, username }, csrfToken);
       navigate(`/admin-panel/users/${response.data.id}`);
     } catch (error) {
@@ -62,10 +63,11 @@ export default function AdminUserForm() {
   };
 
   return <>
-    <div className="page-header mb-4"><h1 className="h2">{edit ? "Edit User" : "Add User"}</h1><p className="text-secondary">{edit ? "Update account details and active status." : "Create a normal CRM user account."}</p></div>
+    <div className="page-header mb-4"><h1 className="h2">{edit ? "Edit User" : "Add User"}</h1><p className="text-secondary">{edit ? "Update account details, access role, and active status." : "Create a CRM account and choose its access role."}</p></div>
     <div className="panel admin-form-panel">{loading ? <p className="mb-0" role="status">Loading user details…</p> : <form onSubmit={submit}>
       {errors.non_field_errors && <div className="alert alert-danger" role="alert"><FieldErrors errors={errors.non_field_errors} /></div>}
       {["username", "email"].map((name) => <div className="mb-3" key={name}><label className="form-label" htmlFor={`user-${name}`}>{name === "username" ? "Username" : "Email"}</label><input id={`user-${name}`} className="form-control" name={name} type={name === "email" ? "email" : "text"} value={values[name] || ""} onChange={change} /><FieldErrors errors={errors[name]} /></div>)}
+      <div className="mb-3"><label className="form-label" htmlFor="user-role">Role</label><select id="user-role" className="form-select" name="role" value={values.role} onChange={change}><option value="employee">Employee</option><option value="admin">Admin</option><option value="super_admin">Super Admin</option></select><FieldErrors errors={errors.role} /></div>
       {!edit && ["password1", "password2"].map((name) => <div className="mb-3" key={name}><label className="form-label" htmlFor={`user-${name}`}>{name === "password1" ? "Password" : "Confirm password"}</label><PasswordInput id={`user-${name}`} name={name} value={values[name]} onChange={change} autoComplete={name === "password1" ? "new-password" : "new-password"} /><FieldErrors errors={errors[name]} /></div>)}
       <div className="form-check form-switch mb-3"><input id="user-active" className="form-check-input" type="checkbox" name="is_active" checked={values.is_active} onChange={change} /><label className="form-check-label" htmlFor="user-active">Active status</label></div>
       <div className="d-flex flex-wrap gap-2"><button className="btn btn-primary" disabled={saving || (edit && !values.id)}>{saving ? "Saving…" : edit ? "Save Changes" : "Create User"}</button><Link className="btn btn-outline-secondary" to={edit ? `/admin-panel/users/${userId}` : "/admin-panel"}>Cancel</Link></div>

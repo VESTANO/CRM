@@ -1,7 +1,7 @@
 import { remindersApi } from "../services/api.js";
 import { clearReminderDevice, prepareReminderNotifications, reminderWorkerUrl } from "../services/reminderPush.js";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { authApi } from "../services/api.js";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { authApi, setApiCacheScope } from "../services/api.js";
 import { crmSupabase } from "../services/crmSupabase.js";
 
 import { attendanceSupabase, runAttendanceAuthTask } from "../services/attendanceSupabase.js";
@@ -20,10 +20,12 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [csrfToken, setCsrfToken] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const skipNextSignedInRefresh = useRef(false);
 
-  const refreshSession = async () => {
+  const refreshSession = useCallback(async () => {
     try {
       const { data } = await withTimeout(authApi.session());
+      setApiCacheScope(data.user?.id);
       setUser(data.user);
       setCsrfToken(data.csrfToken || "");
       return data;
@@ -31,7 +33,7 @@ export function AuthProvider({ children }) {
       // Route guards must always resolve, including when Supabase is offline.
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     refreshSession().catch(() => {
@@ -39,6 +41,7 @@ export function AuthProvider({ children }) {
       setIsLoading(false);
     });
     const expireSession = () => {
+      setApiCacheScope(null);
       setUser(null); setCsrfToken("");
       runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" })).catch(() => {});
     };
@@ -49,6 +52,10 @@ export function AuthProvider({ children }) {
         return;
       }
       if (["SIGNED_IN", "TOKEN_REFRESHED", "USER_UPDATED"].includes(event)) {
+        if (event === "SIGNED_IN" && skipNextSignedInRefresh.current) {
+          skipNextSignedInRefresh.current = false;
+          return;
+        }
         window.setTimeout(() => refreshSession().catch(expireSession), 0);
       }
     });
@@ -56,12 +63,22 @@ export function AuthProvider({ children }) {
       window.removeEventListener("crm:session-expired", expireSession);
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshSession]);
 
-  const login = async (credentials) => {
-    await authApi.login(credentials);
-    return refreshSession();
-  };
+  const login = useCallback(async (credentials) => {
+    skipNextSignedInRefresh.current = true;
+    try {
+      const { data } = await authApi.login(credentials);
+      setApiCacheScope(data.user?.id);
+      setUser(data.user);
+      setCsrfToken(data.csrfToken || "");
+      setIsLoading(false);
+      return data;
+    } catch (error) {
+      skipNextSignedInRefresh.current = false;
+      throw error;
+    }
+  }, []);
 
   useEffect(() => {
     if (isLoading || !("serviceWorker" in navigator)) return;
@@ -78,11 +95,12 @@ export function AuthProvider({ children }) {
     }).catch(() => {});
   }, [user?.id, isLoading]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await authApi.logout();
+    setApiCacheScope(null);
     setUser(null);
     setCsrfToken("");
-  };
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -93,7 +111,7 @@ export function AuthProvider({ children }) {
       login,
       logout,
     }),
-    [user, csrfToken, isLoading]
+    [user, csrfToken, isLoading, login, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

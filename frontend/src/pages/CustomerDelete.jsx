@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { FieldRows } from "./CustomerDetail.jsx";
-import { customersApi } from "../services/api.js";
+import { customersApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 
 export default function CustomerDelete() {
   const { datasetId, recordId } = useParams();
   const navigate = useNavigate();
   const { csrfToken } = useAuth();
-  const [detail, setDetail] = useState(null);
+  const detailUrl = `/datasets/${datasetId}/customers/${recordId}/`;
+  const [detail, setDetail] = useState(() => peekCachedResponse(detailUrl)?.data || null);
   const [error, setError] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    setDetail(null);
+    setDetail(peekCachedResponse(detailUrl)?.data || null);
     setError("");
     customersApi
       .detail(datasetId, recordId)
@@ -25,7 +26,7 @@ export default function CustomerDelete() {
           setError("Unable to load customer details.");
         }
       });
-  }, [datasetId, recordId]);
+  }, [datasetId, recordId, detailUrl]);
 
   const deleteCustomer = async (event) => {
     event.preventDefault();

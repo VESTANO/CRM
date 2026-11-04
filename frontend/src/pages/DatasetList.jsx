@@ -1,33 +1,79 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { datasetsApi, targetsApi } from "../services/api.js";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { datasetsApi, peekCachedResponse, targetsApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDateTime } from "../utils/formatters.js";
+import { filterDatasets } from "../utils/datasets.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
 export default function DatasetList() {
   const { user } = useAuth();
-  const [datasets, setDatasets] = useState(null);
-  const [targets, setTargets] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const datasetName = searchParams.get("name") || "";
+  const dateFrom = searchParams.get("date_from") || "";
+  const dateTo = searchParams.get("date_to") || "";
+  const [filters, setFilters] = useState({ name: datasetName, date_from: dateFrom, date_to: dateTo });
+  const [datasets, setDatasets] = useState(() => peekCachedResponse("/datasets/")?.data?.results || null);
+  const [targets, setTargets] = useState(() => peekCachedResponse("/targets/")?.data?.results || null);
   const [error, setError] = useState("");
+  const [targetsError, setTargetsError] = useState("");
   const [page, setPage] = useState(1);
   const showOwner = Boolean(user?.is_admin);
-  const pageCount = Math.ceil((datasets?.length || 0) / 5);
-  const visibleDatasets = datasets?.slice((page - 1) * 5, page * 5) || [];
+  const filteredDatasets = useMemo(() => filterDatasets(datasets || [], {
+    name: datasetName, date_from: dateFrom, date_to: dateTo,
+  }), [datasets, datasetName, dateFrom, dateTo]);
+  const filtersActive = Boolean(datasetName || dateFrom || dateTo);
+  const invalidDateRange = Boolean(filters.date_from && filters.date_to && filters.date_from > filters.date_to);
+  const pageCount = Math.ceil(filteredDatasets.length / 5);
+  const currentPage = Math.min(page, Math.max(pageCount, 1));
+  const visibleDatasets = filteredDatasets.slice((currentPage - 1) * 5, currentPage * 5);
 
   const load = useCallback(() => {
-    Promise.all([datasetsApi.list(), targetsApi.list()])
-      .then(([datasetsResponse, targetsResponse]) => {
-        setDatasets(datasetsResponse.data.results);
-        setTargets(targetsResponse.data.results);
-      })
+    setError("");
+    setTargetsError("");
+    const lists = datasetsApi.list()
+      .then(({ data }) => setDatasets(data.results))
       .catch(() => setError("Unable to load customer lists."));
+    const monthlyTargets = targetsApi.list()
+      .then(({ data }) => setTargets(data.results))
+      .catch(() => setTargetsError("Unable to load monthly targets."));
+    return Promise.allSettled([lists, monthlyTargets]);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  if (error) {
+  useEffect(() => {
+    setFilters({ name: datasetName, date_from: dateFrom, date_to: dateTo });
+    setPage(1);
+  }, [datasetName, dateFrom, dateTo]);
+
+  const changeFilter = (event) => {
+    setFilters((current) => ({ ...current, [event.target.name]: event.target.value }));
+  };
+
+  const applyFilters = (event) => {
+    event.preventDefault();
+    if (invalidDateRange) return;
+    const params = new URLSearchParams(searchParams);
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value.trim()) params.set(key, value.trim());
+      else params.delete(key);
+    });
+    params.delete("page");
+    setPage(1);
+    setSearchParams(params);
+  };
+
+  const clearFilters = () => {
+    const params = new URLSearchParams(searchParams);
+    ["name", "date_from", "date_to", "page"].forEach((key) => params.delete(key));
+    setFilters({ name: "", date_from: "", date_to: "" });
+    setPage(1);
+    setSearchParams(params);
+  };
+
+  if (error && datasets === null) {
     return <RequestError message={error} onRetry={load} />;
   }
 
@@ -47,6 +93,9 @@ export default function DatasetList() {
         </div>
         <Link className="btn btn-primary" to="/import"><i className="bi bi-plus-lg me-1" />Import Excel</Link>
       </div>
+
+      {error && <div className="alert alert-warning" role="status">{error} Showing the most recent available customer lists.</div>}
+      {targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={load}>Retry</button></div>}
 
       {targets?.length > 0 && (
         <section className="panel mb-4">
@@ -83,9 +132,34 @@ export default function DatasetList() {
         </section>
       )}
 
+      <form className="panel mb-4" aria-labelledby="dataset-filters-heading" onSubmit={applyFilters}>
+        <h2 className="h5 mb-1" id="dataset-filters-heading">Filter Datasets</h2>
+        <p className="text-secondary small mb-3">Filter by upload date and dataset name.</p>
+        <div className="row g-3 align-items-end">
+          <div className="col-sm-12 col-lg-4">
+            <label className="form-label" htmlFor="dataset-name-filter">Dataset Name</label>
+            <input className="form-control" id="dataset-name-filter" type="search" name="name" value={filters.name} onChange={changeFilter} placeholder="Search dataset names..." />
+          </div>
+          <div className="col-sm-6 col-lg-3">
+            <label className="form-label" htmlFor="dataset-date-from">From Date</label>
+            <input className="form-control" id="dataset-date-from" type="date" name="date_from" value={filters.date_from} max={filters.date_to || undefined} onChange={changeFilter} aria-invalid={invalidDateRange || undefined} aria-describedby={invalidDateRange ? "dataset-filter-date-error" : undefined} />
+          </div>
+          <div className="col-sm-6 col-lg-3">
+            <label className="form-label" htmlFor="dataset-date-to">To Date</label>
+            <input className="form-control" id="dataset-date-to" type="date" name="date_to" value={filters.date_to} min={filters.date_from || undefined} onChange={changeFilter} aria-invalid={invalidDateRange || undefined} aria-describedby={invalidDateRange ? "dataset-filter-date-error" : undefined} />
+          </div>
+          <div className="col-lg-2 d-flex flex-wrap gap-2">
+            <button className="btn btn-primary" type="submit" disabled={invalidDateRange}>Filter</button>
+            <button className="btn btn-outline-secondary" type="button" onClick={clearFilters}>Clear</button>
+          </div>
+        </div>
+        {invalidDateRange && <p className="text-danger small mb-0 mt-3" id="dataset-filter-date-error" role="alert">From Date must be on or before To Date.</p>}
+        {datasets !== null && <p className="text-secondary small mb-0 mt-3" role="status">Showing {filteredDatasets.length} of {datasets.length} datasets.</p>}
+      </form>
+
       {datasets === null ? (
         <LoadingPanel label="Loading customer lists" />
-      ) : datasets.length ? (
+      ) : filteredDatasets.length ? (
         <>
           <div className="table-responsive panel p-0 responsive-table">
             <table className="table table-hover align-middle mb-0">
@@ -128,18 +202,24 @@ export default function DatasetList() {
             </table>
           </div>
         </>
+      ) : filtersActive && datasets.length > 0 ? (
+        <div className="empty-state">
+          <h2 className="h5">No matching datasets</h2>
+          <p className="text-secondary mb-3">Try a different dataset name or upload date range.</p>
+          <button className="btn btn-outline-primary" type="button" onClick={clearFilters}>Clear Filters</button>
+        </div>
       ) : (
         <div className="empty-state">
           <p className="mb-3">No customer datasets have been created yet.</p>
           <Link className="btn btn-primary" to="/import">Import Excel</Link>
         </div>
       )}
-      {datasets?.length > 5 && (
+      {filteredDatasets.length > 5 && (
         <div className="d-flex justify-content-between align-items-center mt-3">
-          <span className="text-secondary small">Page {page} of {pageCount}</span>
+          <span className="text-secondary small">Page {currentPage} of {pageCount}</span>
           <div className="d-flex gap-2">
-            <button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => setPage((current) => current - 1)} disabled={page <= 1}>Previous</button>
-            <button className="btn btn-outline-primary btn-sm" type="button" onClick={() => setPage((current) => current + 1)} disabled={page >= pageCount}>Next</button>
+            <button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => setPage(currentPage - 1)} disabled={currentPage <= 1}>Previous</button>
+            <button className="btn btn-outline-primary btn-sm" type="button" onClick={() => setPage(currentPage + 1)} disabled={currentPage >= pageCount}>Next</button>
           </div>
         </div>
       )}

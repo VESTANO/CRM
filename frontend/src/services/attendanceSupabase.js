@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { createReadCache } from "./readCache.js";
 
 export const ATTENDANCE_SUPABASE_URL = "https://lorrfeyiqgdfxdjqnpmn.supabase.co";
 export const ATTENDANCE_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Mh4xVEoQFpooPU0uRblTow_AQmf0YiG";
@@ -10,6 +11,25 @@ export const attendanceSupabase = createClient(
 );
 
 const readError = (error, fallback) => error?.message || fallback;
+const attendanceReads = createReadCache();
+export function clearAttendanceReadCache() { attendanceReads.clear(); }
+const attendanceReadKey = (type, profile, filters = {}) => JSON.stringify([
+  type, profile?.id, profile?.role, profile?.employeeId,
+  filters.from || "", filters.to || "", filters.userId || "", filters.employeeId || "", filters.status || "",
+]);
+attendanceSupabase.auth.onAuthStateChange((event) => {
+  if (event === "SIGNED_OUT") attendanceReads.clear();
+});
+
+export function fetchAttendanceEmployees(profile) {
+  if (!profile?.id) return Promise.reject(new Error("Sign in to the attendance system first."));
+  if (!isAttendanceAdmin(profile)) return Promise.resolve([profile]);
+  return attendanceReads.read(attendanceReadKey("employees", profile), async () => {
+    const { data, error } = await attendanceSupabase.from("profiles").select("*").order("name");
+    if (error) throw new Error(readError(error, "Unable to load attendance employees."));
+    return (data || []).map(mapProfile);
+  });
+}
 
 export async function resolveAttendanceProfile(session) {
   if (!session?.user?.id) return null;
@@ -52,28 +72,32 @@ export async function verifyAttendanceRead(profile) {
   return { allowed: true, message: "Attendance records are available under the existing Supabase policies." };
 }
 
-export async function fetchLiveAttendance({ from = "", to = "", userId = "", profile }) {
+export function fetchLiveAttendance(filters) {
+  if (!filters.profile?.id) return Promise.reject(new Error("Sign in to the attendance system first."));
+  return attendanceReads.read(attendanceReadKey("attendance", filters.profile, filters), () => loadLiveAttendance(filters));
+}
+
+async function loadLiveAttendance({ from = "", to = "", userId = "", profile }) {
   if (!profile?.id) throw new Error("Sign in to the attendance system first.");
   let query = attendanceSupabase.from("attendance_records").select("*").order("punched_at", { ascending: false });
   if (isAttendanceAdmin(profile) && userId) query = query.eq("user_id", userId);
   if (!isAttendanceAdmin(profile)) query = query.eq("user_id", profile.id);
   if (from) query = query.gte("punched_at", `${from}T00:00:00+05:30`);
   if (to) query = query.lte("punched_at", `${to}T23:59:59+05:30`);
-  const { data: records, error } = await query;
+  const admin = isAttendanceAdmin(profile);
+  const [recordResponse, employees, deviceResponse, mappingResponse] = await Promise.all([
+    query,
+    fetchAttendanceEmployees(profile),
+    admin ? attendanceSupabase.from("attendance_devices").select("*").order("last_seen", { ascending: false }) : { data: [] },
+    admin ? attendanceSupabase.from("attendance_mappings").select("*") : { data: [] },
+  ]);
+  const error = recordResponse.error || deviceResponse.error || mappingResponse.error;
   if (error) throw new Error(readError(error, "Unable to load live attendance records."));
-
-  let employees = [profile];
-  let devices = [];
+  const records = recordResponse.data || [];
+  const devices = deviceResponse.data || [];
   let punchCodes = [];
-  if (isAttendanceAdmin(profile)) {
-    const [{ data: profiles, error: profileError }, { data: deviceRows, error: deviceError }, { data: mappings, error: mappingError }] = await Promise.all([
-      attendanceSupabase.from("profiles").select("*").order("name"),
-      attendanceSupabase.from("attendance_devices").select("*").order("last_seen", { ascending: false }),
-      attendanceSupabase.from("attendance_mappings").select("*"),
-    ]);
-    if (profileError || deviceError || mappingError) throw new Error(readError(profileError || deviceError || mappingError, "Unable to load live attendance permissions and mappings."));
-    employees = profiles.map(mapProfile);
-    devices = deviceRows || [];
+  if (admin) {
+    const mappings = mappingResponse.data || [];
     const names = new Map(employees.map((item) => [item.id, item.name]));
     const mappingByCode = new Map((mappings || []).map((item) => [String(item.punch_code), item.user_id]));
     punchCodes = [...new Set((records || []).map((record) => String(record.punch_code)))].map((punchCode) => ({
@@ -97,7 +121,12 @@ export async function fetchLiveAttendance({ from = "", to = "", userId = "", pro
   };
 }
 
-export async function fetchLiveTimesheet({ from = "", to = "", status = "", employeeId = "", profile }) {
+export function fetchLiveTimesheet(filters) {
+  if (!filters.profile?.id) return Promise.reject(new Error("Sign in to the attendance system first."));
+  return attendanceReads.read(attendanceReadKey("timesheets", filters.profile, filters), () => loadLiveTimesheet(filters));
+}
+
+async function loadLiveTimesheet({ from = "", to = "", status = "", employeeId = "", profile }) {
   if (!profile?.id) throw new Error("Sign in to the attendance system first.");
   let query = attendanceSupabase.from("timesheet_entries").select("*").order("work_date", { ascending: false }).order("created_at", { ascending: false });
   if (status) query = query.eq("approval_status", status);
@@ -129,17 +158,19 @@ export async function saveLiveTimesheetEntry(entry) {
   const params = entry.id ? { p_id: entry.id, ...entryRpcValues(entry) } : entryRpcValues(entry);
   const { data, error } = await attendanceSupabase.rpc(rpc, params);
   if (error) throw new Error(readError(error, "Unable to save the timesheet entry."));
+  attendanceReads.clear();
   return data;
 }
 
 export async function deleteLiveTimesheetEntry(id) {
   const { error } = await attendanceSupabase.rpc("delete_timesheet_entry", { p_id: id });
-  if (!error) return true;
+  if (!error) { attendanceReads.clear(); return true; }
   const { error: directError } = await attendanceSupabase
     .from("timesheet_entries")
     .delete()
     .eq("id", id);
   if (directError) throw new Error(readError(directError, "Unable to delete the timesheet entry."));
+  attendanceReads.clear();
   return true;
 }
 
@@ -150,6 +181,7 @@ export async function reviewLiveTimesheetEntry(id, approvalStatus, approvalComme
     p_approval_comment: approvalComment,
   });
   if (error) throw new Error(readError(error, "Unable to review the timesheet entry."));
+  attendanceReads.clear();
   return mapTimesheetEntry(Array.isArray(data) ? data[0] : data);
 }
 
@@ -166,6 +198,7 @@ export async function manageLiveEmployee(action, body = {}) {
     throw new Error(message);
   }
   if (data?.error) throw new Error(data.error);
+  attendanceReads.clear();
   return data;
 }
 
@@ -175,10 +208,16 @@ export async function saveLiveAttendanceMapping(punchCode, userId) {
     p_user_id: userId,
   });
   if (error) throw new Error(readError(error, "Unable to link the attendance punch code."));
+  attendanceReads.clear();
   return matched;
 }
 
-export async function fetchAttendanceDashboardTotals(profile) {
+export function fetchAttendanceDashboardTotals(profile) {
+  if (!profile?.id) return Promise.reject(new Error("Sign in to the attendance system first."));
+  return attendanceReads.read(attendanceReadKey("totals", profile), () => loadAttendanceDashboardTotals(profile));
+}
+
+async function loadAttendanceDashboardTotals(profile) {
   if (!profile?.id) throw new Error("Sign in to the attendance system first.");
   const { data, error } = await attendanceSupabase.rpc("get_dashboard_totals");
   if (error) throw new Error(readError(error, "Unable to load attendance dashboard totals."));
@@ -194,6 +233,7 @@ export async function fetchAttendanceDashboardTotals(profile) {
 export async function updateAttendanceProfileImage(profileImage) {
   const { data, error } = await attendanceSupabase.rpc("update_profile_image", { p_profile_image: profileImage || null });
   if (error) throw new Error(readError(error, "Unable to save the profile image."));
+  attendanceReads.clear();
   return Array.isArray(data) ? data[0] : data;
 }
 

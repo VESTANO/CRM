@@ -1,9 +1,13 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Offcanvas } from "bootstrap";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
-import { callbacksApi, tasksApi, warmNavigationData } from "../services/api.js";
+import { useTaskNotifications } from "../hooks/useTaskNotifications.js";
+import TaskNotificationAlerts from "../components/TaskNotificationAlerts.jsx";
+import { callbacksApi, warmNavigationData } from "../services/api.js";
+import { prefetchNavigation } from "../services/navigationPrefetch.js";
+import { RouteLoadingIndicator } from "../components/RequestState.jsx";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -17,16 +21,21 @@ const navItems = [
   },
   { to: "/sales", label: "Sales", icon: "bi-briefcase" },
   {
+    to: "/attendance",
     label: "Attendance",
     icon: "bi-calendar-check",
     children: [
       { to: "/attendance/overview", label: "Overview", icon: "bi-speedometer2" },
-      { to: "/attendance/timesheet", label: "My Timesheet", icon: "bi-clock-history" },
-      { to: "/attendance/profile", label: "My Profile", icon: "bi-person-circle" },
-      { to: "/attendance", label: "Attendance", icon: "bi-calendar-check" },
-      { to: "/attendance/approvals", label: "Approvals", icon: "bi-check2-square" },
       { to: "/attendance/overtime", label: "OT Approvals", icon: "bi-clock-history" },
       { to: "/attendance/employees", label: "Employees", icon: "bi-people" },
+    ],
+  },
+  {
+    to: "/attendance/timesheet",
+    label: "My Timesheet",
+    icon: "bi-clock-history",
+    children: [
+      { to: "/attendance/approvals", label: "Approvals", icon: "bi-check2-square" },
     ],
   },
   { to: "/callbacks", label: "Callbacks", icon: "bi-telephone-forward" },
@@ -40,56 +49,22 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const { profile: attendanceProfile, isLoading: attendanceAuthLoading } = useAttendanceAuth();
   const location = useLocation();
-  const [pendingTaskCount, setPendingTaskCount] = useState(0);
+  const { unreadCount: notificationCount } = useTaskNotifications();
   const [todayCallbackCount, setTodayCallbackCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
   const roleLabel = user?.is_admin ? "Admin" : "User";
   const isDashboard = location.pathname === "/dashboard" || location.pathname === "/";
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadPendingTasks = () => {
-      tasksApi.list()
-        .then(({ data }) => {
-          if (!isMounted) return;
-          setPendingTaskCount(data.results.filter((task) => task.status === "pending").length);
-        })
-        .catch(() => {
-          if (isMounted) setPendingTaskCount(0);
-        });
-    };
-
-    // These badges are helpful, but they should not compete with the first
-    // screen's data request.  Defer them slightly so navigation paints first.
-    const firstLoadTimer = window.setTimeout(loadPendingTasks, 400);
-    const intervalId = window.setInterval(loadPendingTasks, 30000);
-    window.addEventListener("crm:tasks-updated", loadPendingTasks);
-    window.addEventListener("focus", loadPendingTasks);
-
+    const controller = new AbortController();
+    const warmTimer = window.setTimeout(() => {
+      warmNavigationData(Boolean(user?.is_admin), { signal: controller.signal });
+    }, 2500);
     return () => {
-      isMounted = false;
-      window.clearTimeout(firstLoadTimer);
-      window.clearInterval(intervalId);
-      window.removeEventListener("crm:tasks-updated", loadPendingTasks);
-      window.removeEventListener("focus", loadPendingTasks);
+      window.clearTimeout(warmTimer);
+      controller.abort();
     };
-  }, []);
-
-  useEffect(() => {
-    // Do this only once the visible route has had a chance to load.
-    const warm = () => {
-      warmNavigationData(Boolean(user?.is_admin));
-      if (user?.is_admin) import("../pages/AdminPanel.jsx");
-    };
-    const idleId = "requestIdleCallback" in window
-      ? window.requestIdleCallback(warm, { timeout: 1800 })
-      : window.setTimeout(warm, 900);
-    return () => {
-      if ("cancelIdleCallback" in window) window.cancelIdleCallback(idleId);
-      else window.clearTimeout(idleId);
-    };
-  }, [user?.is_admin]);
+  }, [user?.id, user?.is_admin]);
 
   useEffect(() => {
     let isMounted = true;
@@ -104,7 +79,7 @@ export default function AppLayout() {
         });
     };
 
-    const firstLoadTimer = window.setTimeout(loadTodayCallbacks, 500);
+    const firstLoadTimer = window.setTimeout(loadTodayCallbacks, 1600);
     const intervalId = window.setInterval(loadTodayCallbacks, 30000);
     window.addEventListener("crm:callbacks-updated", loadTodayCallbacks);
     window.addEventListener("focus", loadTodayCallbacks);
@@ -120,6 +95,7 @@ export default function AppLayout() {
 
   return (
     <>
+      <TaskNotificationAlerts />
       <header className="mobile-topbar d-lg-none">
         <button
           className="mobile-menu-button"
@@ -138,12 +114,12 @@ export default function AppLayout() {
       </header>
 
       <aside className="app-sidebar d-none d-lg-flex">
-        <div>
-          <NavLink className="app-brand" to="/dashboard">
-            <span className="brand-mark">V</span>
-            <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
-          </NavLink>
-          <Navigation user={user} attendanceProfile={attendanceProfile} attendanceAuthLoading={attendanceAuthLoading} pendingTaskCount={pendingTaskCount} todayCallbackCount={todayCallbackCount} />
+        <NavLink className="app-brand" to="/dashboard">
+          <span className="brand-mark">V</span>
+          <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
+        </NavLink>
+        <div className="sidebar-menu-scroll">
+          <Navigation user={user} attendanceProfile={attendanceProfile} attendanceAuthLoading={attendanceAuthLoading} notificationCount={notificationCount} todayCallbackCount={todayCallbackCount} />
         </div>
         <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} />
       </aside>
@@ -154,7 +130,9 @@ export default function AppLayout() {
           <button type="button" className="btn-close" data-bs-dismiss="offcanvas" aria-label="Close" />
         </div>
         <div className="offcanvas-body d-flex flex-column">
-          <Navigation user={user} mobile attendanceProfile={attendanceProfile} attendanceAuthLoading={attendanceAuthLoading} pendingTaskCount={pendingTaskCount} todayCallbackCount={todayCallbackCount} />
+          <div className="sidebar-menu-scroll">
+            <Navigation user={user} mobile attendanceProfile={attendanceProfile} attendanceAuthLoading={attendanceAuthLoading} notificationCount={notificationCount} todayCallbackCount={todayCallbackCount} />
+          </div>
           <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} mobile />
         </div>
       </div>
@@ -172,22 +150,26 @@ export default function AppLayout() {
           </div>
         </div>
         <div className="content-wrap">
-          <Outlet />
+          <Suspense fallback={<RouteLoadingIndicator />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </>
   );
 }
 
-function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoading, pendingTaskCount = 0, todayCallbackCount = 0 }) {
+function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoading, notificationCount = 0, todayCallbackCount = 0 }) {
   const navigate = useNavigate();
   const location = useLocation();
   const customerRouteActive = location.pathname.startsWith("/datasets") || location.pathname.startsWith("/customers");
-  const attendanceRouteActive = location.pathname.startsWith("/attendance");
-  const attendanceRole = String(attendanceProfile?.role || "").trim().toLowerCase();
-  const attendanceAdmin = ["admin", "super_admin"].includes(attendanceRole);
+  const timesheetRouteActive = ["/attendance/timesheet", "/attendance/approvals"].includes(location.pathname);
+  const attendanceRouteActive = location.pathname.startsWith("/attendance") && !timesheetRouteActive;
   const [customersOpen, setCustomersOpen] = useState(customerRouteActive);
   const [attendanceOpen, setAttendanceOpen] = useState(attendanceRouteActive);
+  const [timesheetOpen, setTimesheetOpen] = useState(timesheetRouteActive);
+
+  useEffect(() => { setTimesheetOpen(timesheetRouteActive); }, [timesheetRouteActive]);
 
   useEffect(() => {
     setCustomersOpen(customerRouteActive);
@@ -216,28 +198,50 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
         if (item.children) {
           const submenuId = mobile ? "mobile-customer-submenu" : "desktop-customer-submenu";
           const isAttendanceMenu = item.label === "Attendance";
+          const isTimesheetMenu = item.label === "My Timesheet";
           if (isAttendanceMenu && !attendanceProfile && !attendanceAuthLoading) {
             return (
-              <NavLink
+              <SidebarNavLink
+                user={user}
                 className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
                 key={item.label}
-                to="/attendance/overview"
-                onClick={(event) => handleNavigation(event, "/attendance/overview")}
+                to="/attendance"
+                onClick={(event) => handleNavigation(event, "/attendance")}
               >
                 <i className={`bi ${item.icon}`} />
                 <span>Attendance</span>
-              </NavLink>
+              </SidebarNavLink>
             );
           }
-          const menuOpen = isAttendanceMenu ? attendanceOpen : customersOpen;
-          const setMenuOpen = isAttendanceMenu ? setAttendanceOpen : setCustomersOpen;
-          const menuActive = isAttendanceMenu ? attendanceRouteActive : customerRouteActive;
+          const menuOpen = isAttendanceMenu ? attendanceOpen : isTimesheetMenu ? timesheetOpen : customersOpen;
+          const setMenuOpen = isAttendanceMenu ? setAttendanceOpen : isTimesheetMenu ? setTimesheetOpen : setCustomersOpen;
+          const menuActive = isAttendanceMenu ? attendanceRouteActive : isTimesheetMenu ? timesheetRouteActive : customerRouteActive;
           const resolvedSubmenuId = isAttendanceMenu
             ? (mobile ? "mobile-attendance-submenu" : "desktop-attendance-submenu")
-            : submenuId;
+            : isTimesheetMenu ? (mobile ? "mobile-timesheet-submenu" : "desktop-timesheet-submenu") : submenuId;
           return (
             <div className="sidebar-menu-group" key={item.label}>
-              <button
+              {item.to ? <div className="sidebar-attendance-row position-relative">
+                <SidebarNavLink
+                  user={user}
+                  to={item.to}
+                  className={`sidebar-link sidebar-menu-toggle pe-5 ${menuActive ? "active" : ""}`}
+                  onClick={(event) => { setMenuOpen(true); handleNavigation(event, item.to); }}
+                >
+                  <i className={`bi ${item.icon}`} />
+                  <span>{item.label}</span>
+                </SidebarNavLink>
+                <button
+                  className="sidebar-attendance-toggle"
+                  type="button"
+                  aria-label={`Toggle ${item.label} menu`}
+                  aria-expanded={menuOpen}
+                  aria-controls={resolvedSubmenuId}
+                  onClick={() => setMenuOpen((open) => !open)}
+                >
+                  <i className={`bi bi-chevron-${menuOpen ? "up" : "down"} sidebar-menu-chevron`} aria-hidden="true" />
+                </button>
+              </div> : <button
                 className={`sidebar-link sidebar-menu-toggle ${menuActive ? "active" : ""}`}
                 type="button"
                 aria-expanded={menuOpen}
@@ -247,11 +251,12 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                 <i className={`bi ${item.icon}`} />
                 <span>{item.label}</span>
                 <i className={`bi bi-chevron-${menuOpen ? "up" : "down"} ms-auto sidebar-menu-chevron`} aria-hidden="true" />
-              </button>
+              </button>}
               {menuOpen && (
                 <div className="sidebar-submenu" id={resolvedSubmenuId}>
-                  {item.children.filter((child) => !isAttendanceMenu || child.to !== "/attendance/approvals" || attendanceAdmin).map((child) => (
-                    <NavLink
+                  {item.children.map((child) => (
+                    <SidebarNavLink
+                      user={user}
                       className={({ isActive }) => `sidebar-link sidebar-sublink ${isActive ? "active" : ""}`}
                       key={child.to}
                       to={child.to}
@@ -260,7 +265,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                     >
                       <i className={`bi ${child.icon}`} />
                       <span>{child.label}</span>
-                    </NavLink>
+                    </SidebarNavLink>
                   ))}
                 </div>
               )}
@@ -274,10 +279,11 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
             <span>{item.label}</span>
           </span>
         ) : (
-          <NavLink
+          <SidebarNavLink
+            user={user}
             key={item.to}
             className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""} ${
-              (item.to === "/notifications" && pendingTaskCount > 0) ||
+              (item.to === "/notifications" && notificationCount > 0) ||
               (item.to === "/callbacks" && todayCallbackCount > 0)
                 ? "has-alert"
                 : ""
@@ -287,29 +293,49 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           >
             <i className={`bi ${item.icon}`} />
             <span>{item.label}</span>
-            {item.to === "/notifications" && pendingTaskCount > 0 && (
-              <span className="sidebar-alert-badge ms-auto">{pendingTaskCount}</span>
+            {item.to === "/notifications" && notificationCount > 0 && (
+              <span className="sidebar-alert-badge ms-auto" aria-label={`${notificationCount} unread task notifications`}>{notificationCount}</span>
             )}
             {item.to === "/callbacks" && todayCallbackCount > 0 && (
               <span className="sidebar-alert-badge ms-auto" aria-label={`${todayCallbackCount} callbacks today`}>
                 {todayCallbackCount}
               </span>
             )}
-          </NavLink>
+          </SidebarNavLink>
         );
       })}
       {user?.is_admin && (
-        <NavLink
+        <SidebarNavLink
+          user={user}
           className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
           to="/admin-panel"
           onClick={(event) => handleNavigation(event, "/admin-panel")}
         >
           <i className="bi bi-shield-lock" />
           <span>Admin Panel</span>
-        </NavLink>
+        </SidebarNavLink>
       )}
     </nav>
   );
+}
+
+function SidebarNavLink({ user, to, ...props }) {
+  const timer = useRef(null);
+  const cancel = () => {
+    window.clearTimeout(timer.current);
+    timer.current = null;
+  };
+  const preload = () => {
+    cancel();
+    void prefetchNavigation(to, user);
+  };
+  const schedule = () => {
+    cancel();
+    timer.current = window.setTimeout(preload, 100);
+  };
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  return <NavLink {...props} to={to} onPointerEnter={schedule} onPointerLeave={cancel} onFocus={schedule} onBlur={cancel} onPointerDown={preload} />;
 }
 
 function UserPanel({ user, initial, roleLabel, logout, mobile = false }) {

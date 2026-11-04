@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
+import ImagePreviewDialog from "../components/ImagePreviewDialog.jsx";
 import { Link, useParams } from "react-router-dom";
-import { salesApi } from "../services/api.js";
+import { peekCachedResponse, salesApi } from "../services/api.js";
 import { formatDate, formatCurrency } from "../utils/formatters.js";
 
 export default function VisitDetail() {
   const { visitId } = useParams();
-  const [visit, setVisit] = useState(null);
+  const [visit, setVisit] = useState(() => peekCachedResponse(`/sales/visits/${visitId}/`)?.data || null);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState(null);
 
   useEffect(() => {
     salesApi.detail(visitId)
@@ -70,10 +72,10 @@ export default function VisitDetail() {
               {visit.images?.length ? (
                 <div className="visit-image-gallery">
                   {visit.images.map((image, index) => (
-                    <a className="visit-image-item" href={image.url} target="_blank" rel="noreferrer" key={image.id}>
-                      <img src={image.url} alt={image.original_name || `Visit image ${index + 1}`} />
+                    <button type="button" className="visit-image-item task-photo-open" key={image.id} onClick={() => setPreview({ images: visit.images.map((photo, item) => ({ ...photo, label: `Visit image ${item + 1}` })), index })} aria-label={`Open visit image ${index + 1}`}>
+                      <img src={image.thumbnail_url || image.url} alt={image.original_name || `Visit image ${index + 1}`} loading="lazy" decoding="async" width="160" height="120" />
                       <span>{image.original_name}</span>
-                    </a>
+                    </button>
                   ))}
                 </div>
               ) : (
@@ -83,6 +85,7 @@ export default function VisitDetail() {
           </section>
         </div>
       </div>
+      {preview !== null && <ImagePreviewDialog images={preview.images} initialIndex={preview.index} onClose={() => setPreview(null)} />}
       <div className="d-flex flex-wrap gap-2 mt-4">
         <Link className="btn btn-primary" to={`/sales/visits/${visit.id}/edit`}>Edit</Link>
         <Link className="btn btn-outline-danger" to={`/sales/visits/${visit.id}/delete`}>Delete</Link>

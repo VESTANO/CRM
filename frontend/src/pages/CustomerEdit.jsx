@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CustomerChangeHistory, FieldRows } from "./CustomerDetail.jsx";
-import { customersApi } from "../services/api.js";
+import { customersApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
 
@@ -9,8 +9,14 @@ export default function CustomerEdit() {
   const { datasetId, recordId } = useParams();
   const navigate = useNavigate();
   const { csrfToken } = useAuth();
-  const [detail, setDetail] = useState(null);
-  const [form, setForm] = useState({ response: "", callback_date: "", note: "" });
+  const detailUrl = `/datasets/${datasetId}/customers/${recordId}/`;
+  const cachedDetail = peekCachedResponse(detailUrl)?.data || null;
+  const [detail, setDetail] = useState(cachedDetail);
+  const [form, setForm] = useState(() => cachedDetail ? {
+    response: cachedDetail.record.response,
+    callback_date: cachedDetail.record.callback_date || "",
+    note: cachedDetail.record.note || "",
+  } : { response: "", callback_date: "", note: "" });
   const [errors, setErrors] = useState({});
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,7 +25,7 @@ export default function CustomerEdit() {
   const [callbackDateError, setCallbackDateError] = useState("");
 
   useEffect(() => {
-    setDetail(null);
+    setDetail(peekCachedResponse(detailUrl)?.data || null);
     setError("");
     customersApi
       .detail(datasetId, recordId)
@@ -38,7 +44,7 @@ export default function CustomerEdit() {
           setError("Unable to load customer details.");
         }
       });
-  }, [datasetId, recordId]);
+  }, [datasetId, recordId, detailUrl]);
 
   const submit = async (event) => {
     event.preventDefault();

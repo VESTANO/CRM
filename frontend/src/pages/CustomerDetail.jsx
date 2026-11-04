@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { customersApi } from "../services/api.js";
+import { customersApi, peekCachedResponse } from "../services/api.js";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
 import TimedAlert from "../components/TimedAlert.jsx";
 
@@ -8,11 +8,12 @@ export default function CustomerDetail() {
   const { datasetId, recordId, id } = useParams();
   const customerId = recordId || id;
   const location = useLocation();
-  const [detail, setDetail] = useState(null);
+  const detailUrl = datasetId ? `/datasets/${datasetId}/customers/${customerId}/` : `/customers/${customerId}/`;
+  const [detail, setDetail] = useState(() => peekCachedResponse(detailUrl)?.data || null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setDetail(null);
+    setDetail(peekCachedResponse(detailUrl)?.data || null);
     setError("");
     (datasetId ? customersApi.detail(datasetId, customerId) : customersApi.detailById(customerId))
       .then(({ data }) => setDetail(data))
@@ -23,7 +24,7 @@ export default function CustomerDetail() {
           setError("Unable to load customer details.");
         }
       });
-  }, [datasetId, customerId]);
+  }, [datasetId, customerId, detailUrl]);
 
   if (error) {
     return <div className="alert alert-danger">{error}</div>;

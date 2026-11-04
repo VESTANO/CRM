@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { dashboardApi, datasetsApi, targetsApi } from "../services/api.js";
+import { dashboardApi, datasetsApi, peekCachedResponse, targetsApi } from "../services/api.js";
 import { formatCurrency, formatDate } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
@@ -15,13 +15,18 @@ const responseIcons = {
 
 export default function Dashboard() {
   const location = useLocation();
-  const [dashboard, setDashboard] = useState(() => location.state?.preloadedDashboard || null);
+  const [dashboard, setDashboard] = useState(() => (
+    location.state?.preloadedDashboard || peekCachedResponse("/dashboard/")?.data || null
+  ));
   const [error, setError] = useState("");
+  const [targetsError, setTargetsError] = useState("");
   const [allDatasets, setAllDatasets] = useState(null);
   const [datasetPage, setDatasetPage] = useState(1);
   const [datasetError, setDatasetError] = useState("");
   const [loadingDatasets, setLoadingDatasets] = useState(false);
-  const [targets, setTargets] = useState(() => location.state?.preloadedTargets || null);
+  const [targets, setTargets] = useState(() => (
+    location.state?.preloadedTargets || peekCachedResponse("/targets/")?.data?.results || null
+  ));
   const datasetsExpanded = allDatasets !== null;
   const datasets = datasetsExpanded ? allDatasets : dashboard?.recentDatasets || [];
   const pageCount = Math.ceil(datasets.length / 5);
@@ -30,12 +35,15 @@ export default function Dashboard() {
     : datasets;
 
   const load = useCallback(() => {
-    Promise.all([dashboardApi.summary(), targetsApi.list()])
-      .then(([dashboardResponse, targetsResponse]) => {
-        setDashboard(dashboardResponse.data);
-        setTargets(targetsResponse.data.results);
-      })
+    setError("");
+    setTargetsError("");
+    const summary = dashboardApi.summary()
+      .then(({ data }) => setDashboard(data))
       .catch(() => setError("Unable to load dashboard data."));
+    const monthlyTargets = targetsApi.list()
+      .then(({ data }) => setTargets(data.results))
+      .catch(() => setTargetsError("Unable to load monthly targets."));
+    return Promise.allSettled([summary, monthlyTargets]);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -60,7 +68,7 @@ export default function Dashboard() {
     setDatasetError("");
   };
 
-  if (error) return <RequestError message={error} onRetry={load} />;
+  if (error && !dashboard) return <RequestError message={error} onRetry={load} />;
 
   if (!dashboard) {
     return <LoadingPanel label="Loading dashboard" />;
@@ -80,6 +88,8 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {error && <div className="alert alert-warning" role="status">{error} Showing the most recent available dashboard.</div>}
+
       <div className="metric-grid mb-4">
         <MetricCard icon="bi-folder2-open" label="Datasets" value={dashboard.totalDatasets} />
         <MetricCard icon="bi-people" label="Total Customers" value={dashboard.totalCustomers} />
@@ -94,6 +104,8 @@ export default function Dashboard() {
       </div>
 
       <PaymentSummarySection payments={dashboard.payments} />
+
+      {targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={load}>Retry</button></div>}
 
       {targets?.length > 0 && (
         <section className="panel mb-4">

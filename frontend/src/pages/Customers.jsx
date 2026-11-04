@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { customersApi } from "../services/api.js";
+import { customersApi, peekCachedResponse } from "../services/api.js";
 import { formatDate } from "../utils/formatters.js";
 
 const CLIENT_NAME_LABELS = new Set([
@@ -32,7 +32,9 @@ export default function Customers() {
   const status = searchParams.get("status") || "";
   const query = searchParams.get("q") || "";
   const [searchText, setSearchText] = useState(query);
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => peekCachedResponse("/customers/", {
+    params: { page, status: status || undefined, q: query || undefined },
+  })?.data || null);
   const [error, setError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
 

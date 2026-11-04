@@ -1,5 +1,6 @@
 import { clearReminderDevice, reminderWorkerUrl } from "./reminderPush.js";
 import axios from "axios";
+import { salesRequestParams } from "../utils/sales.js";
 import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./crmSupabase.js";
 
 import { attendanceSupabase, runAttendanceAuthTask } from "./attendanceSupabase.js";
@@ -7,15 +8,21 @@ import { attendanceSupabase, runAttendanceAuthTask } from "./attendanceSupabase.
 const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
 const getCache = new Map();
+let cacheScope = "anonymous";
+const requestDiagnostics = [];
+const cacheDiagnostics = { hits: 0, misses: 0, deduplicated: 0, staleRenders: 0 };
 // Navigation should feel instant when a user returns to a CRM page. Mutations
 // use their own endpoints, while read data is refreshed after this short,
 // session-only window.
 const GET_CACHE_TTL = 120_000;
+const STALE_CACHE_TTL = 10 * 60_000;
 export const API_TIMEOUT_MS = 15_000;
 
 // XLSX is a large dependency.  It is only needed while importing or exporting a
 // workbook, so keep it out of the application shell and normal page loads.
 let xlsxModule;
+let currentUserCache = null;
+let currentUserRequest = null;
 function loadXlsx() {
   xlsxModule ??= import("xlsx");
   return xlsxModule;
@@ -42,33 +49,117 @@ function cacheKey(url, params = {}) {
     .sort(([first], [second]) => first.localeCompare(second))
     .map(([key, value]) => `${key}=${String(value)}`)
     .join("&");
-  return `${url}?${query}`;
+  return `${cacheScope}|${url}?${query}`;
+}
+
+export function setApiCacheScope(userId) {
+  const nextScope = userId ? `user:${userId}` : "anonymous";
+  if (nextScope === cacheScope) return;
+  cacheScope = nextScope;
+  getCache.clear();
+  pendingImports.clear();
+}
+
+export function clearApiCache() {
+  getCache.clear();
+}
+
+export function invalidateApiCache(...urlPrefixes) {
+  if (!urlPrefixes.length) {
+    clearApiCache();
+    return;
+  }
+  const scopedPrefix = `${cacheScope}|`;
+  for (const key of getCache.keys()) {
+    if (!key.startsWith(scopedPrefix)) continue;
+    const url = key.slice(scopedPrefix.length).split("?")[0];
+    if (urlPrefixes.some((prefix) => url.startsWith(prefix))) getCache.delete(key);
+  }
 }
 
 function cachedGet(url, config = {}, maxAge = GET_CACHE_TTL) {
   const key = cacheKey(url, config.params);
   const cached = getCache.get(key);
   const now = Date.now();
-  if (cached?.response && now - cached.createdAt < maxAge) return Promise.resolve(cached.response);
-  if (cached?.request) return cached.request;
+  if (cached?.response && now - cached.createdAt < maxAge) {
+    cacheDiagnostics.hits += 1;
+    return Promise.resolve(cached.response);
+  }
+  if (cached?.request) {
+    cacheDiagnostics.deduplicated += 1;
+    return cached.request;
+  }
+  cacheDiagnostics.misses += 1;
   const request = apiClient.get(url, config)
     .then((response) => {
       getCache.set(key, { response, createdAt: Date.now() });
       return response;
     })
     .catch((error) => {
-      getCache.delete(key);
+      // A failed background refresh must not erase safe, previously rendered
+      // data. It remains available until the stale-display window expires.
+      if (cached?.response) getCache.set(key, cached);
+      else getCache.delete(key);
       throw error;
     });
-  getCache.set(key, { request, createdAt: now });
+  getCache.set(key, { ...cached, request, requestedAt: now });
   return request;
 }
 
 // Components can render a recently fetched response synchronously on mount,
 // avoiding even a one-frame loading flash when returning to a page.
-export function peekCachedResponse(url, config = {}, maxAge = GET_CACHE_TTL) {
+export function peekCachedResponse(url, config = {}, maxAge = STALE_CACHE_TTL) {
   const cached = getCache.get(cacheKey(url, config.params));
-  return cached?.response && Date.now() - cached.createdAt < maxAge ? cached.response : null;
+  const response = cached?.response && Date.now() - cached.createdAt < maxAge ? cached.response : null;
+  if (response && Date.now() - cached.createdAt >= GET_CACHE_TTL) cacheDiagnostics.staleRenders += 1;
+  return response;
+}
+
+export function getApiPerformanceSnapshot() {
+  return {
+    scope: cacheScope,
+    cacheEntries: getCache.size,
+    cache: { ...cacheDiagnostics },
+    recentRequests: requestDiagnostics.slice(-100),
+  };
+}
+
+function invalidateForMutation(url = "") {
+  const path = String(url).split("?")[0];
+  if (path.startsWith("/auth/") || path.startsWith("/push/")) return;
+  if (path.startsWith("/import/") || path.startsWith("/datasets/")) {
+    invalidateApiCache("/dashboard/", "/datasets/", "/customers/", "/callbacks/");
+    return;
+  }
+  if (path.startsWith("/customers/") || /\/customers\//.test(path) || path.startsWith("/callbacks/")) {
+    invalidateApiCache("/dashboard/", "/datasets/", "/customers/", "/callbacks/", "/sales/clients/");
+    return;
+  }
+  if (path.startsWith("/sales/")) {
+    invalidateApiCache("/dashboard/", "/sales/", "/targets/", "/admin/targets/");
+    return;
+  }
+  if (path.startsWith("/reminders/")) { invalidateApiCache("/reminders/"); return; }
+  if (path.startsWith("/task-notifications/")) { invalidateApiCache("/task-notifications/"); return; }
+  if (path.startsWith("/tasks/") || path.startsWith("/admin/tasks/")) {
+    invalidateApiCache("/tasks/", "/admin/tasks/");
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("crm:tasks-updated"));
+    return;
+  }
+  if (path.startsWith("/admin/targets/")) {
+    invalidateApiCache("/targets/", "/dashboard/", "/datasets/", "/admin/targets/", "/admin/summary/");
+    return;
+  }
+  if (path.startsWith("/admin/users/")) {
+    invalidateApiCache("/admin/", "/datasets/", "/dashboard/", "/targets/");
+    return;
+  }
+  if (path.startsWith("/overtime/")) {
+    invalidateApiCache("/overtime/", "/reminders/");
+    return;
+  }
+  if (path.startsWith("/attendance/")) { invalidateApiCache("/attendance/"); return; }
+  clearApiCache();
 }
 
 const multipartHeaders = () => ({
@@ -78,6 +169,7 @@ const multipartHeaders = () => ({
 });
 
 apiClient.interceptors.request.use(async (config) => {
+  config.crmStartedAt = performance.now();
   config.headers.set("apikey", CRM_SUPABASE_PUBLISHABLE_KEY);
   const { data, error } = await crmSupabase.auth.getSession();
   if (error) throw error;
@@ -97,24 +189,36 @@ async function currentCrmUser() {
   if (sessionError) throw sessionError;
   const session = sessionData.session;
   if (!session?.user?.id) return null;
-  const { data: profile, error } = await crmSupabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
-  if (error) throw error;
-  if (!profile?.active) {
-    await crmSupabase.auth.signOut();
-    return null;
+  if (currentUserCache?.id === session.user.id && Date.now() - currentUserCache.createdAt < 5_000) return currentUserCache.user;
+  if (currentUserRequest?.id === session.user.id) return currentUserRequest.promise;
+  const promise = (async () => {
+    const { data: profile, error } = await crmSupabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+    if (error) throw error;
+    if (!profile?.active) {
+      await crmSupabase.auth.signOut();
+      return null;
+    }
+    const isAdmin = ["admin", "super_admin"].includes(String(profile.role || "").toLowerCase());
+    const user = {
+      id: profile.id,
+      username: profile.employee_id || profile.email || "user",
+      email: profile.email || "",
+      name: profile.name || profile.employee_id || "",
+      is_staff: isAdmin,
+      is_superuser: profile.role === "super_admin",
+      is_admin: isAdmin,
+      is_active: Boolean(profile.active),
+      date_joined: profile.created_at,
+    };
+    currentUserCache = { id: session.user.id, user, createdAt: Date.now() };
+    return user;
+  })();
+  currentUserRequest = { id: session.user.id, promise };
+  try {
+    return await promise;
+  } finally {
+    if (currentUserRequest?.promise === promise) currentUserRequest = null;
   }
-  const isAdmin = ["admin", "super_admin"].includes(String(profile.role || "").toLowerCase());
-  return {
-    id: profile.id,
-    username: profile.employee_id || profile.email || "user",
-    email: profile.email || "",
-    name: profile.name || profile.employee_id || "",
-    is_staff: isAdmin,
-    is_superuser: profile.role === "super_admin",
-    is_admin: isAdmin,
-    is_active: Boolean(profile.active),
-    date_joined: profile.created_at,
-  };
 }
 
 export const authApi = {
@@ -164,6 +268,8 @@ export const authApi = {
     const { error } = await crmSupabase.auth.signOut();
     await runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" }));
     if (error) throw error;
+    currentUserCache = null;
+    currentUserRequest = null;
     return { data: { ok: true } };
   },
 };
@@ -190,6 +296,10 @@ export const overtimeApi = {
   list: () => cachedGet("/overtime/"),
   create: (payload, csrfToken) => apiClient.post("/overtime/", payload, csrfHeaders(csrfToken)),
   review: (requestId, action, payload, csrfToken) => apiClient.post(`/overtime/${requestId}/${action}/`, payload, csrfHeaders(csrfToken)),
+};
+
+export const attendanceApi = {
+  list: (params = {}) => cachedGet("/attendance/", { params }, 15_000),
 };
 
 export const dashboardApi = {
@@ -230,10 +340,26 @@ export const datasetsApi = {
 
 apiClient.interceptors.response.use(
   (response) => {
-    if (String(response.config.method || "get").toLowerCase() !== "get") getCache.clear();
+    requestDiagnostics.push({
+      method: String(response.config.method || "get").toUpperCase(),
+      url: response.config.url,
+      status: response.status,
+      durationMs: Math.round(performance.now() - (response.config.crmStartedAt || performance.now())),
+    });
+    if (requestDiagnostics.length > 100) requestDiagnostics.splice(0, requestDiagnostics.length - 100);
+    if (String(response.config.method || "get").toLowerCase() !== "get") invalidateForMutation(response.config.url);
     return response;
   },
   async (error) => {
+    if (error.config) {
+      requestDiagnostics.push({
+        method: String(error.config.method || "get").toUpperCase(),
+        url: error.config.url,
+        status: error.response?.status || 0,
+        durationMs: Math.round(performance.now() - (error.config.crmStartedAt || performance.now())),
+      });
+      if (requestDiagnostics.length > 100) requestDiagnostics.splice(0, requestDiagnostics.length - 100);
+    }
     if (error.code === "ECONNABORTED" || /timeout/i.test(String(error.message || ""))) {
       error.response ??= { status: 408, data: { detail: "The CRM request took too long. Please retry." } };
     } else if (!error.response) {
@@ -264,7 +390,7 @@ export const customersApi = {
 };
 
 export const callbacksApi = {
-  list: (params = {}) => cachedGet("/callbacks/", { params }),
+  list: (params = {}) => cachedGet("/callbacks/", { params: { preset: "today", date: "", sort: "asc", ...params } }),
   complete: (recordId, response, csrfToken) => (
     apiClient.post(`/callbacks/${recordId}/complete/`, { response }, csrfHeaders(csrfToken))
   ),
@@ -279,8 +405,9 @@ export const importApi = {
     if (!file.name.toLowerCase().endsWith(".xlsx")) throw apiError("Upload an .xlsx workbook.");
     if (file.size > 20 * 1024 * 1024) throw apiError("The workbook must be 20 MB or smaller.");
     let workbook;
+    let XLSX;
     try {
-      const XLSX = await loadXlsx();
+      XLSX = await loadXlsx();
       workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
     } catch {
       throw apiError("The uploaded file is not a readable .xlsx workbook.");
@@ -363,8 +490,14 @@ export const remindersApi = {
 };
 
 export const tasksApi = {
-  list: () => cachedGet("/tasks/"),
-  update: (taskId, payload, csrfToken) => apiClient.patch(`/tasks/${taskId}/`, payload, csrfHeaders(csrfToken)),
+  list: ({ fresh = false } = {}) => cachedGet("/tasks/", {}, fresh ? 0 : GET_CACHE_TTL),
+  update: (taskId, payload, csrfToken) => apiClient.patch(`/tasks/${taskId}/`, payload, payload instanceof FormData ? multipartHeaders() : csrfHeaders(csrfToken)),
+};
+
+export const taskNotificationsApi = {
+  list: () => cachedGet("/task-notifications/", {}, 0),
+  markRead: (id) => apiClient.patch(`/task-notifications/${id}/`, {}),
+  markAllRead: (throughId) => apiClient.post("/task-notifications/read/", { through_id: throughId }),
 };
 
 export const targetsApi = {
@@ -372,7 +505,7 @@ export const targetsApi = {
 };
 
 export const salesApi = {
-  list: (params = {}) => cachedGet("/sales/visits/", { params }),
+  list: (params = {}) => cachedGet("/sales/visits/", { params: salesRequestParams(params) }),
   summary: () => cachedGet("/sales/summary/"),
   clients: (datasetId, query = "") => cachedGet("/sales/clients/", { params: { dataset: datasetId, q: query } }),
   detail: (visitId) => cachedGet(`/sales/visits/${visitId}/`),
@@ -390,19 +523,19 @@ export const salesApi = {
 };
 
 export const adminApi = {
-  // Administrative data must be current on every visit; it is deliberately
-  // not served from the short-lived navigation cache.
-  summary: () => apiClient.get("/admin/summary/"),
+  // Admin reads are user-scoped and mutations invalidate them immediately.
+  // A short freshness window prevents a full reload on every back-navigation.
+  summary: () => cachedGet("/admin/summary/", {}, 30_000),
   listUsers: () => cachedGet("/admin/users/"),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),
   detail: (userId) => cachedGet(`/admin/users/${userId}/`),
   update: (userId, payload, csrfToken) => apiClient.patch(`/admin/users/${userId}/`, payload, csrfHeaders(csrfToken)),
   action: (userId, action, payload, csrfToken) => apiClient.post(`/admin/users/${userId}/${action}/`, payload, csrfHeaders(csrfToken)),
   datasets: (userId) => cachedGet(`/admin/users/${userId}/datasets/`),
-  tasks: (params = {}) => cachedGet("/admin/tasks/", { params }),
-  createTask: (payload, csrfToken) => apiClient.post("/admin/tasks/", payload, csrfHeaders(csrfToken)),
-  updateTask: (taskId, payload, csrfToken) => apiClient.patch(`/admin/tasks/${taskId}/`, payload, csrfHeaders(csrfToken)),
-  targets: (params = {}) => apiClient.get("/admin/targets/", { params }),
+  tasks: (params = {}, { fresh = false } = {}) => cachedGet("/admin/tasks/", { params }, fresh ? 0 : GET_CACHE_TTL),
+  createTask: (payload, csrfToken) => apiClient.post("/admin/tasks/", payload, payload instanceof FormData ? multipartHeaders() : csrfHeaders(csrfToken)),
+  updateTask: (taskId, payload, csrfToken) => apiClient.patch(`/admin/tasks/${taskId}/`, payload, payload instanceof FormData ? multipartHeaders() : csrfHeaders(csrfToken)),
+  targets: (params = {}) => cachedGet("/admin/targets/", { params }, 30_000),
   saveTarget: (payload, csrfToken) =>
     apiClient.post(
       "/admin/targets/",
@@ -421,12 +554,39 @@ export const adminApi = {
 // Warm normal sidebar destinations after the first screen has painted. These
 // requests share the same cache as the pages, so the next navigation renders
 // from already-available data rather than showing another loading panel.
-export function warmNavigationData(isAdmin = false) {
-  const requests = [
-    dashboardApi.summary(), targetsApi.list(), datasetsApi.list(), customersApi.list({ page: 1 }),
-    callbacksApi.list({ preset: "today", date: "", sort: "asc" }), remindersApi.list(),
-    tasksApi.list(), salesApi.list(), salesApi.summary(),
+export async function warmNavigationData(isAdmin = false, { signal } = {}) {
+  const requestFactories = [
+    () => dashboardApi.summary(),
+    () => targetsApi.list(),
+    () => datasetsApi.list(),
+    () => customersApi.list({ page: 1 }),
+    () => salesApi.list(),
+    () => salesApi.summary(),
+    () => callbacksApi.list({ preset: "today", date: "", sort: "asc" }),
+    () => remindersApi.list(),
+    () => tasksApi.list(),
   ];
-  if (isAdmin) requests.push(adminApi.tasks());
-  return Promise.allSettled(requests);
+  if (isAdmin) requestFactories.push(
+    () => adminApi.summary(),
+    () => adminApi.listUsers(),
+    () => adminApi.targets(),
+    () => adminApi.tasks(),
+  );
+
+  // Keep background traffic bounded without letting one slow endpoint hold
+  // up every remaining sidebar destination. Shared GETs are deduplicated.
+  const results = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < requestFactories.length && !signal?.aborted) {
+      const index = next++;
+      try {
+        results[index] = { status: "fulfilled", value: await requestFactories[index]() };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  return results;
 }

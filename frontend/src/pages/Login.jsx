@@ -19,20 +19,14 @@ export default function Login() {
     setIsSubmitting(true);
     try {
       await login(form);
-      // Keep the user on the sign-in screen while the first dashboard request
-      // finishes, then open an already-populated CRM dashboard.
-      const [dashboardResponse, targetsResponse] = await Promise.all([
-        dashboardApi.summary(),
-        targetsApi.list(),
-      ]);
+      // Start the dashboard reads immediately; targets must not delay opening
+      // the workspace after authentication has already succeeded.
+      void dashboardApi.summary().catch(() => {});
+      void targetsApi.list().catch(() => {});
       // A CRM sign-in always begins at the CRM dashboard. Attendance is an
       // optional workspace reached from the sidebar after sign-in.
       navigate("/dashboard", {
         replace: true,
-        state: {
-          preloadedDashboard: dashboardResponse.data,
-          preloadedTargets: targetsResponse.data.results,
-        },
       });
     } catch (err) {
       setError(err.response?.data?.detail || "Invalid username or password.");
@@ -64,7 +58,7 @@ export default function Login() {
           <div className="login-card-mark">V</div>
           <div className="eyebrow">WELCOME BACK</div>
           <h1>Sign in</h1>
-          <p className="login-intro">Sign in once for CRM and attendance.</p>
+          <p className="login-intro">Sign in to your CRM workspace.</p>
 
           {error && <div className="alert alert-danger" role="alert">{error}</div>}
 

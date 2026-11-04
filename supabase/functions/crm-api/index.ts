@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { matchAttendanceProfile } from "../_shared/attendance-identity.ts";
 import { ensureAttendanceAdmin } from "../_shared/attendance-admin.ts";
+import { reviewTaskSubmission, saveTaskPhotos, signedTaskImages, uploadPhotoObjects, validateTaskImages, TaskImageError } from "../_shared/task-images.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -550,6 +551,41 @@ async function serializeDataset(dataset: any) {
   };
 }
 
+async function serializeDatasets(datasets: any[]) {
+  if (!datasets.length) return [];
+  const ownerIds = [...new Set(datasets.map((dataset: any) => dataset.owner_id).filter(Boolean))];
+  const currentMonth = monthStart();
+  const followingMonth = nextMonth(currentMonth);
+  const [profiles, targets, convertedVisits, customerCounts] = await Promise.all([
+    fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id", ownerIds)),
+    fetchAll(() => adminClient.from("crm_sales_targets").select("user_id,target").in("user_id", ownerIds).eq("month", currentMonth)),
+    fetchAll(() => adminClient.from("crm_visits").select("owner_id").in("owner_id", ownerIds).eq("status", "converted").gte("visit_date", currentMonth).lt("visit_date", followingMonth)),
+    Promise.all(datasets.map(async (dataset: any) => [Number(dataset.id), await countRecords(Number(dataset.id))] as const)),
+  ]);
+  const profileById = new Map(profiles.map((profile: any) => [profile.id, profile]));
+  const targetByOwner = new Map(targets.map((target: any) => [target.user_id, Number(target.target || 0)]));
+  const conversionsByOwner = new Map<string, number>();
+  for (const visit of convertedVisits) conversionsByOwner.set(visit.owner_id, (conversionsByOwner.get(visit.owner_id) || 0) + 1);
+  const countByDataset = new Map(customerCounts);
+  return datasets.map((dataset: any) => {
+    const profile = profileById.get(dataset.owner_id);
+    const target = targetByOwner.get(dataset.owner_id);
+    const converted = conversionsByOwner.get(dataset.owner_id) || 0;
+    return {
+      id: dataset.id,
+      name: dataset.name,
+      original_filename: dataset.original_filename,
+      owner_username: profile?.employee_id || profile?.name || null,
+      customer_count: countByDataset.get(Number(dataset.id)) || 0,
+      target: target ?? null,
+      converted_count: converted,
+      remaining_target: target === undefined ? null : Math.max(target - converted, 0),
+      uploaded_at: dataset.uploaded_at,
+      updated_at: dataset.updated_at,
+    };
+  });
+}
+
 async function datasetColumns(datasetId: number) {
   const { data, error } = await adminClient.from("crm_dataset_columns").select("*")
     .eq("dataset_id", datasetId).order("sheet_name").order("column_order");
@@ -682,24 +718,49 @@ function valueString(value: any) { return String(value ?? "").trim(); }
 
 async function requestBody(request: Request) {
   if (["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase()) || request.body === null) {
-    return { values: {}, files: [] as File[] };
+    return { values: {}, files: [] as File[], thumbnails: [] as File[] };
   }
   const contentType = request.headers.get("content-type") || "";
   if (contentType.includes("multipart/form-data")) {
-    const form = await request.formData();
+    // Photo forms contain only compressed variants. Retain at most 3 MiB;
+    // discard oversized input without parsing or buffering the original.
+    const photoForm = /\/(?:admin\/)?tasks(?:\/\d+)?\/?$|\/sales\/visits(?:\/\d+)?\/?$/.test(new URL(request.url).pathname);
+    let form: FormData;
+    if (photoForm) {
+      const maximum = 3 * 1024 * 1024;
+      let tooLarge = Number(request.headers.get("content-length") || 0) > maximum;
+      const reader = request.body!.getReader();
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          length += value.byteLength;
+          if (length > maximum) tooLarge = true;
+          if (tooLarge) chunks.length = 0;
+          else chunks.push(value);
+        }
+      } finally { reader.releaseLock(); }
+      // The hosted Edge relay can hang responses when a request is left
+      // unread or cancelled. Drain rejected input with constant memory first.
+      if (tooLarge) fail(413, "The photo upload is too large. Select the photos again to compress them.");
+      form = await new Response(new Blob(chunks), { headers: { "content-type": contentType } }).formData();
+    } else form = await request.formData();
     const values: Record<string, any> = {};
     const files: File[] = [];
+    const thumbnails: File[] = [];
     for (const [key, value] of form.entries()) {
       if (value instanceof File) {
-        if (value.size) files.push(value);
+        if (value.size) (key === "image_thumbnails" ? thumbnails : files).push(value);
       } else if (key === "images") {
         continue;
       } else values[key] = value;
     }
-    return { values, files };
+    return { values, files, thumbnails };
   }
-  if (!contentType.includes("application/json")) return { values: {}, files: [] as File[] };
-  return { values: await request.json(), files: [] as File[] };
+  if (!contentType.includes("application/json")) return { values: {}, files: [] as File[], thumbnails: [] as File[] };
+  return { values: await request.json(), files: [] as File[], thumbnails: [] as File[] };
 }
 
 async function visibleRecords(ctx: Context, datasetIds: number[]) {
@@ -720,16 +781,58 @@ async function accessibleVisits(ctx: Context, options: any = {}) {
   });
 }
 
-async function serializeTask(task: any) {
-  const [assignee, assignedBy] = await Promise.all([profileName(task.assignee_id), profileName(task.assigned_by_id)]);
-  return {
-    id: task.id, assignee: task.assignee_id, assignee_username: assignee,
-    assigned_by_username: assignedBy, title: task.title, note: task.note,
+async function serializeTasks(tasks: any[]) {
+  if (!tasks.length) return [];
+  // Bound IN filters to keep large admin task lists below URL/header limits.
+  if (tasks.length > 200) {
+    const results: any[] = [];
+    for (let offset = 0; offset < tasks.length; offset += 200) {
+      results.push(...await serializeTasks(tasks.slice(offset, offset + 200)));
+    }
+    return results;
+  }
+  const taskIds = tasks.map((task) => task.id);
+  const [submissions, images] = await Promise.all([
+    fetchAll(() => adminClient.from("crm_task_submissions").select("*").in("task_id", taskIds).order("id")),
+    fetchAll(() => adminClient.from("crm_task_images").select("*").in("task_id", tasks.map((task) => task.id)).order("id")),
+  ]);
+  const profileIds = [...new Set([
+    ...tasks.flatMap((task) => [task.assignee_id, task.assigned_by_id]),
+    ...submissions.map((submission: any) => submission.reviewed_by),
+  ].filter(Boolean))];
+  const profiles = await fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id", profileIds).order("id"));
+  const names = new Map(profiles.map((profile: any) => [profile.id, profile.employee_id || profile.name]));
+  const photos = new Map<number, any[]>();
+  for (const image of await signedTaskImages(adminClient, images)) {
+    if (!photos.has(image.task_id)) photos.set(image.task_id, []);
+    photos.get(image.task_id)!.push(image);
+  }
+  const attempts = new Map<number, any[]>();
+  for (const submission of submissions) {
+    if (!attempts.has(submission.task_id)) attempts.set(submission.task_id, []);
+    attempts.get(submission.task_id)!.push({
+      id: submission.id, note: submission.note, status: submission.status, submitted_at: submission.submitted_at,
+      review_note: submission.review_note, reviewed_at: submission.reviewed_at,
+      reviewed_by_username: names.get(submission.reviewed_by) || null,
+      images: (photos.get(submission.task_id) || []).filter((image) => image.submission_id === submission.id),
+    });
+  }
+  return tasks.map((task) => {
+    const history = attempts.get(task.id) || [];
+    const current = history[history.length - 1] || null;
+    return {
+    id: task.id, assignee: task.assignee_id, assignee_username: names.get(task.assignee_id) || null,
+    assigned_by_username: names.get(task.assigned_by_id) || null, title: task.title, note: task.note,
     due_at: task.due_at, status: task.status,
-    status_label: task.status === "done" ? "Done" : "Pending",
+    status_label: task.status === "submitted" ? "Awaiting approval" : task.status === "rejected" ? "Rejected" : task.status === "done" ? current?.status === "approved" ? "Approved" : "Completed" : "Pending",
     completed_at: task.completed_at, created_at: task.created_at, updated_at: task.updated_at,
-  };
+    assignment_images: (photos.get(task.id) || []).filter((image) => image.stage === "assignment"),
+    completion_images: current?.images || [], submissions: history, current_submission: current,
+    };
+  });
 }
+
+async function serializeTask(task: any) { return (await serializeTasks([task]))[0]; }
 
 async function targetPayload(target: any) {
   const [userName, converted] = await Promise.all([
@@ -784,12 +887,7 @@ async function serializeVisit(visit: any, includeFields = false) {
       : Promise.resolve(null),
     adminClient.from("crm_visit_images").select("*").eq("visit_id", visit.id).order("uploaded_at").then(async (r: any) => {
       checkDb(r.error);
-      return await Promise.all((r.data || []).map(async (item: any) => {
-        const signed = await adminClient.storage.from("crm-visit-images").createSignedUrl(item.storage_path, 3600);
-        checkDb(signed.error);
-        if (!signed.data) fail(502, "Unable to create the visit image URL.");
-        return { id: item.id, url: signed.data.signedUrl, original_name: item.original_name, uploaded_at: item.uploaded_at };
-      }));
+      return await signedTaskImages(adminClient, r.data || [], "crm-visit-images");
     }),
   ]);
   let dataset: any = null;
@@ -835,45 +933,108 @@ async function serializeVisit(visit: any, includeFields = false) {
   return payload;
 }
 
-async function uploadVisitImages(visitId: number, files: File[]) {
-  if (files.length > 10) fail(400, "You can upload up to 10 images at a time.", { errors: { images: ["You can upload up to 10 images at a time."] } });
-  for (const file of files) {
-    if (!file.type.startsWith("image/") || file.size > 10 * 1024 * 1024) {
-      fail(400, "Select image files up to 10 MB each.", { errors: { images: ["Select image files up to 10 MB each."] } });
-    }
-    const extension = file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() : "bin";
-    const path = String(visitId) + "/" + crypto.randomUUID() + "." + extension;
-    const { error: uploadError } = await adminClient.storage.from("crm-visit-images").upload(path, file, { contentType: file.type, upsert: false });
-    checkDb(uploadError);
-    const { error } = await adminClient.from("crm_visit_images").insert({ visit_id: visitId, storage_path: path, original_name: file.name.slice(0, 255) });
-    if (error) {
-      await adminClient.storage.from("crm-visit-images").remove([path]);
-      checkDb(error);
-    }
-  }
+async function serializeVisitList(visits: any[]) {
+  if (!visits.length) return [];
+  const manualIds = [...new Set(visits.map((visit: any) => visit.manual_client_id).filter(Boolean))];
+  const customerIds = [...new Set(visits.map((visit: any) => visit.customer_id).filter(Boolean))];
+  const [manualClients, customers] = await Promise.all([
+    manualIds.length ? fetchAll(() => adminClient.from("crm_manual_clients").select("*").in("id", manualIds)) : [],
+    customerIds.length ? fetchAll(() => adminClient.from("crm_customer_records").select("*").in("id", customerIds)) : [],
+  ]);
+  const datasetIds = [...new Set(customers.map((customer: any) => Number(customer.dataset_id)))];
+  const [datasets, columns] = await Promise.all([
+    datasetIds.length ? fetchAll(() => adminClient.from("crm_datasets").select("id,name").in("id", datasetIds)) : [],
+    datasetIds.length ? fetchAll(() => adminClient.from("crm_dataset_columns").select("*").in("dataset_id", datasetIds).order("sheet_name").order("column_order")) : [],
+  ]);
+  const manualById = new Map(manualClients.map((item: any) => [Number(item.id), item]));
+  const customerById = new Map(customers.map((item: any) => [Number(item.id), item]));
+  const datasetById = new Map(datasets.map((item: any) => [Number(item.id), item]));
+  const columnsByDataset = new Map<number, any[]>();
+  for (const column of columns) columnsByDataset.set(Number(column.dataset_id), [...(columnsByDataset.get(Number(column.dataset_id)) || []), column]);
+  return visits.map((visit: any) => {
+    const manualClient = manualById.get(Number(visit.manual_client_id));
+    const customer = customerById.get(Number(visit.customer_id));
+    const dataset = customer ? datasetById.get(Number(customer.dataset_id)) : null;
+    const sheetColumns = customer ? (columnsByDataset.get(Number(customer.dataset_id)) || []).filter((column) => column.sheet_name === customer.sheet_name) : [];
+    return {
+      id: visit.id,
+      client_name: customer ? displayName(customer, sheetColumns) : manualClient?.client_name || "",
+      client_source: customer ? "Excel Customer" : "Manual Client",
+      dataset_id: dataset?.id || null,
+      dataset_name: dataset?.name || null,
+      manual_client: manualClient ? {
+        id: manualClient.id,
+        client_name: manualClient.client_name,
+        phone: manualClient.phone,
+        email: manualClient.email,
+        company: manualClient.company,
+        location: manualClient.location,
+      } : null,
+      client_record_id: customer?.id || null,
+      customer_note: customer?.note || null,
+      images: [],
+      visit_date: visit.visit_date,
+      meeting_time: visit.meeting_time ? String(visit.meeting_time).slice(0, 8) : null,
+      location: visit.location,
+      expense: visit.expense,
+      status: visit.status,
+      status_label: ({ healthy: "Healthy", follow_up_required: "Follow-up Required", interested: "Interested", not_interested: "Not Interested", converted: "Converted" } as any)[visit.status] || visit.status,
+      payment_status: visit.payment_status,
+      payment_status_label: ({ not_paid: "Not Paid", partially_paid: "Partially Paid", completed: "Completed", one_time: "One-time Payment" } as any)[visit.payment_status] || visit.payment_status,
+      total_amount: visit.total_amount,
+      paid_amount: visit.paid_amount,
+      pending_amount: Math.max(Number(visit.total_amount || 0) - Number(visit.paid_amount || 0), 0),
+      payment_description: visit.payment_description || "",
+      note: visit.note || "",
+      created_at: visit.created_at,
+      updated_at: visit.updated_at,
+    };
+  });
+}
+
+async function uploadVisitImages(visitId: number, files: File[], thumbnails: File[] = []) {
+  if (!files.length && !thumbnails.length) return;
+  const uploaded = await uploadPhotoObjects(adminClient, "crm-visit-images", String(visitId), files, thumbnails);
+  const { error } = await adminClient.from("crm_visit_images").insert(uploaded.images.map((image) => ({ visit_id: visitId, ...image })));
+  if (error) { await adminClient.storage.from("crm-visit-images").remove(uploaded.paths); checkDb(error); }
 }
 
 async function datasetList(ctx: Context) {
   const datasets = await accessibleDatasets(ctx);
-  return await Promise.all(datasets.map(serializeDataset));
+  return await serializeDatasets(datasets);
 }
 
 async function dashboardSummary(ctx: Context) {
   const datasets = await accessibleDatasets(ctx);
   const datasetIds = datasets.map((dataset: any) => Number(dataset.id));
-  const records = await visibleRecords(ctx, datasetIds);
-  const visits = await accessibleVisits(ctx);
-  const counts: Record<string, number> = {};
-  for (const record of records) counts[record.response] = (counts[record.response] || 0) + 1;
+  const recordCountRequests = responseChoices.map(async (choice) => {
+    if (!datasetIds.length) return [choice.value, 0] as const;
+    const { count, error } = await adminClient.from("crm_customer_records")
+      .select("id", { count: "exact", head: true }).in("dataset_id", datasetIds).eq("response", choice.value);
+    checkDb(error);
+    return [choice.value, count || 0] as const;
+  });
+  const visitRequest = fetchAll(() => {
+    let query = adminClient.from("crm_visits").select("owner_id,visit_date,expense,total_amount,paid_amount,payment_status");
+    if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
+    return query;
+  });
+  const [recordCountRows, visits, recentDatasets] = await Promise.all([
+    Promise.all(recordCountRequests),
+    visitRequest,
+    serializeDatasets(datasets.slice(0, 3)),
+  ]);
+  const counts = Object.fromEntries(recordCountRows);
+  const totalCustomers = recordCountRows.reduce((sum, [, count]) => sum + count, 0);
   const today = indiaDate();
   const month = today.slice(0, 7);
   const paymentTotal = visits.reduce((sum: number, item: any) => sum + Number(item.total_amount || 0), 0);
   const paidTotal = visits.reduce((sum: number, item: any) => sum + Number(item.paid_amount || 0), 0);
   return {
     totalDatasets: datasets.length,
-    totalCustomers: records.length,
+    totalCustomers,
     responseStats: responseChoices.map((item) => ({ ...item, count: counts[item.value] || 0 })),
-    recentDatasets: await Promise.all(datasets.slice(0, 3).map(serializeDataset)),
+    recentDatasets,
     payments: {
       totalAmount: paymentTotal, paidAmount: paidTotal,
       pendingAmount: Math.max(paymentTotal - paidTotal, 0),
@@ -894,23 +1055,47 @@ async function dashboardSummary(ctx: Context) {
 async function datasetDetail(ctx: Context, id: string, params: URLSearchParams) {
   const dataset = await accessibleDataset(ctx, id);
   const columns = await datasetColumns(Number(dataset.id));
-  const records = await visibleRecords(ctx, [Number(dataset.id)]);
   const query = valueString(params.get("q")).toLocaleLowerCase();
   const responseFilter = valueString(params.get("response"));
-  const filtered = records.filter((record: any) => {
-    if (responseFilter && record.response !== responseFilter) return false;
-    if (!query) return true;
-    const values = Object.values(record.original_data || {}).map(String).concat([responseLabels[record.response] || record.response, record.note || ""]);
-    return values.some((value) => value.toLocaleLowerCase().includes(query));
-  });
   const requestedPage = Math.max(1, Number(params.get("page")) || 1);
-  const numPages = Math.max(1, Math.ceil(filtered.length / 20));
-  const page = Math.min(requestedPage, numPages);
-  const pageRecords = filtered.slice((page - 1) * 20, page * 20);
+  let stats: Record<string, number> = {};
+  let filteredCount = 0;
+  let pageRecords: any[] = [];
+  let page = 1;
+  let numPages = 1;
+
+  if (!query) {
+    const countRows = await Promise.all(responseChoices.map(async (choice) => {
+      const { count, error } = await adminClient.from("crm_customer_records")
+        .select("id", { count: "exact", head: true }).eq("dataset_id", dataset.id).eq("response", choice.value);
+      checkDb(error);
+      return [choice.value, count || 0] as const;
+    }));
+    stats = Object.fromEntries(countRows);
+    filteredCount = responseFilter ? stats[responseFilter] || 0 : countRows.reduce((sum, [, count]) => sum + count, 0);
+    numPages = Math.max(1, Math.ceil(filteredCount / 20));
+    page = Math.min(requestedPage, numPages);
+    let recordQuery = adminClient.from("crm_customer_records").select("*").eq("dataset_id", dataset.id)
+      .order("sheet_name").order("row_number");
+    if (responseFilter) recordQuery = recordQuery.eq("response", responseFilter);
+    const { data, error } = await recordQuery.range((page - 1) * 20, page * 20 - 1);
+    checkDb(error);
+    pageRecords = data || [];
+  } else {
+    const records = await visibleRecords(ctx, [Number(dataset.id)]);
+    for (const record of records) stats[record.response] = (stats[record.response] || 0) + 1;
+    const filtered = records.filter((record: any) => {
+      if (responseFilter && record.response !== responseFilter) return false;
+      const values = Object.values(record.original_data || {}).map(String).concat([responseLabels[record.response] || record.response, record.note || ""]);
+      return values.some((value) => value.toLocaleLowerCase().includes(query));
+    });
+    filteredCount = filtered.length;
+    numPages = Math.max(1, Math.ceil(filteredCount / 20));
+    page = Math.min(requestedPage, numPages);
+    pageRecords = filtered.slice((page - 1) * 20, page * 20);
+  }
   const groupedColumns = new Map<string, any[]>();
   for (const column of columns) groupedColumns.set(column.sheet_name, [...(groupedColumns.get(column.sheet_name) || []), column]);
-  const stats: Record<string, number> = {};
-  for (const record of records) stats[record.response] = (stats[record.response] || 0) + 1;
   const grouped: any[] = [];
   for (const [sheetName, sheetColumns] of groupedColumns.entries()) {
     const sheetRecords = pageRecords.filter((record: any) => record.sheet_name === sheetName);
@@ -928,9 +1113,9 @@ async function datasetDetail(ctx: Context, id: string, params: URLSearchParams) 
     responseChoices,
     responseStats: responseChoices.map((choice) => ({ ...choice, count: stats[choice.value] || 0 })),
     recordsBySheet: grouped,
-    filters: { search: valueString(params.get("q")), response: responseFilter, active: Boolean(query || responseFilter), filteredCount: filtered.length },
+    filters: { search: valueString(params.get("q")), response: responseFilter, active: Boolean(query || responseFilter), filteredCount },
     pagination: {
-      page: Math.min(page, numPages), numPages, count: filtered.length,
+      page: Math.min(page, numPages), numPages, count: filteredCount,
       hasNext: page < numPages, hasPrevious: page > 1,
       nextPage: page < numPages ? page + 1 : null,
       previousPage: page > 1 ? page - 1 : null,
@@ -976,9 +1161,9 @@ async function deleteDataset(ctx: Context, dataset: any) {
       const visitRows = await fetchAll(() => adminClient.from("crm_visits").select("id").in("customer_id", customerIds.slice(offset, offset + 500)));
       const visitIds = visitRows.map((item: any) => item.id);
       if (!visitIds.length) continue;
-      const images = await fetchAll(() => adminClient.from("crm_visit_images").select("storage_path").in("visit_id", visitIds));
+      const images = await fetchAll(() => adminClient.from("crm_visit_images").select("storage_path,thumbnail_path").in("visit_id", visitIds));
       if (images.length) {
-        const { error } = await adminClient.storage.from("crm-visit-images").remove(images.map((item: any) => item.storage_path));
+        const { error } = await adminClient.storage.from("crm-visit-images").remove(images.flatMap((item: any) => [item.storage_path, item.thumbnail_path].filter(Boolean)));
         checkDb(error);
       }
     }
@@ -989,20 +1174,63 @@ async function deleteDataset(ctx: Context, dataset: any) {
 
 async function customerList(ctx: Context, params: URLSearchParams) {
   const datasets = await accessibleDatasets(ctx);
-  const records = await visibleRecords(ctx, datasets.map((item: any) => Number(item.id)));
+  const datasetIds = datasets.map((item: any) => Number(item.id));
   const datasetById = new Map(datasets.map((item: any) => [Number(item.id), item]));
-  const columnsByDataset = new Map<number, any[]>();
-  await Promise.all(datasets.map(async (dataset: any) => columnsByDataset.set(Number(dataset.id), await datasetColumns(Number(dataset.id)))));
   const query = valueString(params.get("q")).toLocaleLowerCase();
-  const searchRecords = query ? records.filter((record: any) => displayName(record, columnsByDataset.get(Number(record.dataset_id)) || []).toLocaleLowerCase().includes(query)) : records;
-  const counts: Record<string, number> = {};
-  for (const record of searchRecords) counts[record.response] = (counts[record.response] || 0) + 1;
   const statusFilter = responseLabels[params.get("status") || ""] ? params.get("status") || "" : "";
-  const filtered = statusFilter ? searchRecords.filter((record: any) => record.response === statusFilter) : searchRecords;
   const requestedPage = Math.max(1, Number(params.get("page")) || 1);
-  const numPages = Math.max(1, Math.ceil(filtered.length / 50));
-  const page = Math.min(requestedPage, numPages);
-  const pageRecords = filtered.slice((page - 1) * 50, page * 50);
+  let counts: Record<string, number> = {};
+  let filteredCount = 0;
+  let pageRecords: any[] = [];
+  let page = 1;
+  let numPages = 1;
+  const columnsByDataset = new Map<number, any[]>();
+
+  if (!datasetIds.length) {
+    counts = Object.fromEntries(responseChoices.map((choice) => [choice.value, 0]));
+  } else if (!query) {
+    // Normal directory browsing is fully paginated in Postgres. Previously the
+    // endpoint downloaded every accessible customer and every dataset column
+    // before returning only 50 rows.
+    const countRequests = responseChoices.map(async (choice) => {
+      const { count, error } = await adminClient.from("crm_customer_records")
+        .select("id", { count: "exact", head: true }).in("dataset_id", datasetIds).eq("response", choice.value);
+      checkDb(error);
+      return [choice.value, count || 0] as const;
+    });
+    const filteredCountRequest = (async () => {
+      let countQuery = adminClient.from("crm_customer_records").select("id", { count: "exact", head: true }).in("dataset_id", datasetIds);
+      if (statusFilter) countQuery = countQuery.eq("response", statusFilter);
+      const { count, error } = await countQuery;
+      checkDb(error);
+      return count || 0;
+    })();
+    const [countRows, total] = await Promise.all([Promise.all(countRequests), filteredCountRequest]);
+    counts = Object.fromEntries(countRows);
+    filteredCount = total;
+    numPages = Math.max(1, Math.ceil(filteredCount / 50));
+    page = Math.min(requestedPage, numPages);
+    let recordQuery = adminClient.from("crm_customer_records").select("*").in("dataset_id", datasetIds)
+      .order("dataset_id").order("sheet_name").order("row_number");
+    if (statusFilter) recordQuery = recordQuery.eq("response", statusFilter);
+    const { data, error } = await recordQuery.range((page - 1) * 50, page * 50 - 1);
+    checkDb(error);
+    pageRecords = data || [];
+    const pageDatasetIds = [...new Set(pageRecords.map((record: any) => Number(record.dataset_id)))];
+    await Promise.all(pageDatasetIds.map(async (datasetId) => columnsByDataset.set(datasetId, await datasetColumns(datasetId))));
+  } else {
+    // Free-text client-name search still needs JSON field inspection because
+    // imported workbooks may use arbitrary column names.
+    const records = await visibleRecords(ctx, datasetIds);
+    await Promise.all(datasets.map(async (dataset: any) => columnsByDataset.set(Number(dataset.id), await datasetColumns(Number(dataset.id)))));
+    const searchRecords = records.filter((record: any) => displayName(record, columnsByDataset.get(Number(record.dataset_id)) || []).toLocaleLowerCase().includes(query));
+    for (const record of searchRecords) counts[record.response] = (counts[record.response] || 0) + 1;
+    const filtered = statusFilter ? searchRecords.filter((record: any) => record.response === statusFilter) : searchRecords;
+    filteredCount = filtered.length;
+    numPages = Math.max(1, Math.ceil(filteredCount / 50));
+    page = Math.min(requestedPage, numPages);
+    pageRecords = filtered.slice((page - 1) * 50, page * 50);
+  }
   const results = await Promise.all(pageRecords.map(async (record: any) => {
     const dataset = datasetById.get(Number(record.dataset_id));
     const columns = (columnsByDataset.get(Number(record.dataset_id)) || []).filter((item: any) => item.sheet_name === record.sheet_name);
@@ -1015,7 +1243,7 @@ async function customerList(ctx: Context, params: URLSearchParams) {
     results, searchQuery: valueString(params.get("q")), selectedStatus: statusFilter,
     statusOptions: responseChoices.map((item) => ({ ...item, count: counts[item.value] || 0 })),
     totalCount: Object.values(counts).reduce((sum, value) => sum + value, 0),
-    pagination: { page: Math.min(page, numPages), pageSize: 50, numPages, count: filtered.length, hasNext: page < numPages, hasPrevious: page > 1, nextPage: page < numPages ? page + 1 : null, previousPage: page > 1 ? page - 1 : null },
+    pagination: { page: Math.min(page, numPages), pageSize: 50, numPages, count: filteredCount, hasNext: page < numPages, hasPrevious: page > 1, nextPage: page < numPages ? page + 1 : null, previousPage: page > 1 ? page - 1 : null },
   };
 }
 
@@ -1099,10 +1327,54 @@ async function listTargets(userId: string | null = null) {
   if (userId) query = query.eq("user_id", userId);
   const { data, error } = await query;
   checkDb(error);
-  return await Promise.all((data || []).map(targetPayload));
+  const targets = data || [];
+  if (!targets.length) return [];
+  const userIds = [...new Set(targets.map((target: any) => target.user_id))];
+  const firstMonth = [...targets].sort((a: any, b: any) => String(a.month).localeCompare(String(b.month)))[0].month;
+  const lastMonth = [...targets].sort((a: any, b: any) => String(b.month).localeCompare(String(a.month)))[0].month;
+  const [profiles, visits] = await Promise.all([
+    fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id", userIds)),
+    fetchAll(() => adminClient.from("crm_visits").select("owner_id,visit_date").in("owner_id", userIds).eq("status", "converted").gte("visit_date", firstMonth).lt("visit_date", nextMonth(lastMonth))),
+  ]);
+  const profileById = new Map(profiles.map((profile: any) => [profile.id, profile]));
+  const convertedByUserMonth = new Map<string, number>();
+  for (const visit of visits) {
+    const key = `${visit.owner_id}|${String(visit.visit_date).slice(0, 7)}`;
+    convertedByUserMonth.set(key, (convertedByUserMonth.get(key) || 0) + 1);
+  }
+  const lowCountsByUser = new Map<string, number>();
+  for (const target of targets) {
+    const converted = convertedByUserMonth.get(`${target.user_id}|${String(target.month).slice(0, 7)}`) || 0;
+    const percentage = target.target ? Math.round((converted / target.target) * 100) : 0;
+    if (percentage <= 30) lowCountsByUser.set(target.user_id, (lowCountsByUser.get(target.user_id) || 0) + 1);
+  }
+  return targets.map((target: any) => {
+    const profile = profileById.get(target.user_id);
+    const username = profile?.employee_id || profile?.name || null;
+    const converted = convertedByUserMonth.get(`${target.user_id}|${String(target.month).slice(0, 7)}`) || 0;
+    const percentage = target.target ? Math.round((converted / target.target) * 100) : 0;
+    const lowTargetCount = lowCountsByUser.get(target.user_id) || 0;
+    return {
+      id: target.id,
+      userId: target.user_id,
+      username,
+      month: String(target.month).slice(0, 7),
+      monthLabel: new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(String(target.month) + "T00:00:00Z")),
+      datasetId: null,
+      datasetName: "",
+      target: target.target,
+      converted,
+      percentage,
+      statusColor: percentage <= 30 ? "danger" : percentage <= 70 ? "primary" : "success",
+      lowTargetCount,
+      needsWarning: lowTargetCount >= 3,
+      warningMessage: lowTargetCount >= 3 ? username + " has already failed to achieve at least 30% of the assigned target " + lowTargetCount + " times. Schedule a meeting and review this user's continuation." : "",
+    };
+  });
 }
 
-async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: any, files: File[]) {
+async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: any, files: File[], thumbnails: File[] = []) {
+  if (files.length || thumbnails.length) await validateTaskImages(files, thumbnails);
   const errors: Record<string, string[]> = {};
   const addError = (field: string, message: string) => { errors[field] = [...(errors[field] || []), message]; };
   const mode = valueString(body.visit_mode || "existing");
@@ -1193,7 +1465,7 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
     const { data, error } = await adminClient.from("crm_visits").insert(values).select("*").single();
     checkDb(error); saved = data;
   }
-  await uploadVisitImages(Number(saved.id), files);
+  await uploadVisitImages(Number(saved.id), files, thumbnails);
   return await serializeVisit(saved, true);
 }
 
@@ -1267,7 +1539,7 @@ async function importRecordBatch(ctx: Context, datasetId: string, body: any) {
   return json(201, { inserted: insertRows.length });
 }
 
-async function routeApi(ctx: Context, request: Request, apiPath: string, params: URLSearchParams, body: any, files: File[]) {
+async function routeApi(ctx: Context, request: Request, apiPath: string, params: URLSearchParams, body: any, files: File[], thumbnails: File[] = []) {
   const method = request.method.toUpperCase();
   const path = apiPath.replace(/^\/+|\/+$/g, "");
   const parts = path ? path.split("/").map(decodeURIComponent) : [];
@@ -1431,19 +1703,51 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
     }
   }
 
+  if (parts[0] === "task-notifications") {
+    const columns = "id,task_id,submission_id,kind,title,message,created_at,read_at";
+    if (parts.length === 1 && method === "GET") {
+      const [notifications, unread] = await Promise.all([
+        adminClient.from("crm_task_notifications").select(columns).eq("recipient_id", ctx.user.id).order("id", { ascending: false }).limit(50),
+        adminClient.from("crm_task_notifications").select("id", { count: "exact", head: true }).eq("recipient_id", ctx.user.id).is("read_at", null),
+      ]);
+      checkDb(notifications.error); checkDb(unread.error);
+      return json(200, { results: notifications.data || [], unread_count: unread.count || 0 });
+    }
+    if (parts.length === 2 && parts[1] === "read" && method === "POST") {
+      const throughId = parseId(body.through_id);
+      const { error } = await adminClient.from("crm_task_notifications").update({ read_at: new Date().toISOString() })
+        .eq("recipient_id", ctx.user.id).lte("id", throughId).is("read_at", null);
+      checkDb(error); return json(204);
+    }
+    if (parts.length === 2 && method === "PATCH") {
+      const id = parseId(parts[1]);
+      const { data, error } = await adminClient.from("crm_task_notifications").update({ read_at: new Date().toISOString() })
+        .eq("recipient_id", ctx.user.id).eq("id", id).is("read_at", null).select(columns).maybeSingle();
+      checkDb(error);
+      if (data) return json(200, data);
+      const existing = await adminClient.from("crm_task_notifications").select(columns).eq("recipient_id", ctx.user.id).eq("id", id).maybeSingle();
+      checkDb(existing.error); if (!existing.data) fail(404, "Notification not found.");
+      return json(200, existing.data);
+    }
+    fail(404, "Notification endpoint not found.");
+  }
+
   if (parts[0] === "tasks") {
     if (parts.length === 1 && method === "GET") {
       const { data, error } = await adminClient.from("crm_assigned_tasks").select("*").eq("assignee_id", ctx.user.id)
         .order("status").order("due_at").order("created_at", { ascending: false });
-      checkDb(error); return json(200, { results: await Promise.all((data || []).map(serializeTask)) });
+      checkDb(error); return json(200, { results: await serializeTasks(data || []) });
     }
     if (parts.length === 2 && method === "PATCH") {
       const id = parseId(parts[1]);
-      const status = valueString(body.status);
-      if (!['pending', 'done'].includes(status)) fail(400, "Choose a valid task status.");
-      const { data, error } = await adminClient.from("crm_assigned_tasks").update({ status, completed_at: status === "done" ? new Date().toISOString() : null })
-        .eq("id", id).eq("assignee_id", ctx.user.id).select("*").maybeSingle();
-      checkDb(error); if (!data) fail(404, "Task not found.");
+      const { data: current, error } = await adminClient.from("crm_assigned_tasks").select("id")
+        .eq("id", id).eq("assignee_id", ctx.user.id).maybeSingle();
+      checkDb(error); if (!current) fail(404, "Task not found.");
+      const values: any = {};
+      if (body.status !== undefined) values.status = valueString(body.status);
+      if (body.submission_note !== undefined) values.submission_note = valueString(body.submission_note);
+      if (body.previous_submission_id !== undefined) values.previous_submission_id = body.previous_submission_id;
+      const data = await saveTaskPhotos(adminClient, ctx.user.id, id, "completion", values, files, thumbnails);
       return json(200, await serializeTask(data));
     }
   }
@@ -1480,18 +1784,18 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
         const status = valueString(params.get("status"));
         const validStatus = ["healthy", "follow_up_required", "interested", "not_interested", "converted"].includes(status) ? status : "";
         const visits = await accessibleVisits(ctx, { status: validStatus, dateFrom: valueString(params.get("date_from")), dateTo: valueString(params.get("date_to")) });
-        return json(200, { results: await Promise.all(visits.map((item: any) => serializeVisit(item))) });
+        return json(200, { results: await serializeVisitList(visits) });
       }
-      if (method === "POST") return json(201, await createOrUpdateVisit(ctx, null, body, files));
+      if (method === "POST") return json(201, await createOrUpdateVisit(ctx, null, body, files, thumbnails));
     }
     if (parts[1] === "visits" && parts.length === 3) {
       const visit = await visibleVisit(ctx, parseId(parts[2]));
       if (method === "GET") return json(200, await serializeVisit(visit, true));
-      if (method === "PATCH") return json(200, await createOrUpdateVisit(ctx, Number(visit.id), body, files));
+      if (method === "PATCH") return json(200, await createOrUpdateVisit(ctx, Number(visit.id), body, files, thumbnails));
       if (method === "DELETE") {
-        const { data: images, error: imageError } = await adminClient.from("crm_visit_images").select("storage_path").eq("visit_id", visit.id);
+        const { data: images, error: imageError } = await adminClient.from("crm_visit_images").select("storage_path,thumbnail_path").eq("visit_id", visit.id);
         checkDb(imageError);
-        if (images?.length) await adminClient.storage.from("crm-visit-images").remove(images.map((item: any) => item.storage_path));
+        if (images?.length) await adminClient.storage.from("crm-visit-images").remove(images.flatMap((item: any) => [item.storage_path, item.thumbnail_path].filter(Boolean)));
         const { error } = await adminClient.from("crm_visits").delete().eq("id", visit.id);
         checkDb(error); return json(204);
       }
@@ -1499,7 +1803,7 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   }
 
   if (parts[0] === "overtime") return await handleOvertime(ctx, method, parts, body);
-  if (parts[0] === "admin") return await handleAdmin(ctx, method, parts, params, body);
+  if (parts[0] === "admin") return await handleAdmin(ctx, method, parts, params, body, files, thumbnails);
   if (parts[0] === "attendance") return await handleAttendance(ctx, method, parts, params, body);
   fail(404, "CRM API endpoint not found.");
 }
@@ -1521,6 +1825,26 @@ async function profileWithCounts(profile: any) {
   });
 }
 
+async function profilesWithCounts(profiles: any[]) {
+  if (!profiles.length) return [];
+  const profileIds = profiles.map((profile: any) => profile.id);
+  const datasets = await fetchAll(() => adminClient.from("crm_datasets").select("id,owner_id").in("owner_id", profileIds));
+  const datasetIds = datasets.map((dataset: any) => Number(dataset.id));
+  const customers = datasetIds.length
+    ? await fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id").in("dataset_id", datasetIds))
+    : [];
+  const datasetCounts = new Map<string, number>();
+  const customerCountsByDataset = new Map<number, number>();
+  const customerCountsByOwner = new Map<string, number>();
+  for (const dataset of datasets) datasetCounts.set(dataset.owner_id, (datasetCounts.get(dataset.owner_id) || 0) + 1);
+  for (const customer of customers) customerCountsByDataset.set(Number(customer.dataset_id), (customerCountsByDataset.get(Number(customer.dataset_id)) || 0) + 1);
+  for (const dataset of datasets) customerCountsByOwner.set(dataset.owner_id, (customerCountsByOwner.get(dataset.owner_id) || 0) + (customerCountsByDataset.get(Number(dataset.id)) || 0));
+  return profiles.map((profile: any) => userPayload(profile, {
+    dataset_count: datasetCounts.get(profile.id) || 0,
+    customer_count: customerCountsByOwner.get(profile.id) || 0,
+  }));
+}
+
 async function adminUserById(id: string) {
   const { data, error } = await adminClient.from("profiles").select("*").eq("id", id).maybeSingle();
   checkDb(error);
@@ -1528,7 +1852,7 @@ async function adminUserById(id: string) {
   return data;
 }
 
-async function handleAdmin(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any) {
+async function handleAdmin(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any, files: File[] = [], thumbnails: File[] = []) {
   requireAdmin(ctx);
   if (parts[1] === "summary" && method === "GET") {
     const [profiles, datasets, customers, authUsers] = await Promise.all([
@@ -1582,7 +1906,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
   if (parts[1] === "users") {
     if (parts.length === 2 && method === "GET") {
       const profiles = await fetchAll(() => adminClient.from("profiles").select("*").order("employee_id"));
-      return json(200, { results: await Promise.all(profiles.map(profileWithCounts)) });
+      return json(200, { results: await profilesWithCounts(profiles) });
     }
     if (parts.length === 2 && method === "POST") {
       const username = valueString(body.username).toUpperCase();
@@ -1695,7 +2019,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       let query = adminClient.from("crm_assigned_tasks").select("*").order("status").order("due_at").order("created_at", { ascending: false });
       if (userId) query = query.eq("assignee_id", userId);
       const { data, error } = await query;
-      checkDb(error); return json(200, { results: await Promise.all((data || []).map(serializeTask)) });
+      checkDb(error); return json(200, { results: await serializeTasks(data || []) });
     }
     if (parts.length === 2 && method === "POST") {
       const assigneeId = valueString(body.assignee);
@@ -1703,23 +2027,27 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       if (!title) fail(400, "Enter a task.", { errors: { title: ["Enter a task."] } });
       const assignee = await adminUserById(assigneeId);
       if (isAdminRole(assignee.role)) fail(400, "Tasks can only be assigned to normal users.");
-      const { data, error } = await adminClient.from("crm_assigned_tasks").insert({
-        assignee_id: assigneeId, assigned_by_id: ctx.user.id, title, note: valueString(body.note), due_at: body.due_at || null,
-      }).select("*").single();
-      checkDb(error); return json(201, await serializeTask(data));
+      const data = await saveTaskPhotos(adminClient, ctx.user.id, null, "assignment", {
+        assignee: assigneeId, title, note: valueString(body.note), due_at: body.due_at || null,
+      }, files, thumbnails);
+      return json(201, await serializeTask(data));
     }
     if (parts.length === 3 && method === "PATCH") {
       const id = parseId(parts[2]);
       const { data: current, error: readError } = await adminClient.from("crm_assigned_tasks").select("*").eq("id", id).maybeSingle();
       checkDb(readError); if (!current) fail(404, "Task not found.");
-      const status = body.status === undefined ? current.status : valueString(body.status);
-      if (!['pending', 'done'].includes(status)) fail(400, "Choose a valid task status.");
-      const updates: any = { status, completed_at: status === "done" ? current.completed_at || new Date().toISOString() : null };
+      if (body.review_action !== undefined) {
+        if (files.length || thumbnails.length) fail(400, "Review the submitted photos without uploading replacement files.");
+        const data = await reviewTaskSubmission(adminClient, ctx.user.id, id, parseId(body.submission_id), valueString(body.review_action), valueString(body.review_note));
+        return json(200, await serializeTask(data));
+      }
+      const updates: any = {};
+      if (body.status !== undefined) updates.status = valueString(body.status);
       if (body.title !== undefined) updates.title = valueString(body.title);
       if (body.note !== undefined) updates.note = String(body.note || "");
       if (body.due_at !== undefined) updates.due_at = body.due_at || null;
-      const { data, error } = await adminClient.from("crm_assigned_tasks").update(updates).eq("id", id).select("*").single();
-      checkDb(error); return json(200, await serializeTask(data));
+      const data = await saveTaskPhotos(adminClient, ctx.user.id, id, "assignment", updates, files, thumbnails);
+      return json(200, await serializeTask(data));
     }
   }
   if (parts[1] === "targets") {
@@ -1954,13 +2282,15 @@ Deno.serve(async (request: Request) => {
     }
     const ctx = await authenticate(request);
     if (request.method === "POST" && apiPath.replace(/^\/+|\/+$/g, "") === "auth/attendance-session") {
-      // Use only the identity validated by the existing CRM session.
+      // authenticate() supplies the trusted CRM identity; never accept an
+      // employee ID from the request when opening another project's session.
       return await startAttendanceSession(ctx);
     }
-    const { values, files } = await requestBody(request);
-    return await routeApi(ctx, request, apiPath, queryParams(url), values, files);
+    const { values, files, thumbnails } = await requestBody(request);
+    return await routeApi(ctx, request, apiPath, queryParams(url), values, files, thumbnails);
   } catch (error) {
     if (error instanceof ApiError) return json(error.status, error.payload || { detail: error.message });
+    if (error instanceof TaskImageError) return json(error.status, { detail: error.message });
     const message = error instanceof Error ? error.message : "An unexpected server error occurred.";
     console.error("CRM API error:", message);
     return json(500, { detail: "An unexpected server error occurred." });

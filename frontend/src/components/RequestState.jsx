@@ -26,3 +26,12 @@ export function AppBootLoader({ label = "Preparing your CRM workspace" }) {
     </section>
   </main>;
 }
+
+// Route chunks normally arrive in a moment. Keep the CRM shell visible while
+// that happens instead of replacing the whole workspace with the boot card.
+export function RouteLoadingIndicator({ label = "Opening page" }) {
+  return <div className="route-loading-indicator" role="status" aria-live="polite">
+    <span aria-hidden="true" />
+    <span className="visually-hidden">{label}</span>
+  </div>;
+}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { datasetsApi } from "../services/api.js";
+import { datasetsApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import TimedAlert from "../components/TimedAlert.jsx";
 
@@ -9,7 +9,12 @@ export default function DatasetDetail() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const [detail, setDetail] = useState(null);
+  const initialQuery = {
+    q: searchParams.get("q") || "",
+    response: searchParams.get("response") || "",
+    page: searchParams.get("page") || "",
+  };
+  const [detail, setDetail] = useState(() => peekCachedResponse(`/datasets/${id}/`, { params: initialQuery })?.data || null);
   const [error, setError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [exportError, setExportError] = useState("");

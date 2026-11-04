@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { callbacksApi } from "../services/api.js";
+import { callbacksApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
 
 
+const defaultFilters = { preset: "today", date: "", sort: "asc" };
+
 export default function Callbacks() {
   const { csrfToken } = useAuth();
-  const [filters, setFilters] = useState({ preset: "today", date: "", sort: "asc" });
-  const [data, setData] = useState(null);
+  const [filters, setFilters] = useState(defaultFilters);
+  const [data, setData] = useState(() => peekCachedResponse("/callbacks/", { params: defaultFilters })?.data || null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [updatingId, setUpdatingId] = useState(null);
