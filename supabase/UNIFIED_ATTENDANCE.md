@@ -30,6 +30,28 @@ Keep the old project intact until the device URL has been updated and incoming
 real punches have been verified. `scripts/attendance-device-bridge` contains the
 compatibility deployment source.
 
+## Completing the device cutover
+
+The active on-site relay is `192.168.1.40`; its existing application listens on
+ports 3000 and 8081. Configure that running application's environment with:
+
+```text
+LIVE_ATTENDANCE_FORWARD_URL=https://qdtgrddhpbwrutvojpes.supabase.co/functions/v1/iclock/iclock/cdata
+```
+
+Restart the relay from the same project folder so it loads the new environment.
+The machine can keep its existing Server Address `192.168.1.40` and port 8081.
+The updated standalone portal source also uses the new CRM project directly.
+If replacing the on-site relay instead, `node scripts/attendance-relay.mjs`
+runs a small CRM-only receiver on port 8081 with no API keys. Its `/health`
+endpoint identifies the destination project. It accepts `.aspx` paths used by
+older K90 firmware and passes cloud errors back so the device retries uploads.
+
+Verify a real new punch in CRM after restarting the relay. Only then remove the
+old project's forwarding function. Network access to the relay's website does
+not grant permission to its files: changing its environment requires access to
+its project folder or an operator on that computer.
+
 Pending OT requests read fresh punch data each time they are listed. Approval
 requires an even completed punch sequence with the last punch after the
 employee's official end time plus five minutes.

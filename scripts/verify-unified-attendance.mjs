@@ -54,12 +54,12 @@ for (const role of ['employee','admin']) {
 if (process.argv.includes('--check-devices')) {
   const record=snapshot.attendance_records.find(row => row.raw?.includes('\t') && snapshot.attendance_devices.some(d=>d.serial_number===row.serial_number));
   if (!record) throw new Error('No original raw punch is available for the duplicate-delivery check.');
-  for (const ref of [project,'lorrfeyiqgdfxdjqnpmn']) {
-    const response=await fetch(`https://${ref}.supabase.co/functions/v1/iclock/iclock/cdata?SN=${encodeURIComponent(record.serial_number)}&table=ATTLOG`, {method:'POST',headers:{'Content-Type':'text/plain'},body:record.raw});
+  for (const path of ['cdata','cdata.aspx']) {
+    const response=await fetch(`https://${project}.supabase.co/functions/v1/iclock/iclock/${path}?SN=${encodeURIComponent(record.serial_number)}&table=ATTLOG`, {method:'POST',headers:{'Content-Type':'text/plain'},body:record.raw});
     const body=await response.text();
-    assert.ok(response.ok && body.startsWith('OK:'),`Device endpoint ${ref} failed (${response.status})`);
+    assert.ok(response.ok && body.startsWith('OK:'),`Device endpoint ${path} failed (${response.status})`);
   }
-  console.log('Direct receiver and legacy forwarding verified with an existing duplicate punch.');
+  console.log('Direct CRM receiver and K90 .aspx compatibility verified with an existing duplicate punch.');
 }
 if (process.argv.includes('--send-resets')) {
   const originalProfilesFile = readdirSync(folder).filter(name => /^target-profiles-\d+\.json$/.test(name)).sort()[0];

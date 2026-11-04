@@ -21,7 +21,8 @@ Deno.serve(async (request) => {
     const serialNumber = (url.searchParams.get("SN") || "").trim();
     if (!serialNumber) return text("Missing device serial number", 400);
     if (allowedSerials.length && !allowedSerials.includes(serialNumber)) return text("Unknown device", 403);
-    const pathname = url.pathname.toLowerCase();
+    // Older K90 firmware appends .aspx to the same iClock protocol routes.
+    const pathname = url.pathname.toLowerCase().replace(/\.aspx$/, "");
     const supported = (request.method === "GET" && (pathname.endsWith("/iclock/cdata") || pathname.endsWith("/iclock/getrequest")))
       || (request.method === "POST" && (pathname.endsWith("/iclock/cdata") || pathname.endsWith("/iclock/devicecmd")));
     if (!supported) return text("Not Found", 404);
