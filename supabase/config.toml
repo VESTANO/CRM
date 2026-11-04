@@ -1,8 +1,8 @@
 project_id = "qdtgrddhpbwrutvojpes"
 
 [auth]
-site_url = "https://vestano.github.io/CRM/"
-additional_redirect_urls = ["https://vestano.github.io/CRM/", "http://127.0.0.1:5173/", "http://localhost:5173/"]
+site_url = "https://vestano.online/"
+additional_redirect_urls = ["https://vestano.online/", "https://www.vestano.online/", "https://vestano.github.io/CRM/", "http://127.0.0.1:5173/", "http://localhost:5173/"]
 
 [functions.crm-api]
 verify_jwt = true
