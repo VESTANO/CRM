@@ -11,6 +11,7 @@ media/
 staticfiles/
 tmp/
 supabase/.temp/
+**/supabase/.temp/
 frontend/node_modules/
 frontend/dist/
 backend/static/frontend/

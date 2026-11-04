@@ -379,10 +379,10 @@ async function authenticate(request: Request): Promise<Context> {
 }
 
 function attendanceAdminClient() {
-  const url = Deno.env.get("ATTENDANCE_SUPABASE_URL") || "https://lorrfeyiqgdfxdjqnpmn.supabase.co";
-  const key = Deno.env.get("ATTENDANCE_SUPABASE_SERVICE_ROLE_KEY") || "";
-  if (!key) fail(503, "Attendance single login needs server configuration. Ask an administrator to configure the attendance connection.");
-  return createClient(url, key, {
+  // Compatibility for older clients: Attendance now uses CRM's own identities.
+  // Keep token verification on a separate client so it cannot replace the
+  // service-role session used by the rest of this Edge Function.
+  return createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
   });
 }
@@ -2086,20 +2086,20 @@ async function overtimeContext(profile: any, workDate: string) {
   const { data, error } = await adminClient.from("attendance_records").select("punched_at")
     .eq("user_id", profile.id).gte("punched_at", workDate + "T00:00:00+05:30")
     .lte("punched_at", workDate + "T23:59:59+05:30").order("punched_at");
-  // OT requests must still be accepted when the attendance-punch integration
-  // has not been installed in this CRM Supabase project. The request remains
-  // pending and the approver will see that a final punch-out is unavailable.
-  if (error && /attendance_records|schema cache|does not exist/i.test(error.message || "")) {
-    return { start, end, officialEnd, actualPunchOut: null, punchCount: 0 };
-  }
   checkDb(error);
   const punches = data || [];
-  const actualPunchOut = punches.length >= 2 ? punches[punches.length - 1].punched_at : null;
+  const lastPunch = punches.at(-1)?.punched_at;
+  const officialEndAt = new Date(`${workDate}T${officialEnd}:00+05:30`).getTime();
+  const actualPunchOut = punches.length >= 2 && punches.length % 2 === 0
+    && new Date(lastPunch).getTime() > officialEndAt ? lastPunch : null;
   return { start, end, officialEnd, actualPunchOut, punchCount: punches.length };
 }
 
 async function serializeOvertime(item: any) {
   const employee = await adminUserById(item.employee_id);
+  // Pending requests are commonly submitted before clocking out. Read the
+  // current punches so the approval button becomes available after clock-out.
+  const context = item.status === "pending" ? await overtimeContext(employee, item.work_date) : null;
   const reviewedBy = item.reviewed_by ? await profileName(item.reviewed_by) : null;
   return {
     id: item.id, employeeId: employee.employee_id, employeeName: employee.name || employee.employee_id,
@@ -2107,7 +2107,7 @@ async function serializeOvertime(item: any) {
     assignedStartTime: String(item.assigned_start_time).slice(0, 5),
     assignedEndTime: String(item.assigned_end_time).slice(0, 5),
     officialEndTime: String(item.official_end_time).slice(0, 5),
-    declaredLeaveTime: item.declared_leave_time, actualPunchOut: item.actual_punch_out,
+    declaredLeaveTime: item.declared_leave_time, actualPunchOut: context ? context.actualPunchOut : item.actual_punch_out,
     requestedMinutes: item.requested_minutes, approvedMinutes: item.approved_minutes,
     status: item.status, rejectionMessage: item.rejection_message,
     reviewedBy, reviewedAt: item.reviewed_at, createdAt: item.created_at,

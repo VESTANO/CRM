@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { authApi, setApiCacheScope } from "../services/api.js";
 import { crmSupabase } from "../services/crmSupabase.js";
 
-import { attendanceSupabase, runAttendanceAuthTask } from "../services/attendanceSupabase.js";
+import { clearAttendanceReadCache } from "../services/attendanceSupabase.js";
 
 const AuthContext = createContext(null);
 const AUTH_TIMEOUT_MS = 15_000;
@@ -43,7 +43,7 @@ export function AuthProvider({ children }) {
     const expireSession = () => {
       setApiCacheScope(null);
       setUser(null); setCsrfToken("");
-      runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" })).catch(() => {});
+      clearAttendanceReadCache();
     };
     window.addEventListener("crm:session-expired", expireSession);
     const { data: authListener } = crmSupabase.auth.onAuthStateChange((event, session) => {

@@ -7,6 +7,7 @@ import { AuthProvider } from "./hooks/useAuth.jsx";
 import { AttendanceAuthProvider } from "./hooks/useAttendanceAuth.jsx";
 import { AppBootLoader } from "./components/RequestState.jsx";
 import ConnectionGuard from "./components/ConnectionGuard.jsx";
+import PasswordRecoveryGate from "./components/PasswordRecoveryGate.jsx";
 import StatusPage, { ServerErrorPage } from "./pages/StatusPage.jsx";
 
 // Route-level chunks make the initial CRM shell fast; each screen is fetched
@@ -45,6 +46,7 @@ export default function App() {
       <ConnectionGuard>
       <AuthProvider>
         <Suspense fallback={<AppBootLoader label="Opening CRM page" />}>
+        <PasswordRecoveryGate>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/offline" element={<StatusPage kind="offline" />} />
@@ -100,6 +102,7 @@ export default function App() {
           </Route>
           <Route path="*" element={<StatusPage />} />
         </Routes>
+        </PasswordRecoveryGate>
         </Suspense>
       </AuthProvider>
       </ConnectionGuard>

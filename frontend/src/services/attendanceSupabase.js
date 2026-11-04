@@ -1,14 +1,11 @@
-import { createClient } from "@supabase/supabase-js";
 import { createReadCache } from "./readCache.js";
+import { crmSupabase, CRM_SUPABASE_URL, CRM_SUPABASE_PUBLISHABLE_KEY } from "./crmSupabase.js";
 
-export const ATTENDANCE_SUPABASE_URL = "https://lorrfeyiqgdfxdjqnpmn.supabase.co";
-export const ATTENDANCE_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Mh4xVEoQFpooPU0uRblTow_AQmf0YiG";
+export const ATTENDANCE_SUPABASE_URL = CRM_SUPABASE_URL;
+export const ATTENDANCE_SUPABASE_PUBLISHABLE_KEY = CRM_SUPABASE_PUBLISHABLE_KEY;
 
-export const attendanceSupabase = createClient(
-  ATTENDANCE_SUPABASE_URL,
-  ATTENDANCE_SUPABASE_PUBLISHABLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: false } },
-);
+// Attendance and CRM share the same identity, token refresh, and logout.
+export const attendanceSupabase = crmSupabase;
 
 const readError = (error, fallback) => error?.message || fallback;
 const attendanceReads = createReadCache();
@@ -18,7 +15,7 @@ const attendanceReadKey = (type, profile, filters = {}) => JSON.stringify([
   filters.from || "", filters.to || "", filters.userId || "", filters.employeeId || "", filters.status || "",
 ]);
 attendanceSupabase.auth.onAuthStateChange((event) => {
-  if (event === "SIGNED_OUT") attendanceReads.clear();
+  if (["SIGNED_OUT", "SIGNED_IN", "USER_UPDATED"].includes(event)) attendanceReads.clear();
 });
 
 export function fetchAttendanceEmployees(profile) {
@@ -40,18 +37,9 @@ export async function resolveAttendanceProfile(session) {
     .single();
   if (error) throw new Error(readError(error, "Unable to load the attendance profile."));
   if (!data?.active) {
-    await attendanceSupabase.auth.signOut();
     throw new Error("This attendance account is inactive.");
   }
   return mapProfile(data);
-}
-
-// Session changes are serialized to prevent a late request from undoing logout.
-let authQueue = Promise.resolve();
-export function runAttendanceAuthTask(task) {
-  const result = authQueue.then(task, task);
-  authQueue = result.catch(() => {});
-  return result;
 }
 
 export async function getAttendanceSession() {
@@ -250,13 +238,6 @@ export function isAttendanceAdmin(profile) { return ["super_admin", "admin"].inc
 export function isAttendanceSuperAdmin(profile) { return normalizedAttendanceRole(profile) === "super_admin"; }
 
 function mapProfile(profile) {
-  const employeeRole = profile.role === "employee";
-  const employeeId = String(profile.employee_id || "").trim().toUpperCase();
-  const requestedShift = employeeRole
-    ? employeeId === "EMP13"
-      ? { start: "09:00", end: "17:00" }
-      : { start: "09:30", end: "17:30" }
-    : null;
   return {
     id: profile.id,
     employeeId: profile.employee_id,
@@ -268,8 +249,8 @@ function mapProfile(profile) {
     role: profile.role,
     profileImage: profile.profile_image || "",
     createdAt: profile.created_at,
-    shiftStartTime: requestedShift?.start || String(profile.shift_start_time || "09:00").slice(0, 5),
-    shiftEndTime: requestedShift?.end || String(profile.shift_end_time || "17:30").slice(0, 5),
+    shiftStartTime: String(profile.shift_start_time || "09:30").slice(0, 5),
+    shiftEndTime: String(profile.shift_end_time || "17:30").slice(0, 5),
   };
 }
 

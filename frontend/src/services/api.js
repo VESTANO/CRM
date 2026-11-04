@@ -3,7 +3,7 @@ import axios from "axios";
 import { salesRequestParams } from "../utils/sales.js";
 import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./crmSupabase.js";
 
-import { attendanceSupabase, runAttendanceAuthTask } from "./attendanceSupabase.js";
+import { clearAttendanceReadCache } from "./attendanceSupabase.js";
 
 const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
@@ -266,7 +266,7 @@ export const authApi = {
       }).catch(() => {});
     }
     const { error } = await crmSupabase.auth.signOut();
-    await runAttendanceAuthTask(() => attendanceSupabase.auth.signOut({ scope: "local" }));
+    clearAttendanceReadCache();
     if (error) throw error;
     currentUserCache = null;
     currentUserRequest = null;
