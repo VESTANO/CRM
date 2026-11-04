@@ -1,5 +1,7 @@
 import { createReadCache } from "./readCache.js";
 import { crmSupabase, CRM_SUPABASE_URL, CRM_SUPABASE_PUBLISHABLE_KEY } from "./crmSupabase.js";
+import { readCrmProfile } from "./crmProfile.js";
+import { createAttendanceFeed } from "./attendanceFeed.js";
 
 export const ATTENDANCE_SUPABASE_URL = CRM_SUPABASE_URL;
 export const ATTENDANCE_SUPABASE_PUBLISHABLE_KEY = CRM_SUPABASE_PUBLISHABLE_KEY;
@@ -9,33 +11,31 @@ export const attendanceSupabase = crmSupabase;
 
 const readError = (error, fallback) => error?.message || fallback;
 const attendanceReads = createReadCache();
-export function clearAttendanceReadCache() { attendanceReads.clear(); }
+const attendanceSnapshots = new Map();
+let attendanceGeneration = 0;
+let channelSequence = 0;
+export function clearAttendanceReadCache() { attendanceReads.clear(); attendanceSnapshots.clear(); attendanceGeneration += 1; }
 const attendanceReadKey = (type, profile, filters = {}) => JSON.stringify([
   type, profile?.id, profile?.role, profile?.employeeId,
   filters.from || "", filters.to || "", filters.userId || "", filters.employeeId || "", filters.status || "",
 ]);
 attendanceSupabase.auth.onAuthStateChange((event) => {
-  if (["SIGNED_OUT", "SIGNED_IN", "USER_UPDATED"].includes(event)) attendanceReads.clear();
+  if (["SIGNED_OUT", "SIGNED_IN", "USER_UPDATED"].includes(event)) clearAttendanceReadCache();
 });
 
 export function fetchAttendanceEmployees(profile) {
   if (!profile?.id) return Promise.reject(new Error("Sign in to the attendance system first."));
   if (!isAttendanceAdmin(profile)) return Promise.resolve([profile]);
   return attendanceReads.read(attendanceReadKey("employees", profile), async () => {
-    const { data, error } = await attendanceSupabase.from("profiles").select("*").order("name");
+    const { data, error } = await attendanceSupabase.from("profiles").select("id,employee_id,name,email,department,manager,active,role,created_at,shift_start_time,shift_end_time").order("name");
     if (error) throw new Error(readError(error, "Unable to load attendance employees."));
     return (data || []).map(mapProfile);
-  });
+  }, 60_000);
 }
 
 export async function resolveAttendanceProfile(session) {
   if (!session?.user?.id) return null;
-  const { data, error } = await attendanceSupabase
-    .from("profiles")
-    .select("*")
-    .eq("id", session.user.id)
-    .single();
-  if (error) throw new Error(readError(error, "Unable to load the attendance profile."));
+  const data = await readCrmProfile(session.user.id);
   if (!data?.active) {
     throw new Error("This attendance account is inactive.");
   }
@@ -47,7 +47,9 @@ export async function getAttendanceSession() {
   if (error) throw new Error(readError(error, "Unable to restore the attendance session."));
   if (!data.session) return { session: null, profile: null, permission: null };
   const profile = await resolveAttendanceProfile(data.session);
-  const permission = await verifyAttendanceRead(profile);
+  // Actual attendance reads remain subject to RLS. Repeating an extra record
+  // query here delayed every page without adding an authorization boundary.
+  const permission = { allowed: true, message: "Attendance is available for the active CRM account." };
   return { session: data.session, profile, permission };
 }
 
@@ -60,53 +62,102 @@ export async function verifyAttendanceRead(profile) {
   return { allowed: true, message: "Attendance records are available under the existing Supabase policies." };
 }
 
-export function fetchLiveAttendance(filters) {
-  if (!filters.profile?.id) return Promise.reject(new Error("Sign in to the attendance system first."));
-  return attendanceReads.read(attendanceReadKey("attendance", filters.profile, filters), () => loadLiveAttendance(filters));
+const attendanceColumns = "id,user_id,employee_id,employee_name,punch_code,punched_at,serial_number,status,verify_mode,created_at,updated_at";
+const nextDate = value => new Date(Date.parse(`${value}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+function attendanceSource({ from = "", to = "", userId = "", profile }) {
+  const admin = isAttendanceAdmin(profile);
+  const scopedUser = admin ? userId : profile.id;
+  const scope = (query, dates = true) => {
+    if (scopedUser) query = query.eq("user_id", scopedUser);
+    if (dates && from) query = query.gte("punched_at", `${from}T00:00:00+05:30`);
+    if (dates && to) query = query.lt("punched_at", `${nextDate(to)}T00:00:00+05:30`);
+    return query;
+  };
+  const read = async query => {
+    const { data, error } = await query;
+    if (error) throw new Error(readError(error, "Unable to load attendance."));
+    return data || [];
+  };
+  return {
+    accepts: row => (!scopedUser || row.user_id === scopedUser)
+      && (!from || Date.parse(row.punched_at) >= Date.parse(`${from}T00:00:00+05:30`))
+      && (!to || Date.parse(row.punched_at) < Date.parse(`${nextDate(to)}T00:00:00+05:30`)),
+    async version(signal) {
+      const rows = await read(scope(attendanceSupabase.from("attendance_records").select("updated_at"), false)
+        .order("updated_at", { ascending: false }).limit(1).abortSignal(signal));
+      return rows[0]?.updated_at;
+    },
+    page({ cursor, limit, signal }) {
+      let query = scope(attendanceSupabase.from("attendance_records").select(attendanceColumns))
+        .order("punched_at", { ascending: false }).order("id", { ascending: false }).limit(limit);
+      if (cursor) query = query.or(`punched_at.lt.${cursor.punched_at},and(punched_at.eq.${cursor.punched_at},id.lt.${cursor.id})`);
+      return read(query.abortSignal(signal));
+    },
+    changes({ since, cursor, limit, signal }) {
+      // Date filtering happens in the store, so corrections moved outside the
+      // selected date range remove their old visible copy as well.
+      let query = scope(attendanceSupabase.from("attendance_records").select(attendanceColumns), false)
+        .gte("updated_at", since).order("updated_at").order("id").limit(limit);
+      if (cursor) query = query.or(`updated_at.gt.${cursor.updated_at},and(updated_at.eq.${cursor.updated_at},id.gt.${cursor.id})`);
+      return read(query.abortSignal(signal));
+    },
+    ids({ cursor, limit, signal }) {
+      let query = scope(attendanceSupabase.from("attendance_records").select("id")).order("id").limit(limit);
+      if (cursor) query = query.gt("id", cursor);
+      return read(query.abortSignal(signal));
+    },
+    metadata(signal, force = false) {
+      if (force) attendanceReads.clear();
+      return attendanceReads.read(attendanceReadKey("attendance-metadata", profile), async () => {
+        const [employees, devices, mappings] = await Promise.all([
+          fetchAttendanceEmployees(profile),
+          admin ? read(attendanceSupabase.from("attendance_devices").select("serial_number,model,last_seen").order("last_seen", { ascending: false })) : [],
+          admin ? read(attendanceSupabase.from("attendance_mappings").select("punch_code,user_id")) : [],
+        ]);
+        return { employees, devices, mappings };
+      }, 60_000);
+    },
+    subscribe({ onRecord, onMetadata, onConnected }) {
+      const channel = attendanceSupabase.channel(`attendance:${profile.id}:${++channelSequence}`, { config: { postgres_changes_options: { wait: true } } })
+        .on("postgres_changes", { event: "*", schema: "public", table: "attendance_records", ...(scopedUser ? { filter: `user_id=eq.${scopedUser}` } : {}) }, onRecord);
+      for (const table of ["profiles", ...(admin ? ["attendance_devices", "attendance_mappings"] : [])]) {
+        channel.on("postgres_changes", { event: "*", schema: "public", table, ...(!admin ? { filter: `id=eq.${profile.id}` } : {}) }, event => onMetadata({ ...event, table }));
+      }
+      channel.subscribe(status => { if (status === "SUBSCRIBED") onConnected(); });
+      return () => { void attendanceSupabase.removeChannel(channel); };
+    },
+  };
 }
 
-async function loadLiveAttendance({ from = "", to = "", userId = "", profile }) {
+export function watchLiveAttendance({ profile, onSnapshot, onError, isVisible, ...filters }) {
   if (!profile?.id) throw new Error("Sign in to the attendance system first.");
-  let query = attendanceSupabase.from("attendance_records").select("*").order("punched_at", { ascending: false });
-  if (isAttendanceAdmin(profile) && userId) query = query.eq("user_id", userId);
-  if (!isAttendanceAdmin(profile)) query = query.eq("user_id", profile.id);
-  if (from) query = query.gte("punched_at", `${from}T00:00:00+05:30`);
-  if (to) query = query.lte("punched_at", `${to}T23:59:59+05:30`);
-  const admin = isAttendanceAdmin(profile);
-  const [recordResponse, employees, deviceResponse, mappingResponse] = await Promise.all([
-    query,
-    fetchAttendanceEmployees(profile),
-    admin ? attendanceSupabase.from("attendance_devices").select("*").order("last_seen", { ascending: false }) : { data: [] },
-    admin ? attendanceSupabase.from("attendance_mappings").select("*") : { data: [] },
-  ]);
-  const error = recordResponse.error || deviceResponse.error || mappingResponse.error;
-  if (error) throw new Error(readError(error, "Unable to load live attendance records."));
-  const records = recordResponse.data || [];
-  const devices = deviceResponse.data || [];
-  let punchCodes = [];
-  if (admin) {
-    const mappings = mappingResponse.data || [];
-    const names = new Map(employees.map((item) => [item.id, item.name]));
-    const mappingByCode = new Map((mappings || []).map((item) => [String(item.punch_code), item.user_id]));
-    punchCodes = [...new Set((records || []).map((record) => String(record.punch_code)))].map((punchCode) => ({
-      punchCode,
-      userId: mappingByCode.get(punchCode) || "",
-      employeeName: names.get(mappingByCode.get(punchCode)) || "",
-    }));
-  }
-  const normalized = (records || []).map(mapAttendance);
-  const dates = normalized.map((record) => record.timestamp.slice(0, 10)).filter(Boolean).sort();
+  const key = attendanceReadKey("feed", profile, filters);
+  const saved = attendanceSnapshots.get(key);
+  const cached = saved && Date.now() - saved.savedAt < 60_000 ? saved : undefined;
+  const generation = attendanceGeneration;
+  const source = attendanceSource({ profile, ...filters });
+  const feed = createAttendanceFeed({ source, mapRecord: mapAttendance, accepts: source.accepts, onSnapshot, onError, isVisible, cached });
   return {
-    records: normalized,
-    employees,
-    punchCodes,
-    devices,
-    availableFrom: dates[0] || "",
-    availableTo: dates.at(-1) || "",
-    lastSync: new Date().toISOString(),
-    source: "Live Vestano Supabase attendance",
-    deviceConfig: {},
+    ready: feed.ready, wake: feed.wake,
+    stop() {
+      const snapshot = feed.stop();
+      if (snapshot.metadata && snapshot.complete && attendanceGeneration === generation) {
+        attendanceSnapshots.set(key, { ...snapshot, savedAt: Date.now() });
+        while (attendanceSnapshots.size > 8) attendanceSnapshots.delete(attendanceSnapshots.keys().next().value);
+      }
+    },
   };
+}
+
+export async function fetchLiveAttendance(filters) {
+  let feed;
+  try {
+    feed = watchLiveAttendance({ ...filters, onSnapshot: () => {}, onError: () => {} });
+    const data = await feed.ready;
+    if (!data) throw new Error("Unable to load attendance.");
+    return data;
+  } finally { feed?.stop(); }
 }
 
 export function fetchLiveTimesheet(filters) {
@@ -254,6 +305,7 @@ function mapProfile(profile) {
   };
 }
 
+const punchTimestampFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
 function mapAttendance(record) {
   return {
     id: record.id,
@@ -261,7 +313,7 @@ function mapAttendance(record) {
     employeeId: record.employee_id,
     employeeName: record.employee_name,
     punchCode: record.punch_code,
-    timestamp: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(new Date(record.punched_at)).replace(", ", " "),
+    timestamp: punchTimestampFormatter.format(new Date(record.punched_at)).replace(", ", " "),
     serialNumber: record.serial_number,
     status: record.status,
     verifyMode: record.verify_mode,

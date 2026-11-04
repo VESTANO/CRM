@@ -37,6 +37,9 @@ jobs:
           npm run build -- --mode pages
           cp dist/index.html dist/404.html
           touch dist/.nojekyll
+      - name: Verify live attendance behavior
+        working-directory: frontend
+        run: node --test src/services/attendanceFeed.test.mjs src/services/profileReadCache.test.mjs src/utils/attendance.test.mjs
       - name: Verify reminder delivery assets and tests
         working-directory: frontend
         run: |

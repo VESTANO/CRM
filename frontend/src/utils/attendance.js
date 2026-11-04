@@ -2,9 +2,11 @@
 const REQUIRED_NET_WORKING_HOURS = 7;
 const ATTENDANCE_GRACE_MINUTES = 5;
 export const DEFAULT_EMPLOYEE_SHIFT = { shiftStartTime: "09:30", shiftEndTime: "17:30" };
+const attendanceDateFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" });
+const attendanceTimeFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
 export function dateInputValue(date) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  return attendanceDateFormatter.format(date);
 }
 
 export function timeFromTimestamp(timestamp) {
@@ -41,7 +43,7 @@ export function overlapHours(startTime, endTime, rangeStart, rangeEnd) {
 }
 
 export function clockTime(date) {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+  return attendanceTimeFormatter.format(date);
 }
 
 export function countedAttendanceTime(timestamp, shift, boundary) {

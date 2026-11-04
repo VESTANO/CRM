@@ -2,6 +2,7 @@ import { clearReminderDevice, reminderWorkerUrl } from "./reminderPush.js";
 import axios from "axios";
 import { salesRequestParams } from "../utils/sales.js";
 import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./crmSupabase.js";
+import { clearCrmProfileCache, readCrmProfile } from "./crmProfile.js";
 
 import { clearAttendanceReadCache } from "./attendanceSupabase.js";
 
@@ -192,8 +193,7 @@ async function currentCrmUser() {
   if (currentUserCache?.id === session.user.id && Date.now() - currentUserCache.createdAt < 5_000) return currentUserCache.user;
   if (currentUserRequest?.id === session.user.id) return currentUserRequest.promise;
   const promise = (async () => {
-    const { data: profile, error } = await crmSupabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
-    if (error) throw error;
+    const profile = await readCrmProfile(session.user.id);
     if (!profile?.active) {
       await crmSupabase.auth.signOut();
       return null;
@@ -267,6 +267,7 @@ export const authApi = {
     }
     const { error } = await crmSupabase.auth.signOut();
     clearAttendanceReadCache();
+    clearCrmProfileCache();
     if (error) throw error;
     currentUserCache = null;
     currentUserRequest = null;
