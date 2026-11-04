@@ -42,7 +42,7 @@ const AdminUserDatasets = lazy(() => import("./pages/AdminUserDatasets.jsx"));
 
 export default function App() {
   return (
-    <BrowserRouter basename={import.meta.env.MODE === "pages" || import.meta.env.VITE_PAGES_BUILD === "true" ? "/CRM" : "/"}>
+    <BrowserRouter basename={import.meta.env.MODE === "pages" || import.meta.env.VITE_PAGES_BUILD === "true" ? import.meta.env.BASE_URL : "/"}>
       <ConnectionGuard>
       <AuthProvider>
         <Suspense fallback={<AppBootLoader label="Opening CRM page" />}>
