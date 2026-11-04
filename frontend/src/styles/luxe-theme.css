@@ -630,3 +630,85 @@ a.sidebar-link.active:hover,
   .timesheet-filters .form-select,
   .timesheet-filters .btn { min-height: 36px; font-size: 0.82rem; }
 }
+
+/* Shared workspace rhythm: keep every page's cards, controls, and tables
+   visually consistent without requiring page-specific layout fixes. */
+.content-wrap > :is(.panel, .summary-card, .delete-panel, .responsive-table, .table-responsive) {
+  max-width: 100%;
+}
+.content-wrap > .table-responsive,
+.content-wrap > .responsive-table {
+  margin-top: 1.5rem;
+  margin-bottom: var(--section-gap);
+}
+.panel > :last-child,
+.summary-card > :last-child,
+.delete-panel > :last-child { margin-bottom: 0; }
+.panel > .table-responsive:last-child { margin-bottom: 0; }
+
+.table-responsive {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-color: var(--luxe-taupe) #F5F1E9;
+}
+.table-responsive::-webkit-scrollbar { height: 9px; }
+.table-responsive::-webkit-scrollbar-track { background: #F5F1E9; }
+.table-responsive::-webkit-scrollbar-thumb { border: 2px solid #F5F1E9; border-radius: 999px; background: var(--luxe-taupe); }
+.table > :not(caption) > * > * { vertical-align: middle; }
+.table thead th { padding-top: 0.9rem; padding-bottom: 0.9rem; }
+.table tbody td { padding-top: 0.95rem; padding-bottom: 0.95rem; }
+.table :is(.btn, .badge) { white-space: nowrap; }
+.table-actions,
+.dataset-actions,
+.sales-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.table-actions .btn,
+.dataset-actions .btn,
+.sales-actions .btn { margin: 0 !important; }
+
+.panel :is(.btn-group, .d-flex.gap-2, .d-flex.gap-3) { row-gap: 0.65rem; }
+.btn-sm { min-height: 34px; padding: 0.35rem 0.7rem; }
+.btn:focus-visible { box-shadow: 0 0 0 0.24rem rgba(217, 119, 54, 0.22); }
+
+@media (max-width: 991.98px) {
+  .content-wrap { padding: 1.5rem 1.25rem; }
+  .page-header { gap: 1rem; margin-bottom: 1.25rem; padding-bottom: 1rem; }
+  .panel, .summary-card, .delete-panel { padding: clamp(1rem, 2.4vw, 1.5rem); }
+  .table-responsive { border-radius: 14px; }
+}
+
+@media (max-width: 767.98px) {
+  .content-wrap { padding: 1rem 0.75rem 1.5rem; }
+  .page-header { margin-bottom: 1rem; padding-bottom: 0.85rem; }
+  .page-header h1 { font-size: clamp(1.65rem, 8vw, 2.1rem); }
+  .panel, .summary-card, .delete-panel { padding: 1rem; border-radius: 14px; }
+  .panel { margin-bottom: 1rem; }
+  .content-wrap > .table-responsive,
+  .content-wrap > .responsive-table { margin-top: 1rem; margin-bottom: 1rem; }
+  .table-responsive { border-radius: 12px; }
+  .table thead th { padding: 0.75rem 0.85rem; font-size: 0.66rem; }
+  .table tbody td { padding: 0.8rem 0.85rem; }
+  .table-actions,
+  .dataset-actions,
+  .sales-actions { gap: 0.4rem; }
+  .table-actions .btn,
+  .dataset-actions .btn,
+  .sales-actions .btn { min-height: 36px; padding: 0.35rem 0.6rem; font-size: 0.78rem; }
+  .panel > .d-flex.justify-content-between { align-items: stretch !important; }
+  .panel > .d-flex.justify-content-between > .btn,
+  .panel > .d-flex.justify-content-between > .btn-group { width: 100%; }
+  .panel > .d-flex.justify-content-between > .btn-group .btn { flex: 1 1 auto; }
+}
+
+@media (max-width: 420px) {
+  .content-wrap { padding-right: 0.6rem; padding-left: 0.6rem; }
+  .panel, .summary-card, .delete-panel { padding: 0.85rem; }
+  .btn:not(.btn-sm) { min-height: 40px; padding-right: 0.8rem; padding-left: 0.8rem; }
+  .table-responsive { border-radius: 11px; }
+}
