@@ -300,7 +300,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           <SidebarNavLink
             user={user}
             key={item.to}
-            className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""} ${
+            className={({ isActive }) => `sidebar-link ${isActive && !openMenu ? "active" : ""} ${
               (item.to === "/notifications" && notificationCount > 0) ||
               (item.to === "/callbacks" && todayCallbackCount > 0)
                 ? "has-alert"
