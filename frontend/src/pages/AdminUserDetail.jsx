@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDateTime } from "../utils/formatters.js";
 
 export default function AdminUserDetail() {
   const { userId } = useParams();
+  const navigate = useNavigate();
   const { csrfToken } = useAuth();
   const [user, setUser] = useState(() => peekCachedResponse(`/admin/users/${userId}/`)?.data || null);
   const [error, setError] = useState("");
@@ -50,6 +51,7 @@ export default function AdminUserDetail() {
           <p className="text-secondary mb-0">{user.is_superuser ? "Global Super Admin account, independent of every store." : "User account, access status, and CRM ownership."}</p>
         </div>
         <div className="d-flex flex-wrap gap-2">
+          <button className="btn btn-outline-secondary" type="button" onClick={() => navigate(-1)}>Back</button>
           <Link className="btn btn-primary" to={`/admin-panel/users/${user.id}/edit`}>{user.is_superuser ? "Edit Super Admin" : "Edit user"}</Link>
           {!user.is_admin && (
             <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/password`}>
