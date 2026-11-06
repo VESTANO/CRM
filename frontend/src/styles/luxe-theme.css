@@ -411,7 +411,22 @@ a.sidebar-link.active:hover,
 .offcanvas-title { color: var(--luxe-ivory); font-family: Inter, "Aptos", "Segoe UI", sans-serif; font-size: 0.92rem; font-weight: 750; letter-spacing: 0.12em; }
 .offcanvas-header { border-bottom: 1px solid rgba(245, 241, 233, 0.14); }
 .offcanvas .btn-close { filter: invert(1) grayscale(1); }
-#mobileNav .offcanvas-body { min-height: 0; overflow: hidden; gap: 1.25rem; }
+#mobileNav .offcanvas-body {
+  min-height: 0;
+  overflow: hidden;
+  gap: 1.25rem;
+}
+#mobileNav .sidebar-menu-scroll {
+  /* Keep the account card fixed at the bottom while long groups such as
+     Attendance can always be scrolled on a small touch screen. */
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 1rem;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
 #mobileNav .offcanvas-header,
 #mobileNav .sidebar-user { flex-shrink: 0; }
 .offcanvas-body .sidebar-user { margin-top: auto; }
@@ -692,6 +707,12 @@ a.sidebar-link.active:hover,
   .content-wrap > .table-responsive,
   .content-wrap > .responsive-table { margin-top: 1rem; margin-bottom: 1rem; }
   .table-responsive { border-radius: 12px; }
+  .responsive-table .table-responsive {
+    /* Attendance tables stay wide enough to read; make their horizontal
+       scroll gesture unambiguous on phones. */
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
   .table thead th { padding: 0.75rem 0.85rem; font-size: 0.66rem; }
   .table tbody td { padding: 0.8rem 0.85rem; }
   .table-actions,
