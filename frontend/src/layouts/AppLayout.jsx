@@ -163,21 +163,23 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
   const navigate = useNavigate();
   const location = useLocation();
   const customerRouteActive = location.pathname.startsWith("/datasets") || location.pathname.startsWith("/customers");
-  const timesheetRouteActive = ["/attendance/timesheet", "/attendance/approvals"].includes(location.pathname);
-  const attendanceRouteActive = location.pathname.startsWith("/attendance") && !timesheetRouteActive;
+  const timesheetSectionOpen = ["/attendance/timesheet", "/attendance/approvals"].includes(location.pathname);
+  const timesheetRouteActive = location.pathname === "/attendance/timesheet";
+  const attendanceSectionOpen = location.pathname.startsWith("/attendance") && !timesheetSectionOpen;
+  const attendanceRouteActive = location.pathname === "/attendance";
   const [customersOpen, setCustomersOpen] = useState(customerRouteActive);
-  const [attendanceOpen, setAttendanceOpen] = useState(attendanceRouteActive);
-  const [timesheetOpen, setTimesheetOpen] = useState(timesheetRouteActive);
+  const [attendanceOpen, setAttendanceOpen] = useState(attendanceSectionOpen);
+  const [timesheetOpen, setTimesheetOpen] = useState(timesheetSectionOpen);
 
-  useEffect(() => { setTimesheetOpen(timesheetRouteActive); }, [timesheetRouteActive]);
+  useEffect(() => { setTimesheetOpen(timesheetSectionOpen); }, [timesheetSectionOpen]);
 
   useEffect(() => {
     setCustomersOpen(customerRouteActive);
   }, [customerRouteActive]);
 
   useEffect(() => {
-    setAttendanceOpen(attendanceRouteActive);
-  }, [attendanceRouteActive]);
+    setAttendanceOpen(attendanceSectionOpen);
+  }, [attendanceSectionOpen]);
 
   const handleNavigation = (event, path) => {
     if (!mobile) return;
