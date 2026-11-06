@@ -2002,8 +2002,8 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const role = body.role === undefined ? "employee" : body.role;
       const errors: Record<string, string[]> = {};
       if (role !== "employee" && role !== "admin" && role !== "super_admin") errors.role = ["Choose Employee, Admin, or Super Admin."];
-      if (role === "super_admin") errors.role = ["Super Admin accounts are global and cannot be created from a store."];
-      if (isSuperAdmin(ctx) && !body.store_id) errors.store_id = ["Select a store first, then add the account from that store."];
+      if (role === "super_admin" && !isSuperAdmin(ctx)) errors.role = ["Only a Super Admin can create another Super Admin."];
+      if (role !== "super_admin" && isSuperAdmin(ctx) && !body.store_id) errors.store_id = ["Select a store first, then add the account from that store."];
       if (!username || username.length > 150) errors.username = ["Enter a username up to 150 characters."];
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = ["Enter a valid email address."];
       if (password1.length < 8) errors.password1 = ["This password must contain at least 8 characters."];
@@ -2023,11 +2023,11 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       if (!profile) {
         const { data: inserted, error: insertError } = await adminClient.from("profiles").insert({
           id: created.user.id, employee_id: username, name: username, email, role, active: body.is_active !== false,
-          store_id: isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id,
+          store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id),
         }).select("*").single();
         checkDb(insertError); profile = inserted;
       } else {
-        const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false, store_id: isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id }).eq("id", profile.id).select("*").single();
+        const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false, store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id) }).eq("id", profile.id).select("*").single();
         checkDb(updateError); profile = updated;
       }
       try {

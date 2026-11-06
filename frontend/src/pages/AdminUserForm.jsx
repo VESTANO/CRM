@@ -9,9 +9,9 @@ export default function AdminUserForm() {
   const [searchParams] = useSearchParams();
   const edit = Boolean(userId);
   const navigate = useNavigate();
-  const { csrfToken } = useAuth();
+  const { csrfToken, user: signedInUser } = useAuth();
   const cachedUser = edit ? peekCachedResponse(`/admin/users/${userId}/`)?.data : null;
-  const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: searchParams.get("role") === "admin" ? "admin" : "employee", store_id: searchParams.get("store") || "", is_active: true, password1: "", password2: "" });
+  const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: searchParams.get("role") === "super_admin" ? "super_admin" : searchParams.get("role") === "admin" ? "admin" : "employee", store_id: searchParams.get("store") || "", is_active: true, password1: "", password2: "" });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(edit && !cachedUser);
   const [saving, setSaving] = useState(false);
@@ -64,14 +64,14 @@ export default function AdminUserForm() {
   };
 
   return <>
-    <div className="page-header mb-4"><h1 className="h2">{edit ? "Edit User" : values.role === "admin" ? "Add Admin" : "Add User"}</h1><p className="text-secondary">{edit ? "Update account details, access role, and active status." : "This account will be created in the store you selected."}</p></div>
+    <div className="page-header mb-4"><h1 className="h2">{edit ? "Edit User" : values.role === "super_admin" ? "Add Super Admin" : values.role === "admin" ? "Add Admin" : "Add User"}</h1><p className="text-secondary">{edit ? "Update account details, access role, and active status." : values.role === "super_admin" ? "This is a global account, independent of every store. Its email is used for password recovery." : "This account will be created in the store you selected."}</p></div>
     <div className="panel admin-form-panel">{loading ? <p className="mb-0" role="status">Loading user details…</p> : <form onSubmit={submit}>
       {errors.non_field_errors && <div className="alert alert-danger" role="alert"><FieldErrors errors={errors.non_field_errors} /></div>}
       {["username", "email"].map((name) => <div className="mb-3" key={name}><label className="form-label" htmlFor={`user-${name}`}>{name === "username" ? "Username" : "Email"}</label><input id={`user-${name}`} className="form-control" name={name} type={name === "email" ? "email" : "text"} value={values[name] || ""} onChange={change} /><FieldErrors errors={errors[name]} /></div>)}
       <div className="mb-3"><label className="form-label" htmlFor="user-role">Role</label><select id="user-role" className="form-select" name="role" value={values.role} onChange={change} disabled={values.role === "super_admin"}><option value="employee">User</option><option value="admin">Admin</option>{values.role === "super_admin" && <option value="super_admin">Super Admin</option>}</select>{values.role === "super_admin" && <div className="form-text">Super Admin is a global role and is not assigned to a store.</div>}<FieldErrors errors={errors.role} /></div>
       {!edit && ["password1", "password2"].map((name) => <div className="mb-3" key={name}><label className="form-label" htmlFor={`user-${name}`}>{name === "password1" ? "Password" : "Confirm password"}</label><PasswordInput id={`user-${name}`} name={name} value={values[name]} onChange={change} autoComplete={name === "password1" ? "new-password" : "new-password"} /><FieldErrors errors={errors[name]} /></div>)}
       <div className="form-check form-switch mb-3"><input id="user-active" className="form-check-input" type="checkbox" name="is_active" checked={values.is_active} onChange={change} /><label className="form-check-label" htmlFor="user-active">Active status</label></div>
-      <div className="d-flex flex-wrap gap-2"><button className="btn btn-primary" disabled={saving || (edit && !values.id)}>{saving ? "Saving…" : edit ? "Save Changes" : "Create User"}</button><Link className="btn btn-outline-secondary" to={edit ? `/admin-panel/users/${userId}` : "/admin-panel"}>Cancel</Link></div>
+      <div className="d-flex flex-wrap gap-2"><button className="btn btn-primary" disabled={saving || (edit && !values.id)}>{saving ? "Saving…" : edit ? "Save Changes" : values.role === "super_admin" ? "Create Super Admin" : "Create User"}</button><Link className="btn btn-outline-secondary" to={edit ? `/admin-panel/users/${userId}` : signedInUser?.is_superuser ? "/admin-panel/stores" : "/admin-panel"}>Cancel</Link></div>
     </form>}</div>
   </>;
 }
