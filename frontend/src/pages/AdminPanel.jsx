@@ -48,7 +48,7 @@ export default function AdminPanel() {
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskImages, setTaskImages] = useState([]);
   const [taskImagePreparing, setTaskImagePreparing] = useState(false);
-  const { csrfToken } = useAuth();
+  const { csrfToken, user } = useAuth();
 
   const loadTargets = async () => {
     setTargetsLoading(true);
@@ -220,10 +220,13 @@ export default function AdminPanel() {
           <h1 className="h2 mb-2">Admin Panel</h1>
           <p className="text-secondary mb-0">Manage users, datasets, and CRM activity.</p>
         </div>
-        <Link className="btn btn-primary" to="/admin-panel/users/add">
-          <i className="bi bi-person-plus me-1" />
-          Add User
-        </Link>
+        <div className="d-flex gap-2">
+          {user?.is_superuser && <Link className="btn btn-outline-secondary" to="/admin-panel/stores"><i className="bi bi-arrow-left me-1" />Back to Stores</Link>}
+          <Link className="btn btn-primary" to="/admin-panel/users/add">
+            <i className="bi bi-person-plus me-1" />
+            Add User
+          </Link>
+        </div>
       </div>
 
       {error && <div className="alert alert-warning" role="alert">{error} Showing the last loaded admin overview.</div>}

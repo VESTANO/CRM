@@ -199,7 +199,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
 
   if (user?.is_superuser && !activeStoreId()) {
     return <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>
-      <SidebarNavLink user={user} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`} to="/admin-panel/stores" onClick={(event) => handleNavigation(event, "/admin-panel/stores")}>
+      <SidebarNavLink user={user} className={() => `sidebar-link ${["/admin-panel/stores", "/admin-panel"].includes(location.pathname) ? "active" : ""}`} to="/admin-panel/stores" onClick={(event) => handleNavigation(event, "/admin-panel/stores")}>
         <i className="bi bi-shop" /><span>Stores</span>
       </SidebarNavLink>
       <SidebarNavLink user={user} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`} to="/admin-panel/users?role=super_admin" onClick={(event) => handleNavigation(event, "/admin-panel/users?role=super_admin")}>
@@ -339,7 +339,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
       )}
       {user?.is_superuser && (
         <>
-          <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`} to="/admin-panel/stores" end onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel/stores"); }}>
+          <SidebarNavLink user={user} className={() => `sidebar-link ${["/admin-panel/stores", "/admin-panel"].includes(location.pathname) ? "active" : ""}`} to="/admin-panel/stores" end onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel/stores"); }}>
             <i className="bi bi-shop" /><span>Stores</span>
           </SidebarNavLink>
           <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/users" && location.search.includes("role=super_admin") ? "active" : ""}`} to="/admin-panel/users?role=super_admin" onClick={(event) => { clearSelectedStore(); setOpenMenu(null); handleNavigation(event, "/admin-panel/users?role=super_admin"); }}>
