@@ -317,6 +317,17 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           <span>Admin Panel</span>
         </SidebarNavLink>
       )}
+      {user?.is_superuser && (
+        <SidebarNavLink
+          user={user}
+          className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
+          to="/admin-panel/stores"
+          onClick={(event) => handleNavigation(event, "/admin-panel/stores")}
+        >
+          <i className="bi bi-shop" />
+          <span>Stores</span>
+        </SidebarNavLink>
+      )}
     </nav>
   );
 }
