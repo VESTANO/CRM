@@ -13,7 +13,7 @@ const adminClient = createClient(supabaseUrl, serviceRoleKey, {
 });
 const pageSize = 1000;
 
-type Context = { user: any; profile: any };
+type Context = { user: any; profile: any; activeStoreId?: string };
 
 class ApiError extends Error {
   status: number;
@@ -366,12 +366,16 @@ function isSuperAdmin(ctx: Context) {
   return ctx.profile.role === "super_admin";
 }
 
+function hasGlobalStoreAccess(ctx: Context) {
+  return isSuperAdmin(ctx) && !ctx.activeStoreId;
+}
+
 function requireSuperAdmin(ctx: Context) {
   if (!isSuperAdmin(ctx)) fail(403, "Super Admin access required.");
 }
 
 function profileScope(ctx: Context) {
-  return isSuperAdmin(ctx) ? null : String(ctx.profile.store_id || "");
+  return ctx.activeStoreId || (isSuperAdmin(ctx) ? null : String(ctx.profile.store_id || ""));
 }
 
 function applyProfileScope(query: any, ctx: Context) {
@@ -380,8 +384,8 @@ function applyProfileScope(query: any, ctx: Context) {
 }
 
 async function accessibleStoreUserIds(ctx: Context) {
-  if (isSuperAdmin(ctx)) return null;
-  const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", ctx.profile.store_id));
+  if (hasGlobalStoreAccess(ctx)) return null;
+  const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", profileScope(ctx)));
   return profiles.map((profile: any) => profile.id);
 }
 
@@ -398,7 +402,12 @@ async function authenticate(request: Request): Promise<Context> {
     .maybeSingle();
   checkDb(error);
   if (!profile || !profile.active) fail(403, "This account is inactive or has no profile.");
-  return { user: authData.user, profile };
+  const requestedStoreId = request.headers.get("x-crm-store-id") || "";
+  if (!requestedStoreId || profile.role !== "super_admin") return { user: authData.user, profile };
+  const { data: store, error: storeError } = await adminClient.from("crm_stores").select("id").eq("id", requestedStoreId).maybeSingle();
+  checkDb(storeError);
+  if (!store) fail(400, "The selected store no longer exists.");
+  return { user: authData.user, profile, activeStoreId: store.id };
 }
 
 function attendanceAdminClient() {
@@ -528,7 +537,7 @@ async function accessibleDatasets(ctx: Context) {
 async function accessibleDataset(ctx: Context, id: string | number) {
   let query = adminClient.from("crm_datasets").select("*").eq("id", parseId(id));
   if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
-  else if (!isSuperAdmin(ctx)) {
+  else if (profileScope(ctx)) {
     const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", ctx.profile.store_id));
     query = profiles.length ? query.in("owner_id", profiles.map((profile: any) => profile.id)) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
   }
@@ -1362,7 +1371,7 @@ async function listReminders(ctx: Context) {
 }
 
 async function listTargets(ctx: Context, userId: string | null = null) {
-  const storeUserIds = isSuperAdmin(ctx) ? null : await accessibleStoreUserIds(ctx);
+  const storeUserIds = hasGlobalStoreAccess(ctx) ? null : await accessibleStoreUserIds(ctx);
   let query = adminClient.from("crm_sales_targets").select("*").order("month", { ascending: false });
   if (userId) query = query.eq("user_id", userId);
   if (storeUserIds) query = storeUserIds.length ? query.in("user_id", storeUserIds) : query.eq("user_id", "00000000-0000-0000-0000-000000000000");
@@ -1513,7 +1522,7 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
 async function visibleVisit(ctx: Context, id: number) {
   let query = adminClient.from("crm_visits").select("*").eq("id", id);
   if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
-  else if (!isSuperAdmin(ctx)) {
+  else if (profileScope(ctx)) {
     const storeUserIds = await accessibleStoreUserIds(ctx);
     query = storeUserIds?.length ? query.in("owner_id", storeUserIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
   }
@@ -2104,7 +2113,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const userId = valueString(params.get("userId"));
       let query = adminClient.from("crm_assigned_tasks").select("*").order("status").order("due_at").order("created_at", { ascending: false });
       if (userId) query = query.eq("assignee_id", userId);
-      if (!isSuperAdmin(ctx)) {
+      if (!hasGlobalStoreAccess(ctx)) {
         const storeUserIds = await accessibleStoreUserIds(ctx);
         query = storeUserIds.length ? query.in("assignee_id", storeUserIds) : query.eq("assignee_id", "00000000-0000-0000-0000-000000000000");
       }
@@ -2212,7 +2221,7 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
   if (parts.length === 1 && method === "GET") {
     let query = adminClient.from("crm_overtime_requests").select("*").order("work_date", { ascending: false }).order("created_at", { ascending: false });
     if (!isAdminRole(ctx.profile.role)) query = query.eq("employee_id", ctx.user.id);
-    else if (!isSuperAdmin(ctx)) {
+    else if (!hasGlobalStoreAccess(ctx)) {
       const storeUserIds = await accessibleStoreUserIds(ctx);
       query = storeUserIds.length ? query.in("employee_id", storeUserIds) : query.eq("employee_id", "00000000-0000-0000-0000-000000000000");
     }
@@ -2331,7 +2340,7 @@ async function handleAttendance(ctx: Context, method: string, parts: string[], p
     checkDb(recordError);
     let devices: any[] = [];
     let mappings: any[] = [];
-    if (admin) {
+    if (admin && hasGlobalStoreAccess(ctx)) {
       const [deviceResult, mappingResult] = await Promise.all([
         adminClient.from("attendance_devices").select("*").order("last_seen", { ascending: false }),
         adminClient.from("attendance_mappings").select("*"),

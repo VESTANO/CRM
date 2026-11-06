@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "../hooks/useAuth.jsx";
+import { activeStoreId } from "../services/storeContext.js";
 import { dashboardApi, datasetsApi, peekCachedResponse, targetsApi } from "../services/api.js";
 import { formatCurrency, formatDate } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
@@ -14,7 +16,9 @@ const responseIcons = {
 };
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const location = useLocation();
+  if (user?.is_superuser && !activeStoreId()) return <Navigate to="/admin-panel/stores" replace />;
   const [dashboard, setDashboard] = useState(() => (
     location.state?.preloadedDashboard || peekCachedResponse("/dashboard/")?.data || null
   ));

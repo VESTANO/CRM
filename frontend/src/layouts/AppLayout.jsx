@@ -8,6 +8,7 @@ import TaskNotificationAlerts from "../components/TaskNotificationAlerts.jsx";
 import { callbacksApi, warmNavigationData } from "../services/api.js";
 import { prefetchNavigation } from "../services/navigationPrefetch.js";
 import { RouteLoadingIndicator } from "../components/RequestState.jsx";
+import { activeStoreId } from "../services/storeContext.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -190,6 +191,14 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
   const toggleMenu = (menu) => {
     setOpenMenu((current) => current === menu ? null : menu);
   };
+
+  if (user?.is_superuser && !activeStoreId()) {
+    return <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>
+      <SidebarNavLink user={user} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`} to="/admin-panel/stores" onClick={(event) => handleNavigation(event, "/admin-panel/stores")}>
+        <i className="bi bi-shop" /><span>Stores</span>
+      </SidebarNavLink>
+    </nav>;
+  }
 
   return (
     <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>

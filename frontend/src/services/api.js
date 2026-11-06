@@ -5,6 +5,7 @@ import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./c
 import { clearCrmProfileCache, readCrmProfile } from "./crmProfile.js";
 
 import { clearAttendanceReadCache } from "./attendanceSupabase.js";
+import { activeStoreId } from "./storeContext.js";
 
 const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
@@ -176,6 +177,9 @@ apiClient.interceptors.request.use(async (config) => {
   if (error) throw error;
   if (data.session?.access_token) config.headers.set("Authorization", `Bearer ${data.session.access_token}`);
   else config.headers.delete("Authorization");
+  const storeId = activeStoreId();
+  if (storeId) config.headers.set("x-crm-store-id", storeId);
+  else config.headers.delete("x-crm-store-id");
   return config;
 });
 
