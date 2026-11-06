@@ -2,13 +2,16 @@ project_id = "qdtgrddhpbwrutvojpes"
 
 [auth]
 site_url = "https://vestano.online/"
-additional_redirect_urls = ["https://vestano.online/", "https://www.vestano.online/", "https://vestano.github.io/CRM/", "http://127.0.0.1:5173/", "http://localhost:5173/"]
+additional_redirect_urls = ["https://vestano.online/", "https://vestano.online/login", "https://www.vestano.online/", "https://www.vestano.online/login", "https://vestano.github.io/CRM/", "https://vestano.github.io/CRM/login", "http://127.0.0.1:5173/", "http://127.0.0.1:5173/login", "http://localhost:5173/", "http://localhost:5173/login", "http://127.0.0.1:5174/", "http://127.0.0.1:5174/login", "http://localhost:5174/", "http://localhost:5174/login"]
 
 [functions.crm-api]
 verify_jwt = true
 
 [functions.reminder-dispatch]
 verify_jwt = true
+
+[functions.password-reset]
+verify_jwt = false
 
 # Receipt tokens authorize a single acknowledgement, not an account session.
 [functions.reminder-receipt]

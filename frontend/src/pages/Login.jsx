@@ -2,12 +2,15 @@ import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import PasswordInput from "../components/PasswordInput.jsx";
-import { dashboardApi, targetsApi } from "../services/api.js";
+import { authApi, dashboardApi, targetsApi } from "../services/api.js";
 
 export default function Login() {
   const { isAuthenticated, login } = useAuth();
   const [form, setForm] = useState({ username: "", password: "" });
+  const [recoveryEmail, setRecoveryEmail] = useState("");
   const [error, setError] = useState("");
+  const [recoveryMessage, setRecoveryMessage] = useState("");
+  const [mode, setMode] = useState("sign-in");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
 
@@ -35,6 +38,30 @@ export default function Login() {
     }
   };
 
+  const openRecovery = () => {
+    setMode("recovery");
+    setError("");
+    setRecoveryMessage("");
+    setRecoveryEmail(form.username.includes("@") ? form.username : "");
+  };
+
+  const handleRecoverySubmit = async (event) => {
+    event.preventDefault();
+    setError("");
+    setRecoveryMessage("");
+    setIsSubmitting(true);
+    try {
+      await authApi.requestPasswordReset(recoveryEmail);
+      // Keep the result neutral so this form never reveals whether an address
+      // belongs to a CRM account.
+      setRecoveryMessage("If an active account uses that email address, a password-reset link is on its way. Check your inbox and spam folder.");
+    } catch (err) {
+      setError(err.response?.data?.detail || "We couldn't send a reset link right now. Please try again shortly.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <main className="auth-main luxe-login">
       <aside className="login-brand-panel" aria-label="Vestano CRM">
@@ -57,40 +84,68 @@ export default function Login() {
         <div className="login-card">
           <div className="login-card-mark">V</div>
           <div className="eyebrow">WELCOME BACK</div>
-          <h1>Sign in</h1>
-          <p className="login-intro">Sign in to your CRM workspace.</p>
+          <h1>{mode === "recovery" ? "Reset password" : "Sign in"}</h1>
+          <p className="login-intro">{mode === "recovery" ? "Enter your email and we'll send a secure password-reset link." : "Sign in to your CRM workspace."}</p>
 
           {error && <div className="alert alert-danger" role="alert">{error}</div>}
+          {recoveryMessage && <div className="alert alert-success" role="status">{recoveryMessage}</div>}
 
-          <form onSubmit={handleSubmit} noValidate>
-            <div className="mb-3">
-              <label className="form-label" htmlFor="username">Username or email</label>
-              <input
-                id="username"
-                className="form-control"
-                value={form.username}
-                onChange={(event) => setForm({ ...form, username: event.target.value })}
-                autoComplete="username"
-                required
-                autoFocus
-              />
-            </div>
-            <div className="mb-4">
-              <label className="form-label" htmlFor="password">Password</label>
-              <PasswordInput
-                id="password"
-                name="password"
-                value={form.password}
-                onChange={(event) => setForm({ ...form, password: event.target.value })}
-                autoComplete="current-password"
-                required
-              />
-            </div>
-            <button className="btn btn-primary w-100 login-submit" type="submit" disabled={isSubmitting}>
-              <span>{isSubmitting ? "Logging in..." : "Continue to CRM"}</span>
-              {!isSubmitting && <i className="bi bi-arrow-right" aria-hidden="true" />}
-            </button>
-          </form>
+          {mode === "recovery" ? (
+            <form onSubmit={handleRecoverySubmit}>
+              <div className="mb-4">
+                <label className="form-label" htmlFor="recovery-email">Work email</label>
+                <input
+                  id="recovery-email"
+                  className="form-control"
+                  type="email"
+                  value={recoveryEmail}
+                  onChange={(event) => setRecoveryEmail(event.target.value)}
+                  autoComplete="email"
+                  required
+                  autoFocus
+                />
+              </div>
+              <button className="btn btn-primary w-100" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Sending reset link…" : "Email password-reset link"}
+              </button>
+              <button className="btn btn-link w-100 mt-2" type="button" onClick={() => { setMode("sign-in"); setError(""); setRecoveryMessage(""); }}>
+                Back to sign in
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} noValidate>
+              <div className="mb-3">
+                <label className="form-label" htmlFor="username">Username or email</label>
+                <input
+                  id="username"
+                  className="form-control"
+                  value={form.username}
+                  onChange={(event) => setForm({ ...form, username: event.target.value })}
+                  autoComplete="username"
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="mb-2">
+                <label className="form-label" htmlFor="password">Password</label>
+                <PasswordInput
+                  id="password"
+                  name="password"
+                  value={form.password}
+                  onChange={(event) => setForm({ ...form, password: event.target.value })}
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+              <div className="text-end mb-4">
+                <button className="btn btn-link btn-sm p-0" type="button" onClick={openRecovery}>Forgot password?</button>
+              </div>
+              <button className="btn btn-primary w-100 login-submit" type="submit" disabled={isSubmitting}>
+                <span>{isSubmitting ? "Logging in..." : "Continue to CRM"}</span>
+                {!isSubmitting && <i className="bi bi-arrow-right" aria-hidden="true" />}
+              </button>
+            </form>
+          )}
           <div className="login-security-note"><i className="bi bi-shield-lock" aria-hidden="true" /> Your account is protected</div>
         </div>
         <div className="login-access-footer"><span>VESTANO / CUSTOMER OPERATIONS</span><span>© {new Date().getFullYear()}</span></div>

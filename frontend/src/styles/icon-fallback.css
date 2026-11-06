@@ -1,0 +1,78 @@
+/*
+ * Render Bootstrap Icons from their SVG sources instead of the icon webfont.
+ *
+ * Some embedded browsers block or fail to decode icon webfonts, leaving a
+ * square "missing glyph" in place of every .bi icon. Masks retain the
+ * existing markup and inherit its color while loading plain SVG assets.
+ */
+.bi[class*="bi-"]::before {
+  content: "" !important;
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  background-color: currentColor;
+  -webkit-mask: var(--bootstrap-icon) center / contain no-repeat;
+  mask: var(--bootstrap-icon) center / contain no-repeat;
+}
+
+.bi-alarm { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/alarm.svg"); }
+.bi-arrow-clockwise { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/arrow-clockwise.svg"); }
+.bi-arrow-repeat { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/arrow-repeat.svg"); }
+.bi-arrow-right { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/arrow-right.svg"); }
+.bi-bar-chart-line { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/bar-chart-line.svg"); }
+.bi-bell { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/bell.svg"); }
+.bi-box-arrow-right { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/box-arrow-right.svg"); }
+.bi-box-arrow-up-right { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/box-arrow-up-right.svg"); }
+.bi-briefcase { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/briefcase.svg"); }
+.bi-calendar-check { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/calendar-check.svg"); }
+.bi-calendar-day { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/calendar-day.svg"); }
+.bi-calendar-range { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/calendar-range.svg"); }
+.bi-calendar2-check { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/calendar2-check.svg"); }
+.bi-calendar3 { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/calendar3.svg"); }
+.bi-cash-stack { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/cash-stack.svg"); }
+.bi-chat-dots { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/chat-dots.svg"); }
+.bi-check-lg { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/check-lg.svg"); }
+.bi-check2-circle { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/check2-circle.svg"); }
+.bi-check2-square { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/check2-square.svg"); }
+.bi-chevron-down { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/chevron-down.svg"); }
+.bi-chevron-right { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/chevron-right.svg"); }
+.bi-chevron-up { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/chevron-up.svg"); }
+.bi-clipboard-check { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/clipboard-check.svg"); }
+.bi-clock-history { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/clock-history.svg"); }
+.bi-cloud-arrow-up { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/cloud-arrow-up.svg"); }
+.bi-collection { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/collection.svg"); }
+.bi-download { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/download.svg"); }
+.bi-exclamation-circle { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/exclamation-circle.svg"); }
+.bi-eye { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/eye.svg"); }
+.bi-eye-slash { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/eye-slash.svg"); }
+.bi-file-earmark-excel { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/file-earmark-excel.svg"); }
+.bi-folder2-open { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/folder2-open.svg"); }
+.bi-grid-1x2 { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/grid-1x2.svg"); }
+.bi-hand-thumbs-down { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/hand-thumbs-down.svg"); }
+.bi-hand-thumbs-up { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/hand-thumbs-up.svg"); }
+.bi-hdd-network { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/hdd-network.svg"); }
+.bi-hourglass { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/hourglass.svg"); }
+.bi-hourglass-split { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/hourglass-split.svg"); }
+.bi-list { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/list.svg"); }
+.bi-list-task { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/list-task.svg"); }
+.bi-list-ul { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/list-ul.svg"); }
+.bi-pencil { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/pencil.svg"); }
+.bi-people { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/people.svg"); }
+.bi-person-check { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/person-check.svg"); }
+.bi-person-dash { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/person-dash.svg"); }
+.bi-person-lines-fill { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/person-lines-fill.svg"); }
+.bi-person-plus { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/person-plus.svg"); }
+.bi-plus-lg { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/plus-lg.svg"); }
+.bi-search { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/search.svg"); }
+.bi-shield-lock { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/shield-lock.svg"); }
+.bi-signpost-split { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/signpost-split.svg"); }
+.bi-speedometer2 { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/speedometer2.svg"); }
+.bi-tag { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/tag.svg"); }
+.bi-telephone { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/telephone.svg"); }
+.bi-telephone-forward { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/telephone-forward.svg"); }
+.bi-trash { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/trash.svg"); }
+.bi-wallet2 { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/wallet2.svg"); }
+.bi-wifi { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/wifi.svg"); }
+.bi-wifi-off { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/wifi-off.svg"); }
+.bi-x-lg { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/x-lg.svg"); }

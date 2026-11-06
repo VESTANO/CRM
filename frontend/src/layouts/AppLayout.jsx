@@ -206,6 +206,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                 className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
                 key={item.label}
                 to="/attendance"
+                end
                 onClick={(event) => handleNavigation(event, "/attendance")}
               >
                 <i className={`bi ${item.icon}`} />
@@ -225,7 +226,8 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                 <SidebarNavLink
                   user={user}
                   to={item.to}
-                  className={`sidebar-link sidebar-menu-toggle pe-5 ${menuActive ? "active" : ""}`}
+                  className={() => `sidebar-link sidebar-menu-toggle pe-5 ${menuActive ? "active" : ""}`}
+                  end
                   onClick={(event) => { setMenuOpen(true); handleNavigation(event, item.to); }}
                 >
                   <i className={`bi ${item.icon}`} />
