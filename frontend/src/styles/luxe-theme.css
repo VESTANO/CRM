@@ -432,6 +432,26 @@ a.sidebar-link.active:hover,
 .offcanvas-body .sidebar-user { margin-top: auto; }
 .offcanvas .sidebar-nav { margin-top: 0; }
 
+/* Mobile navigation uses a single scroll surface. Nested vertical scrollers
+   can become unresponsive when the Attendance submenu is expanded. */
+@media (max-width: 991.98px) {
+  #mobileNav .offcanvas-body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+  #mobileNav .sidebar-menu-scroll {
+    flex: 0 0 auto;
+    min-height: auto;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
+  #mobileNav .offcanvas-body .sidebar-user { margin-top: 1.25rem; }
+}
+
 .luxe-login {
   display: grid;
   min-height: 100vh;
