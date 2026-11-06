@@ -1,4 +1,5 @@
 import { adminApi, callbacksApi, customersApi, dashboardApi, datasetsApi, remindersApi, salesApi, tasksApi } from "./api.js";
+import { activeStoreId } from "./storeContext.js";
 
 const attendancePage = () => import("../pages/Attendance.jsx");
 const routes = {
@@ -22,7 +23,7 @@ export function prefetchNavigation(path, user) {
   const route = routes[path] || (path.startsWith("/attendance") ? { page: attendancePage } : null);
   if (!route || (route.admin && !user.is_admin)) return Promise.resolve([]);
 
-  const key = `${user.id}|${path}`;
+  const key = `${user.id}|${activeStoreId()}|${path}`;
   if (pending.has(key)) return pending.get(key);
   const work = [route.page, ...(route.reads?.(user) || [])];
   const request = Promise.allSettled(work.map((read) => Promise.resolve().then(read)));

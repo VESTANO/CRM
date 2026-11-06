@@ -67,12 +67,22 @@ export async function verifyAttendanceRead(profile) {
 }
 
 const attendanceColumns = "id,user_id,employee_id,employee_name,punch_code,punched_at,serial_number,status,verify_mode,created_at,updated_at";
+const noMember = "00000000-0000-0000-0000-000000000000";
 const nextDate = value => new Date(Date.parse(`${value}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
 function attendanceSource({ from = "", to = "", userId = "", profile }) {
   const admin = isAttendanceAdmin(profile);
   const scopedUser = admin ? userId : profile.id;
+  const storeId = activeStoreId();
+  let memberIds = new Set(admin ? [] : [profile.id]);
+  const ensureMembers = async () => {
+    if (storeId !== activeStoreId()) throw new Error("The selected store has changed. Reopen Attendance.");
+    const employees = await fetchAttendanceEmployees(profile);
+    memberIds = new Set(employees.map(employee => employee.id));
+    return employees;
+  };
   const scope = (query, dates = true) => {
+    query = query.in("user_id", memberIds.size ? [...memberIds] : [noMember]);
     if (scopedUser) query = query.eq("user_id", scopedUser);
     if (dates && from) query = query.gte("punched_at", `${from}T00:00:00+05:30`);
     if (dates && to) query = query.lt("punched_at", `${nextDate(to)}T00:00:00+05:30`);
@@ -84,21 +94,24 @@ function attendanceSource({ from = "", to = "", userId = "", profile }) {
     return data || [];
   };
   return {
-    accepts: row => (!scopedUser || row.user_id === scopedUser)
+    accepts: row => memberIds.has(row.user_id) && (!scopedUser || row.user_id === scopedUser)
       && (!from || Date.parse(row.punched_at) >= Date.parse(`${from}T00:00:00+05:30`))
       && (!to || Date.parse(row.punched_at) < Date.parse(`${nextDate(to)}T00:00:00+05:30`)),
     async version(signal) {
+      await ensureMembers();
       const rows = await read(scope(attendanceSupabase.from("attendance_records").select("updated_at"), false)
         .order("updated_at", { ascending: false }).limit(1).abortSignal(signal));
       return rows[0]?.updated_at;
     },
-    page({ cursor, limit, signal }) {
+    async page({ cursor, limit, signal }) {
+      await ensureMembers();
       let query = scope(attendanceSupabase.from("attendance_records").select(attendanceColumns))
         .order("punched_at", { ascending: false }).order("id", { ascending: false }).limit(limit);
       if (cursor) query = query.or(`punched_at.lt.${cursor.punched_at},and(punched_at.eq.${cursor.punched_at},id.lt.${cursor.id})`);
       return read(query.abortSignal(signal));
     },
-    changes({ since, cursor, limit, signal }) {
+    async changes({ since, cursor, limit, signal }) {
+      await ensureMembers();
       // Date filtering happens in the store, so corrections moved outside the
       // selected date range remove their old visible copy as well.
       let query = scope(attendanceSupabase.from("attendance_records").select(attendanceColumns), false)
@@ -106,7 +119,8 @@ function attendanceSource({ from = "", to = "", userId = "", profile }) {
       if (cursor) query = query.or(`updated_at.gt.${cursor.updated_at},and(updated_at.eq.${cursor.updated_at},id.gt.${cursor.id})`);
       return read(query.abortSignal(signal));
     },
-    ids({ cursor, limit, signal }) {
+    async ids({ cursor, limit, signal }) {
+      await ensureMembers();
       let query = scope(attendanceSupabase.from("attendance_records").select("id")).order("id").limit(limit);
       if (cursor) query = query.gt("id", cursor);
       return read(query.abortSignal(signal));
@@ -114,18 +128,16 @@ function attendanceSource({ from = "", to = "", userId = "", profile }) {
     metadata(signal, force = false) {
       if (force) attendanceReads.clear();
       return attendanceReads.read(attendanceReadKey("attendance-metadata", profile), async () => {
-        const [employees, devices, mappings] = await Promise.all([
-          fetchAttendanceEmployees(profile),
-          admin ? read(attendanceSupabase.from("attendance_devices").select("serial_number,model,last_seen").order("last_seen", { ascending: false })) : [],
-          admin ? read(attendanceSupabase.from("attendance_mappings").select("punch_code,user_id")) : [],
-        ]);
-        return { employees, devices, mappings };
+        const employees = await ensureMembers();
+        const mappings = admin && employees.length
+          ? await read(attendanceSupabase.from("attendance_mappings").select("punch_code,user_id").in("user_id", [...memberIds])) : [];
+        return { employees, devices: [], mappings };
       }, 60_000);
     },
     subscribe({ onRecord, onMetadata, onConnected }) {
       const channel = attendanceSupabase.channel(`attendance:${profile.id}:${++channelSequence}`, { config: { postgres_changes_options: { wait: true } } })
         .on("postgres_changes", { event: "*", schema: "public", table: "attendance_records", ...(scopedUser ? { filter: `user_id=eq.${scopedUser}` } : {}) }, onRecord);
-      for (const table of ["profiles", ...(admin ? ["attendance_devices", "attendance_mappings"] : [])]) {
+      for (const table of ["profiles", ...(admin ? ["attendance_mappings"] : [])]) {
         channel.on("postgres_changes", { event: "*", schema: "public", table, ...(!admin ? { filter: `id=eq.${profile.id}` } : {}) }, event => onMetadata({ ...event, table }));
       }
       channel.subscribe(status => { if (status === "SUBSCRIBED") onConnected(); });
@@ -171,7 +183,8 @@ export function fetchLiveTimesheet(filters) {
 
 async function loadLiveTimesheet({ from = "", to = "", status = "", employeeId = "", profile }) {
   if (!profile?.id) throw new Error("Sign in to the attendance system first.");
-  let query = attendanceSupabase.from("timesheet_entries").select("*").order("work_date", { ascending: false }).order("created_at", { ascending: false });
+  const employees = await fetchAttendanceEmployees(profile);
+  let query = attendanceSupabase.from("timesheet_entries").select("*").in("user_id", employees.length ? employees.map(employee => employee.id) : [noMember]).order("work_date", { ascending: false }).order("created_at", { ascending: false });
   if (status) query = query.eq("approval_status", status);
   if (from) query = query.gte("work_date", from);
   if (to) query = query.lte("work_date", to);
@@ -264,7 +277,7 @@ export function fetchAttendanceDashboardTotals(profile) {
 
 async function loadAttendanceDashboardTotals(profile) {
   if (!profile?.id) throw new Error("Sign in to the attendance system first.");
-  const { data, error } = await attendanceSupabase.rpc("get_dashboard_totals");
+  const { data, error } = await attendanceSupabase.rpc("get_store_dashboard_totals", { p_store_id: isAttendanceSuperAdmin(profile) ? activeStoreId() || null : profile.storeId || null });
   if (error) throw new Error(readError(error, "Unable to load attendance dashboard totals."));
   return {
     hours: Number(data?.hours || 0),

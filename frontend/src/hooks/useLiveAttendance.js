@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { watchLiveAttendance } from "../services/attendanceSupabase.js";
 import { attendanceFeedErrorState } from "../services/attendanceFeed.js";
+import { useStoreContext } from "./useStoreContext.js";
 
 const emptyData = { records: [], employees: [], punchCodes: [], devices: [], availableFrom: "", availableTo: "", historyLoading: true };
 
 export function useLiveAttendance({ profile, filters, enabled, refreshKey }) {
-  const key = JSON.stringify([profile?.id, profile?.role, profile?.active, profile?.name, profile?.employeeId, profile?.shiftStartTime, profile?.shiftEndTime, filters.from, filters.to, filters.userId, refreshKey]);
+  const storeId = useStoreContext();
+  const key = JSON.stringify([storeId, profile?.storeId, profile?.id, profile?.role, profile?.active, profile?.name, profile?.employeeId, profile?.shiftStartTime, profile?.shiftEndTime, filters.from, filters.to, filters.userId, refreshKey]);
   const [state, setState] = useState({ key: "", data: emptyData, loading: true, error: "" });
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {

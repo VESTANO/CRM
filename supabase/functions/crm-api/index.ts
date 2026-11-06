@@ -375,7 +375,21 @@ function requireSuperAdmin(ctx: Context) {
 }
 
 function profileScope(ctx: Context) {
-  return ctx.activeStoreId || (isSuperAdmin(ctx) ? null : String(ctx.profile.store_id || ""));
+  if (isSuperAdmin(ctx)) return ctx.activeStoreId || null;
+  const storeId = String(ctx.profile.store_id || "");
+  if (!storeId) fail(403, "This account is not assigned to a store.");
+  return storeId;
+}
+
+function requireStoreContext(ctx: Context) {
+  const storeId = profileScope(ctx);
+  if (!storeId) fail(400, "Open a store before accessing its business data.");
+  return storeId;
+}
+
+function applyBusinessScope(query: any, ctx: Context) {
+  query = query.eq("store_id", requireStoreContext(ctx));
+  return isAdminRole(ctx.profile.role) ? query : query.eq("owner_id", ctx.user.id);
 }
 
 function applyProfileScope(query: any, ctx: Context) {
@@ -520,27 +534,12 @@ async function profileName(id: string | null | undefined) {
 }
 
 async function accessibleDatasets(ctx: Context) {
-  const storeId = profileScope(ctx);
-  const storeProfiles = storeId
-    ? await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", storeId))
-    : [];
-  const ownerIds = storeProfiles.map((profile: any) => profile.id);
-  const build = () => {
-    let query = adminClient.from("crm_datasets").select("*").order("uploaded_at", { ascending: false });
-    if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
-    else if (storeId) query = ownerIds.length ? query.in("owner_id", ownerIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
-    return query;
-  };
+  const build = () => applyBusinessScope(adminClient.from("crm_datasets").select("*").order("uploaded_at", { ascending: false }), ctx);
   return await fetchAll(build);
 }
 
 async function accessibleDataset(ctx: Context, id: string | number) {
-  let query = adminClient.from("crm_datasets").select("*").eq("id", parseId(id));
-  if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
-  else if (profileScope(ctx)) {
-    const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", ctx.profile.store_id));
-    query = profiles.length ? query.in("owner_id", profiles.map((profile: any) => profile.id)) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
-  }
+  const query = applyBusinessScope(adminClient.from("crm_datasets").select("*").eq("id", parseId(id)), ctx);
   const { data, error } = await query.maybeSingle();
   checkDb(error);
   if (!data) fail(404, "Dataset not found.");
@@ -814,12 +813,9 @@ async function visibleRecords(ctx: Context, datasetIds: number[]) {
 }
 
 async function accessibleVisits(ctx: Context, options: any = {}) {
-  const storeUserIds = isAdminRole(ctx.profile.role) ? await accessibleStoreUserIds(ctx) : null;
   return await fetchAll(() => {
-    let query = adminClient.from("crm_visits").select("*").order("visit_date", { ascending: false })
-      .order("meeting_time", { ascending: false }).order("created_at", { ascending: false });
-    if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
-    else if (storeUserIds) query = storeUserIds.length ? query.in("owner_id", storeUserIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
+    let query = applyBusinessScope(adminClient.from("crm_visits").select("*").order("visit_date", { ascending: false })
+      .order("meeting_time", { ascending: false }).order("created_at", { ascending: false }), ctx);
     if (options.status) query = query.eq("status", options.status);
     if (options.dateFrom) query = query.gte("visit_date", options.dateFrom);
     if (options.dateTo) query = query.lte("visit_date", options.dateTo);
@@ -1060,12 +1056,8 @@ async function dashboardSummary(ctx: Context) {
     checkDb(error);
     return [choice.value, count || 0] as const;
   });
-  const storeUserIds = isAdminRole(ctx.profile.role) ? await accessibleStoreUserIds(ctx) : null;
   const visitRequest = fetchAll(() => {
-    let query = adminClient.from("crm_visits").select("owner_id,visit_date,expense,total_amount,paid_amount,payment_status");
-    if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
-    else if (storeUserIds) query = storeUserIds.length ? query.in("owner_id", storeUserIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
-    return query;
+    return applyBusinessScope(adminClient.from("crm_visits").select("owner_id,visit_date,expense,total_amount,paid_amount,payment_status"), ctx);
   });
   const [recordCountRows, visits, recentDatasets] = await Promise.all([
     Promise.all(recordCountRequests),
@@ -1340,7 +1332,7 @@ async function listCallbacks(ctx: Context, params: URLSearchParams) {
 
 async function listReminders(ctx: Context) {
   const { data, error } = await adminClient.from("crm_reminders").select("*")
-    .eq("owner_id", ctx.user.id).order("reminder_at").order("id");
+    .eq("owner_id", ctx.user.id).eq("store_id", requireStoreContext(ctx)).order("reminder_at").order("id");
   checkDb(error);
   const ids = (data || []).map((r: any) => r.id);
   const { data: receipts, error: receiptError } = ids.length
@@ -1424,6 +1416,7 @@ async function listTargets(ctx: Context, userId: string | null = null) {
 }
 
 async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: any, files: File[], thumbnails: File[] = []) {
+  const storeId = requireStoreContext(ctx);
   if (files.length || thumbnails.length) await validateTaskImages(files, thumbnails);
   const errors: Record<string, string[]> = {};
   const addError = (field: string, message: string) => { errors[field] = [...(errors[field] || []), message]; };
@@ -1458,6 +1451,7 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
     if (valueString(body.email) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valueString(body.email))) addError("email", "Enter a valid email address.");
     if (errors.client_name || errors.email) fail(400, "Please correct the highlighted fields.", { errors });
     const clientValues = {
+      store_id: previous?.store_id || storeId,
       owner_id: previous?.owner_id || ctx.user.id,
       client_name: clientName,
       phone: valueString(body.phone).slice(0, 50),
@@ -1493,6 +1487,7 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
   if (status === "converted" && numbers.paid_amount > numbers.total_amount) addError("paid_amount", "Paid amount cannot exceed the total amount.");
   if (errors.payment_status || errors.paid_amount) fail(400, "Please correct the highlighted fields.", { errors });
   const values = {
+    store_id: previous?.store_id || storeId,
     owner_id: visitOwnerId,
     customer_id: customerId,
     manual_client_id: manualClientId,
@@ -1520,12 +1515,7 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
 }
 
 async function visibleVisit(ctx: Context, id: number) {
-  let query = adminClient.from("crm_visits").select("*").eq("id", id);
-  if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
-  else if (profileScope(ctx)) {
-    const storeUserIds = await accessibleStoreUserIds(ctx);
-    query = storeUserIds?.length ? query.in("owner_id", storeUserIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
-  }
+  const query = applyBusinessScope(adminClient.from("crm_visits").select("*").eq("id", id), ctx);
   const { data, error } = await query.maybeSingle();
   checkDb(error);
   if (!data) fail(404, "Visit not found.");
@@ -1533,13 +1523,14 @@ async function visibleVisit(ctx: Context, id: number) {
 }
 
 async function createImportedDataset(ctx: Context, body: any) {
+  const storeId = requireStoreContext(ctx);
   const datasetName = valueString(body.datasetName);
   const inspection = body.inspection || {};
   if (!datasetName || datasetName.length > 255) fail(400, "Enter a dataset name up to 255 characters.", { errors: { dataset_name: ["Enter a dataset name up to 255 characters."] } });
   if (!Array.isArray(inspection.sheets) || !inspection.sheets.length) fail(400, "No workbook sheets were found.");
   const filename = (valueString(inspection.filename || body.filename || "workbook.xlsx").split(/[\\/]/).pop() || "workbook.xlsx").slice(0, 255);
   const { data: dataset, error: datasetError } = await adminClient.from("crm_datasets").insert({
-    owner_id: ctx.user.id, name: datasetName, original_filename: filename,
+    owner_id: ctx.user.id, store_id: storeId, name: datasetName, original_filename: filename,
   }).select("*").single();
   checkDb(datasetError);
   let rowsFound = 0;
@@ -1597,6 +1588,9 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   const method = request.method.toUpperCase();
   const path = apiPath.replace(/^\/+|\/+$/g, "");
   const parts = path ? path.split("/").map(decodeURIComponent) : [];
+
+  if (hasGlobalStoreAccess(ctx) && !["auth", "push"].includes(parts[0])
+      && !(parts[0] === "admin" && ["stores", "users"].includes(parts[1]))) requireStoreContext(ctx);
 
   if (path === "dashboard/" || path === "dashboard") {
     if (method === "GET") return json(200, await dashboardSummary(ctx));
@@ -1700,13 +1694,13 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
       if (!text) fail(400, "Enter a reminder.", { errors: { text: ["Enter a reminder."] } });
       if (text.length > 500) fail(400, "Reminder text must be 500 characters or fewer.", { errors: { text: ["Ensure this field has no more than 500 characters."] } });
       if (Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) fail(400, "Choose a future date and time.", { errors: { reminder_at: ["Choose a future date and time."] } });
-      const { data, error } = await adminClient.from("crm_reminders").insert({ owner_id: ctx.user.id, text, reminder_at: at.toISOString() }).select("*").single();
+      const { data, error } = await adminClient.from("crm_reminders").insert({ owner_id: ctx.user.id, store_id: requireStoreContext(ctx), text, reminder_at: at.toISOString() }).select("*").single();
       checkDb(error);
       return json(201, { id: data.id, text: data.text, reminder_at: data.reminder_at, is_due: false, created_at: data.created_at, sent_at: data.sent_at, delivery_status: data.delivery_status, delivery_attempt_count: data.delivery_attempt_count, last_delivery_attempt_at: data.last_delivery_attempt_at, next_delivery_attempt_at: data.next_delivery_attempt_at, last_delivery_error: data.last_delivery_error });
     }
     if (parts.length === 2) {
       const id = parseId(parts[1]);
-      let query = adminClient.from("crm_reminders").select("*").eq("id", id).eq("owner_id", ctx.user.id);
+      let query = adminClient.from("crm_reminders").select("*").eq("id", id).eq("owner_id", ctx.user.id).eq("store_id", requireStoreContext(ctx));
       const { data: reminder, error: readError } = await query.maybeSingle();
       checkDb(readError);
       if (!reminder) fail(404, "Reminder not found.");
@@ -1759,10 +1753,14 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
 
   if (parts[0] === "task-notifications") {
     const columns = "id,task_id,submission_id,kind,title,message,created_at,read_at";
+    const storeUsers = await accessibleStoreUserIds(ctx);
+    const storeTasks = await fetchAll(() => adminClient.from("crm_assigned_tasks").select("id")
+      .in("assignee_id", storeUsers?.length ? storeUsers : ["00000000-0000-0000-0000-000000000000"]));
+    const taskIds = storeTasks.length ? storeTasks.map((task: any) => task.id) : [-1];
     if (parts.length === 1 && method === "GET") {
       const [notifications, unread] = await Promise.all([
-        adminClient.from("crm_task_notifications").select(columns).eq("recipient_id", ctx.user.id).order("id", { ascending: false }).limit(50),
-        adminClient.from("crm_task_notifications").select("id", { count: "exact", head: true }).eq("recipient_id", ctx.user.id).is("read_at", null),
+        adminClient.from("crm_task_notifications").select(columns).eq("recipient_id", ctx.user.id).in("task_id", taskIds).order("id", { ascending: false }).limit(50),
+        adminClient.from("crm_task_notifications").select("id", { count: "exact", head: true }).eq("recipient_id", ctx.user.id).in("task_id", taskIds).is("read_at", null),
       ]);
       checkDb(notifications.error); checkDb(unread.error);
       return json(200, { results: notifications.data || [], unread_count: unread.count || 0 });
@@ -1770,16 +1768,16 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
     if (parts.length === 2 && parts[1] === "read" && method === "POST") {
       const throughId = parseId(body.through_id);
       const { error } = await adminClient.from("crm_task_notifications").update({ read_at: new Date().toISOString() })
-        .eq("recipient_id", ctx.user.id).lte("id", throughId).is("read_at", null);
+        .eq("recipient_id", ctx.user.id).in("task_id", taskIds).lte("id", throughId).is("read_at", null);
       checkDb(error); return json(204);
     }
     if (parts.length === 2 && method === "PATCH") {
       const id = parseId(parts[1]);
       const { data, error } = await adminClient.from("crm_task_notifications").update({ read_at: new Date().toISOString() })
-        .eq("recipient_id", ctx.user.id).eq("id", id).is("read_at", null).select(columns).maybeSingle();
+        .eq("recipient_id", ctx.user.id).in("task_id", taskIds).eq("id", id).is("read_at", null).select(columns).maybeSingle();
       checkDb(error);
       if (data) return json(200, data);
-      const existing = await adminClient.from("crm_task_notifications").select(columns).eq("recipient_id", ctx.user.id).eq("id", id).maybeSingle();
+      const existing = await adminClient.from("crm_task_notifications").select(columns).eq("recipient_id", ctx.user.id).in("task_id", taskIds).eq("id", id).maybeSingle();
       checkDb(existing.error); if (!existing.data) fail(404, "Notification not found.");
       return json(200, existing.data);
     }
@@ -2376,7 +2374,7 @@ async function handleAttendance(ctx: Context, method: string, parts: string[], p
     });
   }
   if (parts.length === 2 && parts[1] === "mappings" && method === "POST") {
-    requireAdmin(ctx);
+    requireSuperAdmin(ctx);
     const punchCode = valueString(body.punchCode);
     const userId = valueString(body.userId);
     let profileQuery = adminClient.from("profiles").select("*").eq("id", userId);

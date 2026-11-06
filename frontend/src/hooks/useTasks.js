@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { useAuth } from "./useAuth.jsx";
 import { adminApi, peekCachedResponse, tasksApi } from "../services/api.js";
 import { createTaskFeed } from "../services/taskFeed.js";
+import { useStoreContext } from "./useStoreContext.js";
 
 const feeds = new Map();
 const emptySnapshot = { tasks: null, error: "" };
@@ -11,12 +12,13 @@ const emptyRefresh = () => Promise.resolve();
 
 export function useTasks({ all = false } = {}) {
   const { user } = useAuth();
+  const storeId = useStoreContext();
   const userId = user?.id;
   const isAdmin = Boolean(user?.is_admin);
   const allTasks = all && isAdmin;
   const feed = useMemo(() => {
-    if (!userId) return null;
-    const key = `${userId}|${isAdmin}|${allTasks}`;
+    if (!userId || (user?.is_superuser && !storeId)) return null;
+    const key = `${userId}|${isAdmin}|${allTasks}|${storeId}`;
     if (!feeds.has(key)) {
       const created = createTaskFeed({
         initialTasks: peekCachedResponse(allTasks ? "/admin/tasks/" : "/tasks/")?.data?.results ?? null,
@@ -29,7 +31,7 @@ export function useTasks({ all = false } = {}) {
       feeds.set(key, created);
     }
     return feeds.get(key);
-  }, [userId, isAdmin, allTasks]);
+  }, [userId, isAdmin, allTasks, user?.is_superuser, storeId]);
 
   const snapshot = useSyncExternalStore(feed?.subscribe || emptySubscribe, feed?.getSnapshot || getEmptySnapshot, getEmptySnapshot);
   return { ...snapshot, refresh: feed?.refresh || emptyRefresh };

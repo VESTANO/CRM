@@ -5,7 +5,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const handler = stripTypeScriptTypes(source.slice(source.indexOf("async function createOrUpdateVisit("), source.indexOf("async function visibleVisit(")));
-const ctx = { user: { id: "owner" }, profile: { role: "employee" } };
+const ctx = { user: { id: "owner" }, profile: { role: "employee", store_id: "store-a" } };
 
 function setup() {
   const writes = [];
@@ -21,11 +21,11 @@ function setup() {
     return query;
   } };
   const fail = (status, message, payload) => { throw Object.assign(new Error(message), { status, ...payload }); };
-  const run = new Function("valueString", "fail", "visibleVisit", "adminClient", "checkDb", "accessibleDataset", "parseId", "uploadVisitImages", "serializeVisit", `${handler}; return createOrUpdateVisit;`)(
+  const run = new Function("valueString", "fail", "visibleVisit", "adminClient", "checkDb", "accessibleDataset", "parseId", "uploadVisitImages", "serializeVisit", "requireStoreContext", `${handler}; return createOrUpdateVisit;`)(
     (value) => String(value ?? "").trim(), fail,
     async () => ({ id: 22, owner_id: "owner", manual_client_id: 11, meeting_time: "10:00:00", location: "Office" }),
     client, (error) => { if (error) throw error; }, async () => ({ id: 1, owner_id: "owner" }), Number,
-    async () => {}, async (visit) => visit,
+    async () => {}, async (visit) => visit, ctx => ctx.profile.store_id,
   );
   return { writes, run };
 }

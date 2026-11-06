@@ -7,6 +7,7 @@ import { apiClient, attendanceApi } from "../services/api.js";
 import { clearAttendanceReadCache, deleteLiveTimesheetEntry, fetchAttendanceDashboardTotals, fetchAttendanceEmployees, fetchLiveTimesheet, isAttendanceAdmin, isAttendanceSuperAdmin, manageLiveEmployee, requestAttendancePasswordOtp, reviewLiveTimesheetEntry, saveLiveAttendanceMapping, saveLiveTimesheetEntry, updateAttendanceProfileImage } from "../services/attendanceSupabase.js";
 import { buildAttendanceDays, calculateAttendanceDay, countedAttendanceTime, dateInputValue, formatDuration, timeFromTimestamp } from "../utils/attendance.js";
 import OvertimePanel from "../components/OvertimePanel.jsx";
+import { activeStoreId } from "../services/storeContext.js";
 
 const errorText = (error) => error.response?.data?.detail || "Unable to load attendance.";
 const viewCopy = {
@@ -26,7 +27,7 @@ export default function Attendance({ view = "attendance" }) {
   const crmAdmin = Boolean(user?.is_admin);
   const [mode, setMode] = useState("live");
   const admin = mode === "live" ? isAttendanceAdmin(attendanceProfile) : crmAdmin;
-  const superAdmin = mode === "live" ? isAttendanceSuperAdmin(attendanceProfile) : crmAdmin;
+  const superAdmin = !activeStoreId() && (mode === "live" ? isAttendanceSuperAdmin(attendanceProfile) : crmAdmin);
   const loginRequired = mode === "live" && !attendanceProfile;
   const attendanceQuery = {
     from: searchParams.get("attendance_from") || "",

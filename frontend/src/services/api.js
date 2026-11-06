@@ -5,7 +5,7 @@ import { crmSupabase, CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "./c
 import { clearCrmProfileCache, readCrmProfile } from "./crmProfile.js";
 
 import { clearAttendanceReadCache } from "./attendanceSupabase.js";
-import { activeStoreId } from "./storeContext.js";
+import { activeStoreId, subscribeStore } from "./storeContext.js";
 
 const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
@@ -17,6 +17,7 @@ const cacheDiagnostics = { hits: 0, misses: 0, deduplicated: 0, staleRenders: 0 
 // use their own endpoints, while read data is refreshed after this short,
 // session-only window.
 const GET_CACHE_TTL = 120_000;
+let cacheGeneration = 0;
 const STALE_CACHE_TTL = 10 * 60_000;
 export const API_TIMEOUT_MS = 15_000;
 
@@ -51,27 +52,30 @@ function cacheKey(url, params = {}) {
     .sort(([first], [second]) => first.localeCompare(second))
     .map(([key, value]) => `${key}=${String(value)}`)
     .join("&");
-  return `${cacheScope}|${url}?${query}`;
+  return `${cacheScope}|${activeStoreId()}|${url}?${query}`;
 }
 
 export function setApiCacheScope(userId) {
   const nextScope = userId ? `user:${userId}` : "anonymous";
   if (nextScope === cacheScope) return;
   cacheScope = nextScope;
-  getCache.clear();
+  clearApiCache();
   pendingImports.clear();
 }
 
 export function clearApiCache() {
   getCache.clear();
+  cacheGeneration += 1;
 }
+
+subscribeStore(() => { clearApiCache(); pendingImports.clear(); clearAttendanceReadCache(); });
 
 export function invalidateApiCache(...urlPrefixes) {
   if (!urlPrefixes.length) {
     clearApiCache();
     return;
   }
-  const scopedPrefix = `${cacheScope}|`;
+  const scopedPrefix = `${cacheScope}|${activeStoreId()}|`;
   for (const key of getCache.keys()) {
     if (!key.startsWith(scopedPrefix)) continue;
     const url = key.slice(scopedPrefix.length).split("?")[0];
@@ -81,6 +85,8 @@ export function invalidateApiCache(...urlPrefixes) {
 
 function cachedGet(url, config = {}, maxAge = GET_CACHE_TTL) {
   const key = cacheKey(url, config.params);
+  const generation = cacheGeneration;
+  const storeId = activeStoreId();
   const cached = getCache.get(key);
   const now = Date.now();
   if (cached?.response && now - cached.createdAt < maxAge) {
@@ -92,16 +98,18 @@ function cachedGet(url, config = {}, maxAge = GET_CACHE_TTL) {
     return cached.request;
   }
   cacheDiagnostics.misses += 1;
-  const request = apiClient.get(url, config)
+  const request = apiClient.get(url, { ...config, crmStoreId: storeId })
     .then((response) => {
-      getCache.set(key, { response, createdAt: Date.now() });
+      if (generation === cacheGeneration) getCache.set(key, { response, createdAt: Date.now() });
       return response;
     })
     .catch((error) => {
       // A failed background refresh must not erase safe, previously rendered
       // data. It remains available until the stale-display window expires.
-      if (cached?.response) getCache.set(key, cached);
-      else getCache.delete(key);
+      if (generation === cacheGeneration) {
+        if (cached?.response) getCache.set(key, cached);
+        else getCache.delete(key);
+      }
       throw error;
     });
   getCache.set(key, { ...cached, request, requestedAt: now });
@@ -172,12 +180,13 @@ const multipartHeaders = () => ({
 
 apiClient.interceptors.request.use(async (config) => {
   config.crmStartedAt = performance.now();
+  const storeId = config.crmStoreId === undefined ? activeStoreId() : config.crmStoreId;
+  config.crmStoreId = storeId;
   config.headers.set("apikey", CRM_SUPABASE_PUBLISHABLE_KEY);
   const { data, error } = await crmSupabase.auth.getSession();
   if (error) throw error;
   if (data.session?.access_token) config.headers.set("Authorization", `Bearer ${data.session.access_token}`);
   else config.headers.delete("Authorization");
-  const storeId = activeStoreId();
   if (storeId) config.headers.set("x-crm-store-id", storeId);
   else config.headers.delete("x-crm-store-id");
   return config;
@@ -452,19 +461,21 @@ export const importApi = {
     if (!sheets.length || sheets.every((sheet) => !sheet.column_names.length)) throw apiError("No workbook headers were found.");
     const token = crypto.randomUUID();
     const inspection = { filename: file.name.split(/[\\/]/).pop(), sheet_names: workbook.SheetNames, sheets };
-    pendingImports.set(token, { datasetName, inspection });
+    pendingImports.set(token, { datasetName, inspection, storeId: activeStoreId() });
     return { data: { datasetName, pendingImportToken: token, inspection: { ...inspection, sheets: sheets.map(({ data_rows, ...sheet }) => sheet) } } };
   },
   confirm: async (pendingImportToken) => {
     const pending = pendingImports.get(pendingImportToken);
     if (!pending) throw apiError("The inspected workbook has expired. Please upload it again.");
+    if (pending.storeId !== activeStoreId()) throw apiError("The selected store has changed. Inspect this workbook again in the correct store.");
+    const storeConfig = { crmStoreId: pending.storeId };
     const sheetMetadata = pending.inspection.sheets.map(({ data_rows, ...sheet }) => sheet);
     let createdDatasetId;
     try {
       const { data: created } = await apiClient.post("/import/confirm/", {
         datasetName: pending.datasetName,
         inspection: { filename: pending.inspection.filename, sheets: sheetMetadata },
-      });
+      }, storeConfig);
       const dataset = created.dataset;
       createdDatasetId = dataset.id;
       let imported = 0;
@@ -479,14 +490,14 @@ export const importApi = {
         });
         for (let offset = 0; offset < rows.length; offset += 250) {
           const chunk = rows.slice(offset, offset + 250);
-          await apiClient.post(`/import/datasets/${dataset.id}/batch/`, { rows: chunk });
+          await apiClient.post(`/import/datasets/${dataset.id}/batch/`, { rows: chunk }, storeConfig);
           imported += chunk.length;
         }
       }
       pendingImports.delete(pendingImportToken);
       return { data: { dataset, summary: { rows_found: pending.inspection.sheets.reduce((sum, sheet) => sum + sheet.data_rows.length, 0), rows_imported: imported, rows_skipped: skipped } } };
     } catch (error) {
-      if (createdDatasetId) await apiClient.delete(`/import/datasets/${createdDatasetId}/`).catch(() => {});
+      if (createdDatasetId) await apiClient.delete(`/import/datasets/${createdDatasetId}/`, storeConfig).catch(() => {});
       throw error;
     }
   },

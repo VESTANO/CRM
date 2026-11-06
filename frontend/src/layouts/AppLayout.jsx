@@ -9,6 +9,7 @@ import { callbacksApi, warmNavigationData } from "../services/api.js";
 import { prefetchNavigation } from "../services/navigationPrefetch.js";
 import { RouteLoadingIndicator } from "../components/RequestState.jsx";
 import { activeStoreId, clearSelectedStore } from "../services/storeContext.js";
+import { useStoreContext } from "../hooks/useStoreContext.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -51,6 +52,7 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const { profile: attendanceProfile, isLoading: attendanceAuthLoading } = useAttendanceAuth();
   const location = useLocation();
+  const storeId = useStoreContext();
   const { unreadCount: notificationCount } = useTaskNotifications();
   const [todayCallbackCount, setTodayCallbackCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
@@ -59,6 +61,11 @@ export default function AppLayout() {
   const selectedSuperAdminStore = Boolean(user?.is_superuser && activeStoreId());
 
   useEffect(() => {
+    if (user?.is_superuser && location.pathname === "/admin-panel/stores") clearSelectedStore();
+  }, [user?.is_superuser, location.pathname]);
+
+  useEffect(() => {
+    if (user?.is_superuser && !storeId) return undefined;
     const controller = new AbortController();
     const warmTimer = window.setTimeout(() => {
       warmNavigationData(Boolean(user?.is_admin), { signal: controller.signal });
@@ -67,10 +74,11 @@ export default function AppLayout() {
       window.clearTimeout(warmTimer);
       controller.abort();
     };
-  }, [user?.id, user?.is_admin]);
+  }, [user?.id, user?.is_admin, storeId]);
 
   useEffect(() => {
     let isMounted = true;
+    setTodayCallbackCount(0);
 
     const loadTodayCallbacks = () => {
       callbacksApi.list({ preset: "today" })
@@ -94,7 +102,7 @@ export default function AppLayout() {
       window.removeEventListener("crm:callbacks-updated", loadTodayCallbacks);
       window.removeEventListener("focus", loadTodayCallbacks);
     };
-  }, []);
+  }, [storeId]);
 
   return (
     <div className="workspace-shell">
@@ -157,7 +165,7 @@ export default function AppLayout() {
         </div>
         <div className="content-wrap">
           <Suspense fallback={<RouteLoadingIndicator />}>
-            <Outlet />
+            <Outlet key={`${user?.id}|${storeId}`} />
           </Suspense>
         </div>
       </main>

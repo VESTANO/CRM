@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { activeStoreId } from "../services/storeContext.js";
 import { dashboardApi, datasetsApi, peekCachedResponse, targetsApi } from "../services/api.js";
@@ -30,9 +30,8 @@ export default function Dashboard() {
 }
 
 function StoreDashboard() {
-  const location = useLocation();
   const [dashboard, setDashboard] = useState(() => (
-    location.state?.preloadedDashboard || peekCachedResponse("/dashboard/")?.data || null
+    peekCachedResponse("/dashboard/")?.data || null
   ));
   const [error, setError] = useState("");
   const [targetsError, setTargetsError] = useState("");
@@ -41,7 +40,7 @@ function StoreDashboard() {
   const [datasetError, setDatasetError] = useState("");
   const [loadingDatasets, setLoadingDatasets] = useState(false);
   const [targets, setTargets] = useState(() => (
-    location.state?.preloadedTargets || peekCachedResponse("/targets/")?.data?.results || null
+    peekCachedResponse("/targets/")?.data?.results || null
   ));
   const datasetsExpanded = allDatasets !== null;
   const datasets = datasetsExpanded ? allDatasets : dashboard?.recentDatasets || [];
