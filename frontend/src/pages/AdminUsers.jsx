@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
+import { useAuth } from "../hooks/useAuth.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
 function userRole(user) {
@@ -10,6 +11,7 @@ function userRole(user) {
 }
 
 export default function AdminUsers() {
+  const { user: signedInUser } = useAuth();
   const [searchParams] = useSearchParams();
   const storeFilter = searchParams.get("store") || "";
   const userListRequest = storeFilter ? { params: { store: storeFilter } } : {};
@@ -41,12 +43,15 @@ export default function AdminUsers() {
   // from a previously viewed store appearing during navigation.
   const visibleUsers = storeFilter ? users.filter((user) => user.store_id === storeFilter) : users;
   const activeCount = visibleUsers.filter((user) => user.is_active).length;
+  const isSuperAdmin = Boolean(signedInUser?.is_superuser);
+  const backPath = isSuperAdmin ? "/admin-panel/stores" : "/admin-panel";
+  const backLabel = isSuperAdmin ? "Back to Stores" : "Back to Admin Panel";
 
   return (
     <>
       <nav aria-label="breadcrumb" className="mb-3">
         <ol className="breadcrumb mb-0">
-          <li className="breadcrumb-item"><Link to="/admin-panel">Admin Panel</Link></li>
+          <li className="breadcrumb-item"><Link to={backPath}>{isSuperAdmin ? "Stores" : "Admin Panel"}</Link></li>
           <li className="breadcrumb-item active" aria-current="page">All Users</li>
         </ol>
       </nav>
@@ -58,7 +63,7 @@ export default function AdminUsers() {
           <p className="text-secondary mb-0">{storeFilter ? "Accounts in the selected store only." : "Every CRM account, including administrators and inactive users."}</p>
         </div>
         <div className="d-flex flex-wrap gap-2">
-          <Link className="btn btn-outline-secondary" to="/admin-panel">Back to Admin Panel</Link>
+          <Link className="btn btn-outline-secondary" to={backPath}>{backLabel}</Link>
           <Link className="btn btn-outline-secondary" to="/admin-panel/stores">Stores</Link>
           <Link className="btn btn-primary" to={storeFilter ? `/admin-panel/users/add?store=${storeFilter}` : "/admin-panel/stores"}><i className="bi bi-person-plus" />{storeFilter ? "Add User" : "Choose Store"}</Link>
         </div>
