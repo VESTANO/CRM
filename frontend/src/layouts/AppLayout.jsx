@@ -322,7 +322,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           </SidebarNavLink>
         );
       })}
-      {user?.is_admin && (
+      {user?.is_admin && !user?.is_superuser && (
         <SidebarNavLink
           user={user}
           className={() => `sidebar-link ${location.pathname === "/admin-panel" ? "active" : ""}`}
