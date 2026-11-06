@@ -1882,7 +1882,10 @@ async function profileWithCounts(profile: any) {
 async function profilesWithCounts(profiles: any[]) {
   if (!profiles.length) return [];
   const profileIds = profiles.map((profile: any) => profile.id);
-  const datasets = await fetchAll(() => adminClient.from("crm_datasets").select("id,owner_id").in("owner_id", profileIds));
+  const [datasets, stores] = await Promise.all([
+    fetchAll(() => adminClient.from("crm_datasets").select("id,owner_id").in("owner_id", profileIds)),
+    fetchAll(() => adminClient.from("crm_stores").select("id,name")),
+  ]);
   const datasetIds = datasets.map((dataset: any) => Number(dataset.id));
   const customers = datasetIds.length
     ? await fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id").in("dataset_id", datasetIds))
@@ -1890,10 +1893,12 @@ async function profilesWithCounts(profiles: any[]) {
   const datasetCounts = new Map<string, number>();
   const customerCountsByDataset = new Map<number, number>();
   const customerCountsByOwner = new Map<string, number>();
+  const storeNames = new Map(stores.map((store: any) => [store.id, store.name]));
   for (const dataset of datasets) datasetCounts.set(dataset.owner_id, (datasetCounts.get(dataset.owner_id) || 0) + 1);
   for (const customer of customers) customerCountsByDataset.set(Number(customer.dataset_id), (customerCountsByDataset.get(Number(customer.dataset_id)) || 0) + 1);
   for (const dataset of datasets) customerCountsByOwner.set(dataset.owner_id, (customerCountsByOwner.get(dataset.owner_id) || 0) + (customerCountsByDataset.get(Number(dataset.id)) || 0));
   return profiles.map((profile: any) => userPayload(profile, {
+    store_name: storeNames.get(profile.store_id) || "",
     dataset_count: datasetCounts.get(profile.id) || 0,
     customer_count: customerCountsByOwner.get(profile.id) || 0,
   }));

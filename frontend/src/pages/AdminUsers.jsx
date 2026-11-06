@@ -92,7 +92,7 @@ export default function AdminUsers() {
               <table className="table table-hover align-middle mb-0">
                 <thead className="table-light">
                   <tr>
-                    {["Username", "Email", "Role", "Status", "Datasets", "Customers", "Actions"].map((heading) => <th scope="col" key={heading}>{heading}</th>)}
+                    {["Username", "Email", ...(storeFilter ? [] : ["Store"]), "Role", "Status", "Datasets", "Customers", "Actions"].map((heading) => <th scope="col" key={heading}>{heading}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -100,6 +100,7 @@ export default function AdminUsers() {
                     <tr key={user.id}>
                       <td data-label="Username"><Link className="fw-semibold" to={`/admin-panel/users/${user.id}`}>{user.username}</Link></td>
                       <td data-label="Email">{user.email || "No email"}</td>
+                      {!storeFilter && <td data-label="Store">{user.store_name || "—"}</td>}
                       <td data-label="Role"><span className={`badge text-bg-${user.is_admin ? "primary" : "secondary"}`}>{userRole(user)}</span></td>
                       <td data-label="Status"><span className={`badge text-bg-${user.is_active ? "success" : "secondary"}`}>{user.is_active ? "Active" : "Inactive"}</span></td>
                       <td data-label="Datasets">{user.dataset_count ?? 0}</td>
