@@ -1964,7 +1964,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const role = body.role === undefined ? "employee" : body.role;
       const errors: Record<string, string[]> = {};
       if (role !== "employee" && role !== "admin" && role !== "super_admin") errors.role = ["Choose Employee, Admin, or Super Admin."];
-      if (!isSuperAdmin(ctx) && role === "super_admin") errors.role = ["Only a Super Admin can create a Super Admin."];
+      if (role === "super_admin") errors.role = ["Super Admin accounts are global and cannot be created from a store."];
       if (!username || username.length > 150) errors.username = ["Enter a username up to 150 characters."];
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = ["Enter a valid email address."];
       if (password1.length < 8) errors.password1 = ["This password must contain at least 8 characters."];
