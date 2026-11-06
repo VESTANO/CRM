@@ -56,9 +56,9 @@ export default function AdminUserDetail() {
               Reset password
             </Link>
           )}
-          <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/datasets`}>
+          {!user.is_superuser && <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/datasets`}>
             View datasets
-          </Link>
+          </Link>}
         </div>
       </div>
 
@@ -75,17 +75,11 @@ export default function AdminUserDetail() {
         </div>
         <div className="col-lg-5">
           <section className="panel">
-            <h2 className="h5 mb-3">CRM ownership</h2>
-            <div className="metric-grid">
-              <div className="summary-card compact">
-                <div className="text-secondary small">Datasets owned</div>
-                <div className="fs-4">{user.dataset_count}</div>
-              </div>
-              <div className="summary-card compact">
-                <div className="text-secondary small">Customers owned</div>
-                <div className="fs-4">{user.customer_count}</div>
-              </div>
-            </div>
+            <h2 className="h5 mb-3">{user.is_superuser ? "Global access" : "CRM ownership"}</h2>
+            {user.is_superuser ? <p className="text-secondary mb-0">This Super Admin is independent of all stores and does not own customer data or datasets.</p> : <div className="metric-grid">
+              <div className="summary-card compact"><div className="text-secondary small">Datasets owned</div><div className="fs-4">{user.dataset_count}</div></div>
+              <div className="summary-card compact"><div className="text-secondary small">Customers owned</div><div className="fs-4">{user.customer_count}</div></div>
+            </div>}
             <button className={`btn btn-outline-${user.is_active ? "danger" : "primary"} w-100 mt-4`} onClick={toggle}>
               {user.is_active ? "Deactivate user" : "Activate user"}
             </button>
