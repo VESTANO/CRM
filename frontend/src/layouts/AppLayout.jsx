@@ -325,7 +325,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
       {user?.is_admin && (
         <SidebarNavLink
           user={user}
-          className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
+          className={() => `sidebar-link ${location.pathname === "/admin-panel" ? "active" : ""}`}
           to="/admin-panel"
           end
           onClick={(event) => handleNavigation(event, "/admin-panel")}
@@ -337,8 +337,9 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
       {user?.is_superuser && (
         <SidebarNavLink
           user={user}
-          className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
+          className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`}
           to="/admin-panel/stores"
+          end
           onClick={(event) => handleNavigation(event, "/admin-panel/stores")}
         >
           <i className="bi bi-shop" />
