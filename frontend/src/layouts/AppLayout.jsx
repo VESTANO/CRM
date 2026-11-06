@@ -8,7 +8,7 @@ import TaskNotificationAlerts from "../components/TaskNotificationAlerts.jsx";
 import { callbacksApi, warmNavigationData } from "../services/api.js";
 import { prefetchNavigation } from "../services/navigationPrefetch.js";
 import { RouteLoadingIndicator } from "../components/RequestState.jsx";
-import { activeStoreId } from "../services/storeContext.js";
+import { activeStoreId, clearSelectedStore } from "../services/storeContext.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -48,6 +48,7 @@ const navItems = [
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const { profile: attendanceProfile, isLoading: attendanceAuthLoading } = useAttendanceAuth();
   const location = useLocation();
   const { unreadCount: notificationCount } = useTaskNotifications();
@@ -55,6 +56,7 @@ export default function AppLayout() {
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
   const roleLabel = user?.is_admin ? "Admin" : "User";
   const isDashboard = location.pathname === "/dashboard" || location.pathname === "/";
+  const selectedSuperAdminStore = Boolean(user?.is_superuser && activeStoreId());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -146,6 +148,9 @@ export default function AppLayout() {
             <span>Customer operations</span>
           </div>
           <div className="workspace-account">
+            {selectedSuperAdminStore && <button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => { clearSelectedStore(); navigate("/admin-panel/stores"); }}>
+              <i className="bi bi-arrow-left" /> Back to stores
+            </button>}
             <span>{roleLabel} workspace</span>
             <span className="workspace-avatar" aria-hidden="true">{initial}</span>
           </div>
