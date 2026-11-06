@@ -307,7 +307,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                 : ""
             }`}
             to={item.to}
-            onClick={(event) => handleNavigation(event, item.to)}
+            onClick={(event) => { setOpenMenu(null); handleNavigation(event, item.to); }}
           >
             <i className={`bi ${item.icon}`} />
             <span>{item.label}</span>
@@ -328,7 +328,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           className={() => `sidebar-link ${location.pathname === "/admin-panel" ? "active" : ""}`}
           to="/admin-panel"
           end
-          onClick={(event) => handleNavigation(event, "/admin-panel")}
+          onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel"); }}
         >
           <i className="bi bi-shield-lock" />
           <span>Admin Panel</span>
@@ -340,7 +340,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`}
           to="/admin-panel/stores"
           end
-          onClick={(event) => handleNavigation(event, "/admin-panel/stores")}
+          onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel/stores"); }}
         >
           <i className="bi bi-shop" />
           <span>Stores</span>
