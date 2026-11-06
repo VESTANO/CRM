@@ -164,22 +164,15 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
   const location = useLocation();
   const customerRouteActive = location.pathname.startsWith("/datasets") || location.pathname.startsWith("/customers");
   const timesheetSectionOpen = ["/attendance/timesheet", "/attendance/approvals"].includes(location.pathname);
-  const timesheetRouteActive = location.pathname === "/attendance/timesheet";
   const attendanceSectionOpen = location.pathname.startsWith("/attendance") && !timesheetSectionOpen;
-  const attendanceRouteActive = location.pathname === "/attendance";
-  const [customersOpen, setCustomersOpen] = useState(customerRouteActive);
-  const [attendanceOpen, setAttendanceOpen] = useState(attendanceSectionOpen);
-  const [timesheetOpen, setTimesheetOpen] = useState(timesheetSectionOpen);
-
-  useEffect(() => { setTimesheetOpen(timesheetSectionOpen); }, [timesheetSectionOpen]);
+  // Keep the sidebar in one explicit state.  Separate booleans allowed two
+  // sections to remain highlighted after switching between their headers.
+  const routeMenu = customerRouteActive ? "customers" : attendanceSectionOpen ? "attendance" : timesheetSectionOpen ? "timesheet" : null;
+  const [openMenu, setOpenMenu] = useState(routeMenu);
 
   useEffect(() => {
-    setCustomersOpen(customerRouteActive);
-  }, [customerRouteActive]);
-
-  useEffect(() => {
-    setAttendanceOpen(attendanceSectionOpen);
-  }, [attendanceSectionOpen]);
+    setOpenMenu(routeMenu);
+  }, [routeMenu]);
 
   const handleNavigation = (event, path) => {
     if (!mobile) return;
@@ -195,19 +188,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
   };
 
   const toggleMenu = (menu) => {
-    if (menu === "customers") {
-      setCustomersOpen((open) => !open);
-      setAttendanceOpen(false);
-      setTimesheetOpen(false);
-    } else if (menu === "attendance") {
-      setAttendanceOpen((open) => !open);
-      setCustomersOpen(false);
-      setTimesheetOpen(false);
-    } else {
-      setTimesheetOpen((open) => !open);
-      setCustomersOpen(false);
-      setAttendanceOpen(false);
-    }
+    setOpenMenu((current) => current === menu ? null : menu);
   };
 
   return (
@@ -232,13 +213,9 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
               </SidebarNavLink>
             );
           }
-          const menuOpen = isAttendanceMenu ? attendanceOpen : isTimesheetMenu ? timesheetOpen : customersOpen;
-          const setMenuOpen = isAttendanceMenu ? setAttendanceOpen : isTimesheetMenu ? setTimesheetOpen : setCustomersOpen;
-          const menuActive = isAttendanceMenu
-            ? attendanceRouteActive
-            : isTimesheetMenu
-              ? timesheetRouteActive
-              : customerRouteActive || customersOpen;
+          const menuName = isAttendanceMenu ? "attendance" : isTimesheetMenu ? "timesheet" : "customers";
+          const menuOpen = openMenu === menuName;
+          const menuActive = menuOpen;
           const resolvedSubmenuId = isAttendanceMenu
             ? (mobile ? "mobile-attendance-submenu" : "desktop-attendance-submenu")
             : isTimesheetMenu ? (mobile ? "mobile-timesheet-submenu" : "desktop-timesheet-submenu") : submenuId;
@@ -251,9 +228,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                   className={() => `sidebar-link sidebar-menu-toggle pe-5 ${menuActive ? "active" : ""}`}
                   end
                   onClick={(event) => {
-                    setMenuOpen(true);
-                    if (isAttendanceMenu) { setCustomersOpen(false); setTimesheetOpen(false); }
-                    if (isTimesheetMenu) { setCustomersOpen(false); setAttendanceOpen(false); }
+                    setOpenMenu(menuName);
                     handleNavigation(event, item.to);
                   }}
                 >
