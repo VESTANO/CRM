@@ -218,7 +218,11 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           }
           const menuOpen = isAttendanceMenu ? attendanceOpen : isTimesheetMenu ? timesheetOpen : customersOpen;
           const setMenuOpen = isAttendanceMenu ? setAttendanceOpen : isTimesheetMenu ? setTimesheetOpen : setCustomersOpen;
-          const menuActive = isAttendanceMenu ? attendanceRouteActive : isTimesheetMenu ? timesheetRouteActive : customerRouteActive;
+          const menuActive = isAttendanceMenu
+            ? attendanceRouteActive
+            : isTimesheetMenu
+              ? timesheetRouteActive
+              : customerRouteActive || customersOpen;
           const resolvedSubmenuId = isAttendanceMenu
             ? (mobile ? "mobile-attendance-submenu" : "desktop-attendance-submenu")
             : isTimesheetMenu ? (mobile ? "mobile-timesheet-submenu" : "desktop-timesheet-submenu") : submenuId;
