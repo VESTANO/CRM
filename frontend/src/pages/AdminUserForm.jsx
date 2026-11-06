@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import PasswordInput from "../components/PasswordInput.jsx";
 
 export default function AdminUserForm() {
   const { userId } = useParams();
+  const [searchParams] = useSearchParams();
   const edit = Boolean(userId);
   const navigate = useNavigate();
   const { csrfToken, user } = useAuth();
   const [stores, setStores] = useState([]);
   const isSuperAdmin = Boolean(user?.is_superuser);
   const cachedUser = edit ? peekCachedResponse(`/admin/users/${userId}/`)?.data : null;
-  const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: "employee", is_active: true, password1: "", password2: "" });
+  const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: searchParams.get("role") === "admin" ? "admin" : "employee", store_id: searchParams.get("store") || "", is_active: true, password1: "", password2: "" });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(edit && !cachedUser);
   const [saving, setSaving] = useState(false);
@@ -59,7 +60,7 @@ export default function AdminUserForm() {
         return;
       }
       const response = edit
-        ? await adminApi.update(userId, { username, email: values.email, role: values.role, is_active: values.is_active }, csrfToken)
+        ? await adminApi.update(userId, { username, email: values.email, role: values.role, store_id: values.store_id, is_active: values.is_active }, csrfToken)
         : await adminApi.createUser({ ...values, username }, csrfToken);
       navigate(`/admin-panel/users/${response.data.id}`);
     } catch (error) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 
@@ -10,6 +10,8 @@ function userRole(user) {
 }
 
 export default function AdminUsers() {
+  const [searchParams] = useSearchParams();
+  const storeFilter = searchParams.get("store") || "";
   const [users, setUsers] = useState(() => (
     peekCachedResponse("/admin/users/")?.data?.results
     ?? peekCachedResponse("/admin/summary/")?.data?.users
@@ -35,6 +37,7 @@ export default function AdminUsers() {
   if (users === null) return <LoadingPanel label="Loading all users" />;
 
   const activeCount = users.filter((user) => user.is_active).length;
+  const visibleUsers = storeFilter ? users.filter((user) => user.store_id === storeFilter) : users;
 
   return (
     <>
@@ -54,7 +57,7 @@ export default function AdminUsers() {
         <div className="d-flex flex-wrap gap-2">
           <Link className="btn btn-outline-secondary" to="/admin-panel">Back to Admin Panel</Link>
           <Link className="btn btn-outline-secondary" to="/admin-panel/stores">Stores</Link>
-          <Link className="btn btn-primary" to="/admin-panel/users/add"><i className="bi bi-person-plus" />Add User</Link>
+          <Link className="btn btn-primary" to={`/admin-panel/users/add${storeFilter ? `?store=${storeFilter}` : ""}`}><i className="bi bi-person-plus" />Add User</Link>
         </div>
       </div>
 
@@ -77,9 +80,9 @@ export default function AdminUsers() {
       <section className="panel p-0 mb-4 responsive-table" aria-labelledby="all-users-heading">
         <div className="table-panel-header">
           <h2 className="h5 mb-1" id="all-users-heading">User Directory</h2>
-          <p className="text-secondary small mb-0">Showing all {users.length} users.</p>
+          <p className="text-secondary small mb-0">Showing {visibleUsers.length} user{visibleUsers.length === 1 ? "" : "s"}{storeFilter ? " in this store" : ""}.</p>
         </div>
-        {users.length ? (
+        {visibleUsers.length ? (
           <>
             <p className="table-scroll-hint">Scroll horizontally to see all user details and actions.</p>
             <div className="table-responsive" tabIndex={0} role="region" aria-label="All users table, scroll horizontally to see all columns">
@@ -90,7 +93,7 @@ export default function AdminUsers() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((user) => (
+                  {visibleUsers.map((user) => (
                     <tr key={user.id}>
                       <td data-label="Username"><Link className="fw-semibold" to={`/admin-panel/users/${user.id}`}>{user.username}</Link></td>
                       <td data-label="Email">{user.email || "No email"}</td>
@@ -115,7 +118,7 @@ export default function AdminUsers() {
           <div className="empty-state text-center">
             <h3 className="h5">No users yet</h3>
             <p className="text-secondary">Add a user to start managing CRM accounts.</p>
-            <Link className="btn btn-primary" to="/admin-panel/users/add">Add User</Link>
+            <Link className="btn btn-primary" to={`/admin-panel/users/add${storeFilter ? `?store=${storeFilter}` : ""}`}>Add User</Link>
           </div>
         )}
       </section>
