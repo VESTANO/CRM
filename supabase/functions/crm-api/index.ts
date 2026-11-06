@@ -2045,7 +2045,16 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
           const { error } = await adminClient.auth.admin.updateUserById(target.id, { email, email_confirm: true });
           checkDb(error);
         }
-        const storeId = isSuperAdmin(ctx) && body.store_id ? body.store_id : target.store_id;
+        const requestedStoreId = isSuperAdmin(ctx) ? valueString(body.store_id) : "";
+        // Store ownership is immutable after creation. Every CRM record is
+        // scoped through its owner's store, so moving an existing account
+        // would otherwise carry its historical data into another store.
+        if (requestedStoreId && requestedStoreId !== target.store_id) {
+          fail(400, "An existing account cannot be moved to another store. Create a new account in that store instead.", {
+            errors: { store_id: ["Existing accounts stay in their original store."] },
+          });
+        }
+        const storeId = target.store_id;
         const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active, role, store_id: storeId }).eq("id", target.id).select("*").single();
         checkDb(error);
         if (role !== target.role) {
