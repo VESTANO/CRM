@@ -57,7 +57,7 @@ export default function AdminUsers() {
         <div className="d-flex flex-wrap gap-2">
           <Link className="btn btn-outline-secondary" to="/admin-panel">Back to Admin Panel</Link>
           <Link className="btn btn-outline-secondary" to="/admin-panel/stores">Stores</Link>
-          <Link className="btn btn-primary" to={`/admin-panel/users/add${storeFilter ? `?store=${storeFilter}` : ""}`}><i className="bi bi-person-plus" />Add User</Link>
+          <Link className="btn btn-primary" to={storeFilter ? `/admin-panel/users/add?store=${storeFilter}` : "/admin-panel/stores"}><i className="bi bi-person-plus" />{storeFilter ? "Add User" : "Choose Store"}</Link>
         </div>
       </div>
 
@@ -118,7 +118,7 @@ export default function AdminUsers() {
           <div className="empty-state text-center">
             <h3 className="h5">No users yet</h3>
             <p className="text-secondary">Add a user to start managing CRM accounts.</p>
-            <Link className="btn btn-primary" to={`/admin-panel/users/add${storeFilter ? `?store=${storeFilter}` : ""}`}>Add User</Link>
+            <Link className="btn btn-primary" to={storeFilter ? `/admin-panel/users/add?store=${storeFilter}` : "/admin-panel/stores"}>{storeFilter ? "Add User" : "Choose Store"}</Link>
           </div>
         )}
       </section>
