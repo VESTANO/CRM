@@ -1361,9 +1361,11 @@ async function listReminders(ctx: Context) {
   }));
 }
 
-async function listTargets(userId: string | null = null) {
+async function listTargets(ctx: Context, userId: string | null = null) {
+  const storeUserIds = isSuperAdmin(ctx) ? null : await accessibleStoreUserIds(ctx);
   let query = adminClient.from("crm_sales_targets").select("*").order("month", { ascending: false });
   if (userId) query = query.eq("user_id", userId);
+  if (storeUserIds) query = storeUserIds.length ? query.in("user_id", storeUserIds) : query.eq("user_id", "00000000-0000-0000-0000-000000000000");
   const { data, error } = await query;
   checkDb(error);
   const targets = data || [];
@@ -1796,7 +1798,7 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   }
 
   if (parts[0] === "targets" && parts.length === 1 && method === "GET") {
-    return json(200, { results: await listTargets(ctx.user.id) });
+    return json(200, { results: await listTargets(ctx, ctx.user.id) });
   }
 
   if (parts[0] === "sales") {
@@ -2085,6 +2087,10 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const userId = valueString(params.get("userId"));
       let query = adminClient.from("crm_assigned_tasks").select("*").order("status").order("due_at").order("created_at", { ascending: false });
       if (userId) query = query.eq("assignee_id", userId);
+      if (!isSuperAdmin(ctx)) {
+        const storeUserIds = await accessibleStoreUserIds(ctx);
+        query = storeUserIds.length ? query.in("assignee_id", storeUserIds) : query.eq("assignee_id", "00000000-0000-0000-0000-000000000000");
+      }
       const { data, error } = await query;
       checkDb(error); return json(200, { results: await serializeTasks(data || []) });
     }
@@ -2103,6 +2109,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const id = parseId(parts[2]);
       const { data: current, error: readError } = await adminClient.from("crm_assigned_tasks").select("*").eq("id", id).maybeSingle();
       checkDb(readError); if (!current) fail(404, "Task not found.");
+      await adminUserById(ctx, current.assignee_id);
       if (body.review_action !== undefined) {
         if (files.length || thumbnails.length) fail(400, "Review the submitted photos without uploading replacement files.");
         const data = await reviewTaskSubmission(adminClient, ctx.user.id, id, parseId(body.submission_id), valueString(body.review_action), valueString(body.review_note));
@@ -2118,7 +2125,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
     }
   }
   if (parts[1] === "targets") {
-    if (parts.length === 2 && method === "GET") return json(200, await listTargets());
+    if (parts.length === 2 && method === "GET") return json(200, await listTargets(ctx));
     if (parts.length === 2 && method === "POST") {
       const userId = valueString(body.userId);
       const monthText = valueString(body.month);
@@ -2136,6 +2143,9 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const id = parseId(parts[2]);
       const target = Number(body.target);
       if (!Number.isInteger(target) || target <= 0) fail(400, "Target must be a positive whole number.");
+      const { data: existing, error: existingError } = await adminClient.from("crm_sales_targets").select("*").eq("id", id).maybeSingle();
+      checkDb(existingError); if (!existing) fail(404, "Target not found.");
+      await adminUserById(ctx, existing.user_id);
       const { data, error } = await adminClient.from("crm_sales_targets").update({ target }).eq("id", id).select("*").maybeSingle();
       checkDb(error); if (!data) fail(404, "Target not found.");
       return json(200, await targetPayload(data));
