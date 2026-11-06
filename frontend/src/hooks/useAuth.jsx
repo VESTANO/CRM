@@ -5,6 +5,7 @@ import { authApi, setApiCacheScope } from "../services/api.js";
 import { crmSupabase } from "../services/crmSupabase.js";
 
 import { clearAttendanceReadCache } from "../services/attendanceSupabase.js";
+import { clearSelectedStore } from "../services/storeContext.js";
 
 const AuthContext = createContext(null);
 const AUTH_TIMEOUT_MS = 15_000;
@@ -66,6 +67,9 @@ export function AuthProvider({ children }) {
   }, [refreshSession]);
 
   const login = useCallback(async (credentials) => {
+    // A selected workspace belongs to the previous browser session, never to
+    // a newly signed-in account. Super Admins must begin at Stores.
+    clearSelectedStore();
     skipNextSignedInRefresh.current = true;
     try {
       const { data } = await authApi.login(credentials);
@@ -97,6 +101,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     await authApi.logout();
+    clearSelectedStore();
     setApiCacheScope(null);
     setUser(null);
     setCsrfToken("");
