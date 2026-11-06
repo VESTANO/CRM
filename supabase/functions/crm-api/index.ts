@@ -2264,14 +2264,18 @@ function mapProfile(profile: any) {
 async function handleAttendance(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any) {
   if (parts.length === 1 && method === "GET") {
     const admin = isAdminRole(ctx.profile.role);
-    let profileQuery = admin ? adminClient.from("profiles").select("*").order("name") : adminClient.from("profiles").select("*").eq("id", ctx.user.id);
+    let profileQuery = admin
+      ? applyProfileScope(adminClient.from("profiles").select("*").order("name"), ctx)
+      : adminClient.from("profiles").select("*").eq("id", ctx.user.id);
     const { data: profiles, error: profileError } = await profileQuery;
     checkDb(profileError);
     const from = valueString(params.get("from"));
     const to = valueString(params.get("to"));
     let recordQuery = adminClient.from("attendance_records").select("*").order("punched_at", { ascending: false });
+    const scopedIds = (profiles || []).map((profile: any) => profile.id);
     if (!admin) recordQuery = recordQuery.eq("user_id", ctx.user.id);
-    if (params.get("userId") && admin) recordQuery = recordQuery.eq("user_id", params.get("userId"));
+    else recordQuery = scopedIds.length ? recordQuery.in("user_id", scopedIds) : recordQuery.eq("user_id", "00000000-0000-0000-0000-000000000000");
+    if (params.get("userId") && admin && scopedIds.includes(params.get("userId"))) recordQuery = recordQuery.eq("user_id", params.get("userId"));
     if (from) recordQuery = recordQuery.gte("punched_at", from + "T00:00:00+05:30");
     if (to) recordQuery = recordQuery.lte("punched_at", to + "T23:59:59+05:30");
     const { data: records, error: recordError } = await recordQuery;
@@ -2309,7 +2313,9 @@ async function handleAttendance(ctx: Context, method: string, parts: string[], p
     requireAdmin(ctx);
     const punchCode = valueString(body.punchCode);
     const userId = valueString(body.userId);
-    const { data: profile, error: profileError } = await adminClient.from("profiles").select("*").eq("id", userId).maybeSingle();
+    let profileQuery = adminClient.from("profiles").select("*").eq("id", userId);
+    profileQuery = applyProfileScope(profileQuery, ctx);
+    const { data: profile, error: profileError } = await profileQuery.maybeSingle();
     checkDb(profileError); if (!profile) fail(404, "Employee not found.");
     const { data: mapped, error } = await adminClient.rpc("map_attendance_employee", { p_punch_code: punchCode, p_user_id: userId });
     checkDb(error);
