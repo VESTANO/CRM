@@ -7,7 +7,7 @@ import { authApi, dashboardApi, targetsApi } from "../services/api.js";
 export default function Login() {
   const { isAuthenticated, login } = useAuth();
   const [form, setForm] = useState({ username: "", password: "" });
-  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryIdentity, setRecoveryIdentity] = useState("");
   const [error, setError] = useState("");
   const [recoveryMessage, setRecoveryMessage] = useState("");
   const [mode, setMode] = useState("sign-in");
@@ -42,7 +42,7 @@ export default function Login() {
     setMode("recovery");
     setError("");
     setRecoveryMessage("");
-    setRecoveryEmail(form.username.includes("@") ? form.username : "");
+    setRecoveryIdentity(form.username);
   };
 
   const handleRecoverySubmit = async (event) => {
@@ -51,10 +51,10 @@ export default function Login() {
     setRecoveryMessage("");
     setIsSubmitting(true);
     try {
-      await authApi.requestPasswordReset(recoveryEmail);
-      // Keep the result neutral so this form never reveals whether an address
-      // belongs to a CRM account.
-      setRecoveryMessage("If an active account uses that email address, a password-reset link is on its way. Check your inbox and spam folder.");
+      const { data } = await authApi.requestPasswordReset(recoveryIdentity);
+      setRecoveryMessage(data?.maskedEmail
+        ? `A password-reset link was sent to ${data.maskedEmail}. Check the inbox and spam folder.`
+        : "If the employee ID belongs to an active account, a password-reset link is on its way.");
     } catch (err) {
       setError(err.response?.data?.detail || "We couldn't send a reset link right now. Please try again shortly.");
     } finally {
@@ -85,7 +85,7 @@ export default function Login() {
           <div className="login-card-mark">V</div>
           <div className="eyebrow">WELCOME BACK</div>
           <h1>{mode === "recovery" ? "Reset password" : "Sign in"}</h1>
-          <p className="login-intro">{mode === "recovery" ? "Enter your email and we'll send a secure password-reset link." : "Sign in to your CRM workspace."}</p>
+          <p className="login-intro">{mode === "recovery" ? "Enter your employee ID and we'll send a secure password-reset link to the work email in your employee details." : "Sign in to your CRM workspace."}</p>
 
           {error && <div className="alert alert-danger" role="alert">{error}</div>}
           {recoveryMessage && <div className="alert alert-success" role="status">{recoveryMessage}</div>}
@@ -93,14 +93,13 @@ export default function Login() {
           {mode === "recovery" ? (
             <form onSubmit={handleRecoverySubmit}>
               <div className="mb-4">
-                <label className="form-label" htmlFor="recovery-email">Work email</label>
+                <label className="form-label" htmlFor="recovery-identity">Employee ID</label>
                 <input
-                  id="recovery-email"
+                  id="recovery-identity"
                   className="form-control"
-                  type="email"
-                  value={recoveryEmail}
-                  onChange={(event) => setRecoveryEmail(event.target.value)}
-                  autoComplete="email"
+                  value={recoveryIdentity}
+                  onChange={(event) => setRecoveryIdentity(event.target.value)}
+                  autoComplete="username"
                   required
                   autoFocus
                 />

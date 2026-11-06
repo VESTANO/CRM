@@ -21,6 +21,13 @@ function validEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function maskEmail(email: string) {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return "your work email";
+  const visible = local.slice(-3);
+  return `****${visible}@${domain}`;
+}
+
 function escapeHtml(value: string) {
   const entities: Record<string, string> = {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;",
@@ -76,8 +83,8 @@ Deno.serve(async (request) => {
   const accepted = () => response(200, { ok: true });
   try {
     const body = await request.json().catch(() => ({}));
-    const email = String(body?.email || "").trim().toLowerCase();
-    if (!validEmail(email)) return accepted();
+    const identity = String(body?.identity || body?.email || "").trim();
+    if (!identity || identity.length > 256) return accepted();
     if (!supabaseUrl || !serviceRoleKey || !brevoApiKey || !brevoSenderEmail) {
       console.error("Password reset is missing required Brevo or Supabase configuration.");
       return response(503, { error: "Password recovery is temporarily unavailable." });
@@ -86,12 +93,22 @@ Deno.serve(async (request) => {
     const adminClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-    const { data: profile, error: profileError } = await adminClient
+    let { data: profile, error: profileError } = await adminClient
       .from("profiles")
       .select("email, active")
-      .eq("email", email)
+      .eq("employee_id", identity)
       .maybeSingle();
     if (profileError) throw profileError;
+    if (!profile && validEmail(identity)) {
+      const byEmail = await adminClient
+        .from("profiles")
+        .select("email, active")
+        .eq("email", identity.toLowerCase())
+        .maybeSingle();
+      profile = byEmail.data;
+      profileError = byEmail.error;
+      if (profileError) throw profileError;
+    }
     if (profile && !profile.active) return accepted();
 
     // Imported accounts can retain a legacy sign-in email while Supabase uses
@@ -101,7 +118,7 @@ Deno.serve(async (request) => {
       const { data: legacy, error: legacyError } = await adminClient
         .from("crm_legacy_auth")
         .select("auth_email, is_active")
-        .eq("original_email", email)
+        .eq("original_email", identity.toLowerCase())
         .maybeSingle();
       if (legacyError) throw legacyError;
       if (!legacy?.is_active) return accepted();
@@ -121,7 +138,7 @@ Deno.serve(async (request) => {
 
     await sendBrevoResetEmail(recipientEmail, generated.properties.action_link);
     await recordRequest(adminClient, emailHash);
-    return accepted();
+    return response(200, { ok: true, maskedEmail: maskEmail(recipientEmail) });
   } catch (error) {
     console.error("Password-reset request failed:", error instanceof Error ? error.message : error);
     return response(503, { error: "Password recovery is temporarily unavailable." });

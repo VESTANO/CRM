@@ -258,14 +258,14 @@ export const authApi = {
     if (!user) throw apiError("This account is inactive or has no CRM profile.", 403);
     return { data: { user, csrfToken: "" } };
   },
-  requestPasswordReset: async (email) => {
-    const normalizedEmail = String(email || "").trim();
-    if (!normalizedEmail) throw apiError("Enter the email address for your CRM account.");
-    const { error } = await crmSupabase.functions.invoke("password-reset", {
-      body: { email: normalizedEmail },
+  requestPasswordReset: async (identity) => {
+    const normalizedIdentity = String(identity || "").trim();
+    if (!normalizedIdentity) throw apiError("Enter your employee ID.");
+    const { data, error } = await crmSupabase.functions.invoke("password-reset", {
+      body: { identity: normalizedIdentity },
     });
     if (error) throw apiError("We couldn't send a reset link right now. Please try again shortly.");
-    return { data: { ok: true } };
+    return { data: data || { ok: true } };
   },
   logout: async () => {
     if ("serviceWorker" in navigator) {
