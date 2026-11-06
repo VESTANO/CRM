@@ -112,11 +112,13 @@ export default function Customers() {
         </ol>
       </nav>
       <div className="page-header mb-4">
-        <div className="eyebrow">CUSTOMERS</div>
-        <h1 className="h2 mb-2">All Customers</h1>
-        <p className="text-secondary mb-0">
-          Customer details from every accessible dataset, with 50 customers per page.
-        </p>
+        <div className="customer-page-heading">
+          <div className="eyebrow">CUSTOMERS</div>
+          <h1 className="h2 mb-2">All Customers</h1>
+          <p className="text-secondary mb-0">
+            Customer details from every accessible dataset, with 50 customers per page.
+          </p>
+        </div>
       </div>
 
       {error && <div className="alert alert-danger" role="alert">{error} {data && "Showing the last loaded customer list."}</div>}
@@ -210,9 +212,12 @@ export default function Customers() {
             </table>
           </div>
           {pagination.numPages > 1 && (
-            <nav className="d-flex justify-content-between align-items-center gap-3 mt-3" aria-label="Customer pagination">
+            <nav className="customer-pagination d-flex justify-content-between align-items-center gap-3 mt-3" aria-label="Customer pagination">
               <button className="btn btn-outline-secondary" type="button" disabled={!pagination.hasPrevious} onClick={() => goToPage(pagination.previousPage)}>Previous</button>
-              <span className="text-secondary small">Showing up to 50 customers per page</span>
+              <span className="customer-pagination-status text-secondary small">
+                <span className="d-none d-sm-inline">Showing up to 50 customers per page</span>
+                <span className="d-sm-none">50 customers per page</span>
+              </span>
               <button className="btn btn-outline-primary" type="button" disabled={!pagination.hasNext} onClick={() => goToPage(pagination.nextPage)}>Next</button>
             </nav>
           )}</> : (

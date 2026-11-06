@@ -133,24 +133,28 @@ export default function DatasetList() {
       )}
 
       <form className="panel mb-4" aria-labelledby="dataset-filters-heading" onSubmit={applyFilters}>
-        <h2 className="h5 mb-1" id="dataset-filters-heading">Filter Datasets</h2>
-        <p className="text-secondary small mb-3">Filter by upload date and dataset name.</p>
+        <div className="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+          <div>
+            <h2 className="h5 mb-1" id="dataset-filters-heading">Filter Datasets</h2>
+            <p className="text-secondary small mb-0">Filter by upload date and dataset name.</p>
+          </div>
+          <div className="d-flex flex-wrap gap-4">
+            <button className="btn btn-primary" type="submit" disabled={invalidDateRange}>Filter</button>
+            <button className="btn btn-outline-secondary" type="button" onClick={clearFilters}>Clear</button>
+          </div>
+        </div>
         <div className="row g-3 align-items-end">
           <div className="col-sm-12 col-lg-4">
             <label className="form-label" htmlFor="dataset-name-filter">Dataset Name</label>
             <input className="form-control" id="dataset-name-filter" type="search" name="name" value={filters.name} onChange={changeFilter} placeholder="Search dataset names..." />
           </div>
-          <div className="col-sm-6 col-lg-3">
+          <div className="col-sm-6 col-lg-4">
             <label className="form-label" htmlFor="dataset-date-from">From Date</label>
             <input className="form-control" id="dataset-date-from" type="date" name="date_from" value={filters.date_from} max={filters.date_to || undefined} onChange={changeFilter} aria-invalid={invalidDateRange || undefined} aria-describedby={invalidDateRange ? "dataset-filter-date-error" : undefined} />
           </div>
-          <div className="col-sm-6 col-lg-3">
+          <div className="col-sm-6 col-lg-4">
             <label className="form-label" htmlFor="dataset-date-to">To Date</label>
             <input className="form-control" id="dataset-date-to" type="date" name="date_to" value={filters.date_to} min={filters.date_from || undefined} onChange={changeFilter} aria-invalid={invalidDateRange || undefined} aria-describedby={invalidDateRange ? "dataset-filter-date-error" : undefined} />
-          </div>
-          <div className="col-lg-2 d-flex flex-wrap gap-2">
-            <button className="btn btn-primary" type="submit" disabled={invalidDateRange}>Filter</button>
-            <button className="btn btn-outline-secondary" type="button" onClick={clearFilters}>Clear</button>
           </div>
         </div>
         {invalidDateRange && <p className="text-danger small mb-0 mt-3" id="dataset-filter-date-error" role="alert">From Date must be on or before To Date.</p>}
