@@ -1986,11 +1986,14 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
   if (parts[1] === "users") {
     if (parts.length === 2 && method === "GET") {
       const requestedStoreId = valueString(params.get("store"));
+      const requestedRole = valueString(params.get("role"));
+      if (requestedRole && !isSuperAdmin(ctx)) fail(403, "Super Admin access required.");
       // A Super Admin can deliberately open one store's team. Other admins
       // are always restricted to their own store, regardless of this query.
       const profiles = await fetchAll(() => {
         const query = adminClient.from("profiles").select("*").order("employee_id");
-        return isSuperAdmin(ctx) && requestedStoreId ? query.eq("store_id", requestedStoreId) : applyProfileScope(query, ctx);
+        const scoped = isSuperAdmin(ctx) && requestedStoreId ? query.eq("store_id", requestedStoreId) : applyProfileScope(query, ctx);
+        return requestedRole ? scoped.eq("role", requestedRole) : scoped;
       });
       return json(200, { results: await profilesWithCounts(profiles) });
     }

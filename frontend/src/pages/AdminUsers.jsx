@@ -11,10 +11,11 @@ function userRole(user) {
 }
 
 export default function AdminUsers() {
-  const { user: signedInUser } = useAuth();
   const [searchParams] = useSearchParams();
   const storeFilter = searchParams.get("store") || "";
-  const userListRequest = storeFilter ? { params: { store: storeFilter } } : {};
+  const superAdminsOnly = searchParams.get("role") === "super_admin";
+  const { user: signedInUser, csrfToken } = useAuth();
+  const userListRequest = (storeFilter || superAdminsOnly) ? { params: { ...(storeFilter ? { store: storeFilter } : {}), ...(superAdminsOnly ? { role: "super_admin" } : {}) } } : {};
   const [users, setUsers] = useState(() => (
     peekCachedResponse("/admin/users/", userListRequest)?.data?.results
     ?? (!storeFilter ? peekCachedResponse("/admin/summary/")?.data?.users : null)
@@ -25,14 +26,14 @@ export default function AdminUsers() {
   const load = useCallback(async () => {
     setError("");
     try {
-      const { data } = await adminApi.listUsers(storeFilter);
+      const { data } = await adminApi.listUsers(storeFilter, superAdminsOnly ? "super_admin" : "");
       setUsers(data.results);
     } catch (requestError) {
       const denied = requestError.response?.status === 403;
       if (denied) setUsers(null);
       setError(denied ? "Administrator access required." : "Unable to load users.");
     }
-  }, [storeFilter]);
+  }, [storeFilter, superAdminsOnly]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -46,6 +47,15 @@ export default function AdminUsers() {
   const isSuperAdmin = Boolean(signedInUser?.is_superuser);
   const backPath = isSuperAdmin ? "/admin-panel/stores" : "/admin-panel";
   const backLabel = isSuperAdmin ? "Back to Stores" : "Back to Admin Panel";
+  const title = superAdminsOnly ? "Super Admins" : storeFilter ? "Store Team" : "All Users";
+  const deactivate = async (target) => {
+    try {
+      const { data } = await adminApi.action(target.id, "toggle-active", {}, csrfToken);
+      setUsers((current) => current.map((item) => item.id === data.id ? data : item));
+    } catch (requestError) {
+      setError(requestError.response?.data?.detail || "Unable to change this account status.");
+    }
+  };
 
   return (
     <>
@@ -59,13 +69,13 @@ export default function AdminUsers() {
       <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4">
         <div>
           <div className="text-secondary small mb-1">Administration</div>
-          <h1 className="h2 mb-2">{storeFilter ? "Store Team" : "All Users"}</h1>
-          <p className="text-secondary mb-0">{storeFilter ? "Accounts in the selected store only." : "Every CRM account, including administrators and inactive users."}</p>
+          <h1 className="h2 mb-2">{title}</h1>
+          <p className="text-secondary mb-0">{superAdminsOnly ? "Global Super Admin accounts, independent of every store." : storeFilter ? "Accounts in the selected store only." : "Every CRM account, including administrators and inactive users."}</p>
         </div>
         <div className="d-flex flex-wrap gap-2">
           <Link className="btn btn-outline-secondary" to={backPath}>{backLabel}</Link>
           <Link className="btn btn-outline-secondary" to="/admin-panel/stores">Stores</Link>
-          <Link className="btn btn-primary" to={storeFilter ? `/admin-panel/users/add?store=${storeFilter}` : "/admin-panel/stores"}><i className="bi bi-person-plus" />{storeFilter ? "Add User" : "Choose Store"}</Link>
+          <Link className="btn btn-primary" to={superAdminsOnly ? "/admin-panel/users/add?role=super_admin" : storeFilter ? `/admin-panel/users/add?store=${storeFilter}` : "/admin-panel/stores"}><i className="bi bi-person-plus" />{superAdminsOnly ? "Add Super Admin" : storeFilter ? "Add User" : "Choose Store"}</Link>
         </div>
       </div>
 
@@ -115,6 +125,7 @@ export default function AdminUsers() {
                           <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}`}>View</Link>
                           <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
                           <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
+                          {superAdminsOnly && <button className={`btn btn-outline-${user.is_active ? "danger" : "primary"} btn-sm`} type="button" disabled={user.id === signedInUser?.id} onClick={() => deactivate(user)}>{user.is_active ? "Deactivate" : "Activate"}</button>}
                         </div>
                       </td>
                     </tr>

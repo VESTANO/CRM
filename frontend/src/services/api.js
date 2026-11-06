@@ -540,7 +540,7 @@ export const adminApi = {
   // Admin reads are user-scoped and mutations invalidate them immediately.
   // A short freshness window prevents a full reload on every back-navigation.
   summary: () => cachedGet("/admin/summary/", {}, 30_000),
-  listUsers: (storeId = "") => cachedGet("/admin/users/", storeId ? { params: { store: storeId } } : {}),
+  listUsers: (storeId = "", role = "") => cachedGet("/admin/users/", (storeId || role) ? { params: { ...(storeId ? { store: storeId } : {}), ...(role ? { role } : {}) } } : {}),
   stores: () => cachedGet("/admin/stores/", {}, 30_000),
   createStore: (payload, csrfToken) => apiClient.post("/admin/stores/", payload, csrfHeaders(csrfToken)),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),

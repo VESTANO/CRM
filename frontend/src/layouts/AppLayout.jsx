@@ -202,6 +202,9 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
       <SidebarNavLink user={user} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`} to="/admin-panel/stores" onClick={(event) => handleNavigation(event, "/admin-panel/stores")}>
         <i className="bi bi-shop" /><span>Stores</span>
       </SidebarNavLink>
+      <SidebarNavLink user={user} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`} to="/admin-panel/users?role=super_admin" onClick={(event) => handleNavigation(event, "/admin-panel/users?role=super_admin")}>
+        <i className="bi bi-shield-lock" /><span>Super Admins</span>
+      </SidebarNavLink>
     </nav>;
   }
 
@@ -335,16 +338,14 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
         </SidebarNavLink>
       )}
       {user?.is_superuser && (
-        <SidebarNavLink
-          user={user}
-          className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`}
-          to="/admin-panel/stores"
-          end
-          onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel/stores"); }}
-        >
-          <i className="bi bi-shop" />
-          <span>Stores</span>
-        </SidebarNavLink>
+        <>
+          <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`} to="/admin-panel/stores" end onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel/stores"); }}>
+            <i className="bi bi-shop" /><span>Stores</span>
+          </SidebarNavLink>
+          <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/users" && location.search.includes("role=super_admin") ? "active" : ""}`} to="/admin-panel/users?role=super_admin" onClick={(event) => { clearSelectedStore(); setOpenMenu(null); handleNavigation(event, "/admin-panel/users?role=super_admin"); }}>
+            <i className="bi bi-shield-lock" /><span>Super Admins</span>
+          </SidebarNavLink>
+        </>
       )}
     </nav>
   );
