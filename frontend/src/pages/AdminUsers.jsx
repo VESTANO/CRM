@@ -12,9 +12,10 @@ function userRole(user) {
 export default function AdminUsers() {
   const [searchParams] = useSearchParams();
   const storeFilter = searchParams.get("store") || "";
+  const userListRequest = storeFilter ? { params: { store: storeFilter } } : {};
   const [users, setUsers] = useState(() => (
-    peekCachedResponse("/admin/users/")?.data?.results
-    ?? peekCachedResponse("/admin/summary/")?.data?.users
+    peekCachedResponse("/admin/users/", userListRequest)?.data?.results
+    ?? (!storeFilter ? peekCachedResponse("/admin/summary/")?.data?.users : null)
     ?? null
   ));
   const [error, setError] = useState("");
@@ -22,22 +23,24 @@ export default function AdminUsers() {
   const load = useCallback(async () => {
     setError("");
     try {
-      const { data } = await adminApi.listUsers();
+      const { data } = await adminApi.listUsers(storeFilter);
       setUsers(data.results);
     } catch (requestError) {
       const denied = requestError.response?.status === 403;
       if (denied) setUsers(null);
       setError(denied ? "Administrator access required." : "Unable to load users.");
     }
-  }, []);
+  }, [storeFilter]);
 
   useEffect(() => { load(); }, [load]);
 
   if (error && users === null) return <RequestError message={error} onRetry={load} />;
   if (users === null) return <LoadingPanel label="Loading all users" />;
 
-  const activeCount = users.filter((user) => user.is_active).length;
+  // The API is store-scoped, and this guard also prevents a cached response
+  // from a previously viewed store appearing during navigation.
   const visibleUsers = storeFilter ? users.filter((user) => user.store_id === storeFilter) : users;
+  const activeCount = visibleUsers.filter((user) => user.is_active).length;
 
   return (
     <>
@@ -51,8 +54,8 @@ export default function AdminUsers() {
       <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4">
         <div>
           <div className="text-secondary small mb-1">Administration</div>
-          <h1 className="h2 mb-2">All Users</h1>
-          <p className="text-secondary mb-0">Every CRM account, including administrators and inactive users.</p>
+          <h1 className="h2 mb-2">{storeFilter ? "Store Team" : "All Users"}</h1>
+          <p className="text-secondary mb-0">{storeFilter ? "Accounts in the selected store only." : "Every CRM account, including administrators and inactive users."}</p>
         </div>
         <div className="d-flex flex-wrap gap-2">
           <Link className="btn btn-outline-secondary" to="/admin-panel">Back to Admin Panel</Link>
@@ -65,9 +68,9 @@ export default function AdminUsers() {
 
       <div className="metric-grid mb-4">
         {[
-          ["Total Users", users.length, "bi-people"],
+          ["Total Users", visibleUsers.length, "bi-people"],
           ["Active Users", activeCount, "bi-person-check"],
-          ["Inactive Users", users.length - activeCount, "bi-person-dash"],
+          ["Inactive Users", visibleUsers.length - activeCount, "bi-person-dash"],
         ].map(([label, value, icon]) => (
           <div className="summary-card" key={label}>
             <span className="metric-icon"><i className={`bi ${icon}`} /></span>

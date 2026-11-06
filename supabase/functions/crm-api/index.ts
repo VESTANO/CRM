@@ -1919,12 +1919,14 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
     }
   }
   if (parts[1] === "summary" && method === "GET") {
-    const [profiles, datasets, customers, authUsers] = await Promise.all([
+    const [profiles, datasets, authUsers] = await Promise.all([
       fetchAll(() => applyProfileScope(adminClient.from("profiles").select("*").order("employee_id"), ctx)),
       accessibleDatasets(ctx),
-      fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id")),
       allAuthUsers(),
     ]);
+    const customers = datasets.length
+      ? await fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id").in("dataset_id", datasets.map((dataset: any) => dataset.id)))
+      : [];
     // Build all user and dataset counts from the three bulk queries above.
     // The former implementation made two extra database requests per user,
     // then repeated those requests for the recent-users section.
@@ -1969,7 +1971,13 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
   }
   if (parts[1] === "users") {
     if (parts.length === 2 && method === "GET") {
-      const profiles = await fetchAll(() => applyProfileScope(adminClient.from("profiles").select("*").order("employee_id"), ctx));
+      const requestedStoreId = valueString(params.get("store"));
+      // A Super Admin can deliberately open one store's team. Other admins
+      // are always restricted to their own store, regardless of this query.
+      const profiles = await fetchAll(() => {
+        const query = adminClient.from("profiles").select("*").order("employee_id");
+        return isSuperAdmin(ctx) && requestedStoreId ? query.eq("store_id", requestedStoreId) : applyProfileScope(query, ctx);
+      });
       return json(200, { results: await profilesWithCounts(profiles) });
     }
     if (parts.length === 2 && method === "POST") {
@@ -2224,7 +2232,10 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
       requested_minutes: requestedMinutes,
     }).select("*").single();
     checkDb(error);
-    const admins = await fetchAll(() => adminClient.from("profiles").select("id").eq("active", true).in("role", ["admin", "super_admin"]));
+    const admins = await fetchAll(() => applyProfileScope(
+      adminClient.from("profiles").select("id").eq("active", true).in("role", ["admin", "super_admin"]),
+      ctx,
+    ));
     if (admins.length) {
       const { error: reminderError } = await adminClient.from("crm_reminders").insert(admins.map((item: any) => ({
         owner_id: item.id,
