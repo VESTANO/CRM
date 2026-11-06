@@ -3,9 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { crmSupabase } from "../services/crmSupabase.js";
 import PasswordInput from "./PasswordInput.jsx";
 
-// Read the link before Supabase consumes its fragment while restoring auth.
-const startupRecovery = typeof window !== "undefined"
-  && new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
+// Supabase recovery links can arrive in either implicit form (#type=recovery)
+// or the newer PKCE form (?code=...).  Detect both before the auth client has
+// a chance to consume the URL, otherwise a valid recovery link can briefly
+// render the normal sign-in page.
+const startupRecovery = typeof window !== "undefined" && (() => {
+  const query = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.slice(1));
+  return hash.get("type") === "recovery" || query.has("code");
+})();
 
 export default function PasswordRecoveryGate({ children }) {
   const [recovering, setRecovering] = useState(startupRecovery);
@@ -38,15 +44,30 @@ function PasswordRecovery({ onComplete, onCancel }) {
 
   useEffect(() => {
     let active = true;
-    crmSupabase.auth.getSession().then(({ data, error: sessionError }) => {
-      if (!active) return;
-      if (sessionError || !data.session) {
-        setError("This password setup link has expired or is invalid. Ask your administrator for a new link.");
-        return;
+    const verifyRecoveryLink = async () => {
+      const recoveryCode = new URLSearchParams(window.location.search).get("code");
+
+      // Exchange PKCE links explicitly. This also handles a page load where
+      // Supabase's automatic URL processing completed before our listener.
+      if (recoveryCode) {
+        const { error: exchangeError } = await crmSupabase.auth.exchangeCodeForSession(recoveryCode);
+        if (exchangeError) {
+          // The SDK may already have exchanged this code. In that case the
+          // session check below is authoritative.
+          const { data } = await crmSupabase.auth.getSession();
+          if (!data.session) throw exchangeError;
+        }
       }
-      setReady(true);
-    }).catch(() => {
-      if (active) setError("Unable to verify this password setup link. Please reload and try again.");
+
+      const { data, error: sessionError } = await crmSupabase.auth.getSession();
+      if (!data.session || sessionError) {
+        throw sessionError || new Error("No recovery session");
+      }
+      if (active) setReady(true);
+    };
+
+    verifyRecoveryLink().catch(() => {
+      if (active) setError("This password setup link has expired or is invalid. Ask your administrator for a new link.");
     }).finally(() => {
       if (active) setChecking(false);
     });
