@@ -379,6 +379,12 @@ function applyProfileScope(query: any, ctx: Context) {
   return storeId ? query.eq("store_id", storeId) : query;
 }
 
+async function accessibleStoreUserIds(ctx: Context) {
+  if (isSuperAdmin(ctx)) return null;
+  const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", ctx.profile.store_id));
+  return profiles.map((profile: any) => profile.id);
+}
+
 async function authenticate(request: Request): Promise<Context> {
   const authorization = request.headers.get("Authorization") || "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -799,10 +805,12 @@ async function visibleRecords(ctx: Context, datasetIds: number[]) {
 }
 
 async function accessibleVisits(ctx: Context, options: any = {}) {
+  const storeUserIds = isAdminRole(ctx.profile.role) ? await accessibleStoreUserIds(ctx) : null;
   return await fetchAll(() => {
     let query = adminClient.from("crm_visits").select("*").order("visit_date", { ascending: false })
       .order("meeting_time", { ascending: false }).order("created_at", { ascending: false });
     if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
+    else if (storeUserIds) query = storeUserIds.length ? query.in("owner_id", storeUserIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
     if (options.status) query = query.eq("status", options.status);
     if (options.dateFrom) query = query.gte("visit_date", options.dateFrom);
     if (options.dateTo) query = query.lte("visit_date", options.dateTo);
@@ -1043,9 +1051,11 @@ async function dashboardSummary(ctx: Context) {
     checkDb(error);
     return [choice.value, count || 0] as const;
   });
+  const storeUserIds = isAdminRole(ctx.profile.role) ? await accessibleStoreUserIds(ctx) : null;
   const visitRequest = fetchAll(() => {
     let query = adminClient.from("crm_visits").select("owner_id,visit_date,expense,total_amount,paid_amount,payment_status");
     if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
+    else if (storeUserIds) query = storeUserIds.length ? query.in("owner_id", storeUserIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
     return query;
   });
   const [recordCountRows, visits, recentDatasets] = await Promise.all([
@@ -1501,6 +1511,10 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
 async function visibleVisit(ctx: Context, id: number) {
   let query = adminClient.from("crm_visits").select("*").eq("id", id);
   if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
+  else if (!isSuperAdmin(ctx)) {
+    const storeUserIds = await accessibleStoreUserIds(ctx);
+    query = storeUserIds?.length ? query.in("owner_id", storeUserIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
+  }
   const { data, error } = await query.maybeSingle();
   checkDb(error);
   if (!data) fail(404, "Visit not found.");
@@ -2171,6 +2185,10 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
   if (parts.length === 1 && method === "GET") {
     let query = adminClient.from("crm_overtime_requests").select("*").order("work_date", { ascending: false }).order("created_at", { ascending: false });
     if (!isAdminRole(ctx.profile.role)) query = query.eq("employee_id", ctx.user.id);
+    else if (!isSuperAdmin(ctx)) {
+      const storeUserIds = await accessibleStoreUserIds(ctx);
+      query = storeUserIds.length ? query.in("employee_id", storeUserIds) : query.eq("employee_id", "00000000-0000-0000-0000-000000000000");
+    }
     const { data, error } = await query;
     checkDb(error);
     const requests = data || [];
