@@ -35,7 +35,7 @@ Deno.serve(async (request) => {
     const adminClient = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const { data: { user }, error: userError } = await userClient.auth.getUser();
     if (userError || !user) return response(401, { error: "Authentication required." });
-    const { data: caller, error: callerError } = await adminClient.from("profiles").select("id, role, active").eq("id", user.id).single();
+    const { data: caller, error: callerError } = await adminClient.from("profiles").select("id, role, active, store_id").eq("id", user.id).single();
     if (callerError || !caller?.active || !isAdminRole(caller.role)) {
       return response(403, { error: "Only admins can manage employees." });
     }
@@ -43,11 +43,30 @@ Deno.serve(async (request) => {
     const action = String(body.action || "");
     if (!["create", "update", "delete"].includes(action)) return response(400, { error: "Unsupported employee action." });
 
+    // Resolve tenancy from the authenticated admin, not from editable form data.
+    // Global Super Admins must deliberately open a store before managing its team.
+    const storeId = caller.role === "super_admin"
+      ? (request.headers.get("x-crm-store-id") || "").trim()
+      : String(caller.store_id || "");
+    if (!storeId) return response(400, {
+      error: caller.role === "super_admin"
+        ? "Open a store before adding or managing its employees."
+        : "Your administrator account is not assigned to a store.",
+    });
+    if (caller.role === "super_admin") {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(storeId)) {
+        return response(400, { error: "The selected store is invalid. Open the store again." });
+      }
+      const { data: store, error: storeError } = await adminClient.from("crm_stores").select("id").eq("id", storeId).maybeSingle();
+      if (storeError) throw storeError;
+      if (!store) return response(400, { error: "The selected store no longer exists. Select another store." });
+    }
+
     let current: any = null;
     const userId = String(body.userId || "");
     if (action !== "create") {
       if (!userId) return response(400, { error: "Employee user ID is required." });
-      const { data, error } = await adminClient.from("profiles").select("*").eq("id", userId).maybeSingle();
+      const { data, error } = await adminClient.from("profiles").select("*").eq("id", userId).eq("store_id", storeId).maybeSingle();
       if (error) throw error;
       if (!data) return response(404, { error: "Employee not found." });
       current = data;
@@ -94,6 +113,7 @@ Deno.serve(async (request) => {
       return response(409, { error: "Email already exists. Enter a unique company email." });
     }
     const values = {
+      store_id: storeId,
       employee_id: employeeId, name, email,
       department: String(body.department ?? current?.department ?? "Other").trim(),
       manager: String(body.manager ?? current?.manager ?? "").trim(),
@@ -119,7 +139,7 @@ Deno.serve(async (request) => {
       return response(201, { employee: profile });
     }
 
-    const { data: profile, error: profileError } = await adminClient.from("profiles").update(values).eq("id", userId).select().single();
+    const { data: profile, error: profileError } = await adminClient.from("profiles").update(values).eq("id", userId).eq("store_id", storeId).select().single();
     if (profileError) throw profileError;
     const authUpdates: Record<string, unknown> = {};
     if (email !== current.email) authUpdates.email = email;
@@ -128,7 +148,7 @@ Deno.serve(async (request) => {
       const { error } = await adminClient.auth.admin.updateUserById(userId, authUpdates);
       if (error) {
         const rollback = Object.fromEntries(Object.keys(values).map((key) => [key, current[key]]));
-        const { error: rollbackError } = await adminClient.from("profiles").update(rollback).eq("id", userId);
+        const { error: rollbackError } = await adminClient.from("profiles").update(rollback).eq("id", userId).eq("store_id", storeId);
         if (rollbackError) console.error("Unable to roll back employee profile:", rollbackError.message);
         throw error;
       }
