@@ -7,6 +7,7 @@ import "./styles/icon-fallback.css";
 import "./styles/app.css";
 import "./styles/luxe-theme.css";
 import "./styles/admin.css";
+import "./styles/workspace-theme.css";
 import App from "./App.jsx";
 import { ServerErrorPage } from "./pages/StatusPage.jsx";
 

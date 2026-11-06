@@ -54,7 +54,7 @@ export default function AppLayout() {
   const { unreadCount: notificationCount } = useTaskNotifications();
   const [todayCallbackCount, setTodayCallbackCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
-  const roleLabel = user?.is_admin ? "Admin" : "User";
+  const roleLabel = user?.is_superuser ? "Super Admin" : user?.is_admin ? "Admin" : "User";
   const isDashboard = location.pathname === "/dashboard" || location.pathname === "/";
   const selectedSuperAdminStore = Boolean(user?.is_superuser && activeStoreId());
 
@@ -97,7 +97,7 @@ export default function AppLayout() {
   }, []);
 
   return (
-    <>
+    <div className="workspace-shell">
       <TaskNotificationAlerts />
       <header className="mobile-topbar d-lg-none">
         <button
@@ -161,7 +161,7 @@ export default function AppLayout() {
           </Suspense>
         </div>
       </main>
-    </>
+    </div>
   );
 }
 

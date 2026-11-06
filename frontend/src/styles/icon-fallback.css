@@ -18,6 +18,7 @@
 
 .bi-alarm { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/alarm.svg"); }
 .bi-arrow-clockwise { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/arrow-clockwise.svg"); }
+.bi-arrow-left { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/arrow-left.svg"); }
 .bi-arrow-repeat { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/arrow-repeat.svg"); }
 .bi-arrow-right { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/arrow-right.svg"); }
 .bi-bar-chart-line { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/bar-chart-line.svg"); }
@@ -66,6 +67,7 @@
 .bi-plus-lg { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/plus-lg.svg"); }
 .bi-search { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/search.svg"); }
 .bi-shield-lock { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/shield-lock.svg"); }
+.bi-shop { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/shop.svg"); }
 .bi-signpost-split { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/signpost-split.svg"); }
 .bi-speedometer2 { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/speedometer2.svg"); }
 .bi-tag { --bootstrap-icon: url("../../node_modules/bootstrap-icons/icons/tag.svg"); }
