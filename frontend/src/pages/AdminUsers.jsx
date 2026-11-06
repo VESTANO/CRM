@@ -61,7 +61,7 @@ export default function AdminUsers() {
     <>
       <nav aria-label="breadcrumb" className="mb-3">
         <ol className="breadcrumb mb-0">
-          <li className="breadcrumb-item"><Link to={backPath}>{isSuperAdmin ? "Stores" : "Admin Panel"}</Link></li>
+          <li className="breadcrumb-item"><Link to={superAdminsOnly ? "/admin-panel/users?role=super_admin" : backPath}>{superAdminsOnly ? "Super Admins" : isSuperAdmin ? "Stores" : "Admin Panel"}</Link></li>
           <li className="breadcrumb-item active" aria-current="page">All Users</li>
         </ol>
       </nav>
@@ -74,7 +74,7 @@ export default function AdminUsers() {
         </div>
         <div className="d-flex flex-wrap gap-2">
           <Link className="btn btn-outline-secondary" to={backPath}>{backLabel}</Link>
-          <Link className="btn btn-outline-secondary" to="/admin-panel/stores">Stores</Link>
+          {!isSuperAdmin && <Link className="btn btn-outline-secondary" to="/admin-panel/stores">Stores</Link>}
           <Link className="btn btn-primary" to={superAdminsOnly ? "/admin-panel/users/add?role=super_admin" : storeFilter ? `/admin-panel/users/add?store=${storeFilter}` : "/admin-panel/stores"}><i className="bi bi-person-plus" />{superAdminsOnly ? "Add Super Admin" : storeFilter ? "Add User" : "Choose Store"}</Link>
         </div>
       </div>
@@ -107,7 +107,7 @@ export default function AdminUsers() {
               <table className="table table-hover align-middle mb-0">
                 <thead className="table-light">
                   <tr>
-                    {["Username", "Email", ...(storeFilter ? [] : ["Store"]), "Role", "Status", "Datasets", "Customers", "Actions"].map((heading) => <th scope="col" key={heading}>{heading}</th>)}
+                    {["Username", "Email", ...(storeFilter || superAdminsOnly ? [] : ["Store"]), "Role", "Status", ...(superAdminsOnly ? [] : ["Datasets", "Customers"]), "Actions"].map((heading) => <th scope="col" key={heading}>{heading}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -115,16 +115,15 @@ export default function AdminUsers() {
                     <tr key={user.id}>
                       <td data-label="Username"><Link className="fw-semibold" to={`/admin-panel/users/${user.id}`}>{user.username}</Link></td>
                       <td data-label="Email">{user.email || "No email"}</td>
-                      {!storeFilter && <td data-label="Store">{user.store_name || "—"}</td>}
+                      {!storeFilter && !superAdminsOnly && <td data-label="Store">{user.store_name || "—"}</td>}
                       <td data-label="Role"><span className={`badge text-bg-${user.is_admin ? "primary" : "secondary"}`}>{userRole(user)}</span></td>
                       <td data-label="Status"><span className={`badge text-bg-${user.is_active ? "success" : "secondary"}`}>{user.is_active ? "Active" : "Inactive"}</span></td>
-                      <td data-label="Datasets">{user.dataset_count ?? 0}</td>
-                      <td data-label="Customers">{user.customer_count ?? 0}</td>
+                      {!superAdminsOnly && <><td data-label="Datasets">{user.dataset_count ?? 0}</td><td data-label="Customers">{user.customer_count ?? 0}</td></>}
                       <td data-label="Actions">
                         <div className="table-actions" role="group" aria-label={`Actions for ${user.username}`}>
                           <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}`}>View</Link>
                           <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
-                          <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
+                          {!superAdminsOnly && <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>}
                           {superAdminsOnly && <button className={`btn btn-outline-${user.is_active ? "danger" : "primary"} btn-sm`} type="button" disabled={user.id === signedInUser?.id} onClick={() => deactivate(user)}>{user.is_active ? "Deactivate" : "Activate"}</button>}
                         </div>
                       </td>
