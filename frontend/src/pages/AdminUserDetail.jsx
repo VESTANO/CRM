@@ -39,7 +39,7 @@ export default function AdminUserDetail() {
       {error && <div className="alert alert-danger" role="alert">{error} Showing the last loaded user details.</div>}
       <nav aria-label="breadcrumb" className="mb-3">
         <ol className="breadcrumb mb-0">
-          <li className="breadcrumb-item"><Link to="/admin-panel">Admin Panel</Link></li>
+          <li className="breadcrumb-item"><Link to={user.is_superuser ? "/admin-panel/users?role=super_admin" : "/admin-panel"}>{user.is_superuser ? "Super Admins" : "Admin Panel"}</Link></li>
           <li className="breadcrumb-item active" aria-current="page">{user.username}</li>
         </ol>
       </nav>
@@ -47,18 +47,15 @@ export default function AdminUserDetail() {
       <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4">
         <div>
           <h1 className="h2 mb-2">{user.username}</h1>
-          <p className="text-secondary mb-0">User account, access status, and CRM ownership.</p>
+          <p className="text-secondary mb-0">{user.is_superuser ? "Global Super Admin account, independent of every store." : "User account, access status, and CRM ownership."}</p>
         </div>
         <div className="d-flex flex-wrap gap-2">
-          <Link className="btn btn-primary" to={`/admin-panel/users/${user.id}/edit`}>Edit user</Link>
+          <Link className="btn btn-primary" to={`/admin-panel/users/${user.id}/edit`}>{user.is_superuser ? "Edit Super Admin" : "Edit user"}</Link>
           {!user.is_admin && (
             <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/password`}>
               Reset password
             </Link>
           )}
-          {!user.is_superuser && <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/datasets`}>
-            View datasets
-          </Link>}
         </div>
       </div>
 
@@ -75,13 +72,10 @@ export default function AdminUserDetail() {
         </div>
         <div className="col-lg-5">
           <section className="panel">
-            <h2 className="h5 mb-3">{user.is_superuser ? "Global access" : "CRM ownership"}</h2>
-            {user.is_superuser ? <p className="text-secondary mb-0">This Super Admin is independent of all stores and does not own customer data or datasets.</p> : <div className="metric-grid">
-              <div className="summary-card compact"><div className="text-secondary small">Datasets owned</div><div className="fs-4">{user.dataset_count}</div></div>
-              <div className="summary-card compact"><div className="text-secondary small">Customers owned</div><div className="fs-4">{user.customer_count}</div></div>
-            </div>}
+            <h2 className="h5 mb-3">Account access</h2>
+            <p className="text-secondary mb-4">Manage this account's active status and role. Store data is managed from its store workspace.</p>
             <button className={`btn btn-outline-${user.is_active ? "danger" : "primary"} w-100 mt-4`} onClick={toggle}>
-              {user.is_active ? "Deactivate user" : "Activate user"}
+              {user.is_active ? user.is_superuser ? "Deactivate Super Admin" : "Deactivate user" : user.is_superuser ? "Activate Super Admin" : "Activate user"}
             </button>
           </section>
         </div>
