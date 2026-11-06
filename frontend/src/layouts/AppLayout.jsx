@@ -194,6 +194,22 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
     Offcanvas.getOrCreateInstance(menu).hide();
   };
 
+  const toggleMenu = (menu) => {
+    if (menu === "customers") {
+      setCustomersOpen((open) => !open);
+      setAttendanceOpen(false);
+      setTimesheetOpen(false);
+    } else if (menu === "attendance") {
+      setAttendanceOpen((open) => !open);
+      setCustomersOpen(false);
+      setTimesheetOpen(false);
+    } else {
+      setTimesheetOpen((open) => !open);
+      setCustomersOpen(false);
+      setAttendanceOpen(false);
+    }
+  };
+
   return (
     <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>
       {navItems.map((item) => {
@@ -234,7 +250,12 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                   to={item.to}
                   className={() => `sidebar-link sidebar-menu-toggle pe-5 ${menuActive ? "active" : ""}`}
                   end
-                  onClick={(event) => { setMenuOpen(true); handleNavigation(event, item.to); }}
+                  onClick={(event) => {
+                    setMenuOpen(true);
+                    if (isAttendanceMenu) { setCustomersOpen(false); setTimesheetOpen(false); }
+                    if (isTimesheetMenu) { setCustomersOpen(false); setAttendanceOpen(false); }
+                    handleNavigation(event, item.to);
+                  }}
                 >
                   <i className={`bi ${item.icon}`} />
                   <span>{item.label}</span>
@@ -245,7 +266,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                   aria-label={`Toggle ${item.label} menu`}
                   aria-expanded={menuOpen}
                   aria-controls={resolvedSubmenuId}
-                  onClick={() => setMenuOpen((open) => !open)}
+                  onClick={() => toggleMenu(isAttendanceMenu ? "attendance" : isTimesheetMenu ? "timesheet" : "customers")}
                 >
                   <i className={`bi bi-chevron-${menuOpen ? "up" : "down"} sidebar-menu-chevron`} aria-hidden="true" />
                 </button>
@@ -254,7 +275,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
                 type="button"
                 aria-expanded={menuOpen}
                 aria-controls={resolvedSubmenuId}
-                onClick={() => setMenuOpen((open) => !open)}
+                onClick={() => toggleMenu("customers")}
               >
                 <i className={`bi ${item.icon}`} />
                 <span>{item.label}</span>
