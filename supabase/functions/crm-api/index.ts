@@ -362,6 +362,23 @@ function requireAdmin(ctx: Context) {
   if (!isAdminRole(ctx.profile.role)) fail(403, "Administrator access required.");
 }
 
+function isSuperAdmin(ctx: Context) {
+  return ctx.profile.role === "super_admin";
+}
+
+function requireSuperAdmin(ctx: Context) {
+  if (!isSuperAdmin(ctx)) fail(403, "Super Admin access required.");
+}
+
+function profileScope(ctx: Context) {
+  return isSuperAdmin(ctx) ? null : String(ctx.profile.store_id || "");
+}
+
+function applyProfileScope(query: any, ctx: Context) {
+  const storeId = profileScope(ctx);
+  return storeId ? query.eq("store_id", storeId) : query;
+}
+
 async function authenticate(request: Request): Promise<Context> {
   const authorization = request.headers.get("Authorization") || "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -442,6 +459,8 @@ function userPayload(profile: any, extras: any = {}) {
     is_admin: admin,
     is_active: Boolean(profile.active),
     date_joined: profile.created_at,
+    store_id: profile.store_id || null,
+    store_name: profile.store?.name || extras.store_name || "",
     ...extras,
   };
 }
@@ -486,9 +505,15 @@ async function profileName(id: string | null | undefined) {
 }
 
 async function accessibleDatasets(ctx: Context) {
+  const storeId = profileScope(ctx);
+  const storeProfiles = storeId
+    ? await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", storeId))
+    : [];
+  const ownerIds = storeProfiles.map((profile: any) => profile.id);
   const build = () => {
     let query = adminClient.from("crm_datasets").select("*").order("uploaded_at", { ascending: false });
     if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
+    else if (storeId) query = ownerIds.length ? query.in("owner_id", ownerIds) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
     return query;
   };
   return await fetchAll(build);
@@ -497,6 +522,10 @@ async function accessibleDatasets(ctx: Context) {
 async function accessibleDataset(ctx: Context, id: string | number) {
   let query = adminClient.from("crm_datasets").select("*").eq("id", parseId(id));
   if (!isAdminRole(ctx.profile.role)) query = query.eq("owner_id", ctx.user.id);
+  else if (!isSuperAdmin(ctx)) {
+    const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", ctx.profile.store_id));
+    query = profiles.length ? query.in("owner_id", profiles.map((profile: any) => profile.id)) : query.eq("owner_id", "00000000-0000-0000-0000-000000000000");
+  }
   const { data, error } = await query.maybeSingle();
   checkDb(error);
   if (!data) fail(404, "Dataset not found.");
@@ -1845,8 +1874,10 @@ async function profilesWithCounts(profiles: any[]) {
   }));
 }
 
-async function adminUserById(id: string) {
-  const { data, error } = await adminClient.from("profiles").select("*").eq("id", id).maybeSingle();
+async function adminUserById(ctx: Context, id: string) {
+  let query = adminClient.from("profiles").select("*").eq("id", id);
+  query = applyProfileScope(query, ctx);
+  const { data, error } = await query.maybeSingle();
   checkDb(error);
   if (!data) fail(404, "User not found.");
   return data;
@@ -1854,9 +1885,26 @@ async function adminUserById(id: string) {
 
 async function handleAdmin(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any, files: File[] = [], thumbnails: File[] = []) {
   requireAdmin(ctx);
+  if (parts[1] === "stores") {
+    if (parts.length === 2 && method === "GET") {
+      let query = adminClient.from("crm_stores").select("*").order("name");
+      if (!isSuperAdmin(ctx)) query = query.eq("id", ctx.profile.store_id);
+      const { data, error } = await query;
+      checkDb(error);
+      return json(200, { results: data || [] });
+    }
+    if (parts.length === 2 && method === "POST") {
+      requireSuperAdmin(ctx);
+      const name = valueString(body.name);
+      if (!name || name.length > 120) fail(400, "Enter a store name up to 120 characters.", { errors: { name: ["Enter a store name up to 120 characters."] } });
+      const { data, error } = await adminClient.from("crm_stores").insert({ name, created_by: ctx.user.id }).select("*").single();
+      checkDb(error);
+      return json(201, data);
+    }
+  }
   if (parts[1] === "summary" && method === "GET") {
     const [profiles, datasets, customers, authUsers] = await Promise.all([
-      fetchAll(() => adminClient.from("profiles").select("*").order("employee_id")),
+      fetchAll(() => applyProfileScope(adminClient.from("profiles").select("*").order("employee_id"), ctx)),
       accessibleDatasets(ctx),
       fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id")),
       allAuthUsers(),
@@ -1905,7 +1953,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
   }
   if (parts[1] === "users") {
     if (parts.length === 2 && method === "GET") {
-      const profiles = await fetchAll(() => adminClient.from("profiles").select("*").order("employee_id"));
+      const profiles = await fetchAll(() => applyProfileScope(adminClient.from("profiles").select("*").order("employee_id"), ctx));
       return json(200, { results: await profilesWithCounts(profiles) });
     }
     if (parts.length === 2 && method === "POST") {
@@ -1916,6 +1964,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const role = body.role === undefined ? "employee" : body.role;
       const errors: Record<string, string[]> = {};
       if (role !== "employee" && role !== "admin" && role !== "super_admin") errors.role = ["Choose Employee, Admin, or Super Admin."];
+      if (!isSuperAdmin(ctx) && role === "super_admin") errors.role = ["Only a Super Admin can create a Super Admin."];
       if (!username || username.length > 150) errors.username = ["Enter a username up to 150 characters."];
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = ["Enter a valid email address."];
       if (password1.length < 8) errors.password1 = ["This password must contain at least 8 characters."];
@@ -1935,10 +1984,11 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       if (!profile) {
         const { data: inserted, error: insertError } = await adminClient.from("profiles").insert({
           id: created.user.id, employee_id: username, name: username, email, role, active: body.is_active !== false,
+          store_id: isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id,
         }).select("*").single();
         checkDb(insertError); profile = inserted;
       } else {
-        const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false }).eq("id", profile.id).select("*").single();
+        const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false, store_id: isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id }).eq("id", profile.id).select("*").single();
         checkDb(updateError); profile = updated;
       }
       try {
@@ -1951,7 +2001,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       return json(201, await profileWithCounts(profile));
     }
     if (parts.length === 3) {
-      const target = await adminUserById(parts[2]);
+      const target = await adminUserById(ctx, parts[2]);
       if (method === "GET") return json(200, await profileWithCounts(target));
       if (method === "PATCH") {
         if (target.id === ctx.user.id && body.is_active === false) fail(400, "You cannot deactivate your own administrator account.", { errors: { is_active: ["You cannot deactivate your own administrator account."] } });
@@ -1960,6 +2010,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         const active = body.is_active === undefined ? target.active : Boolean(body.is_active);
         const role = body.role === undefined ? target.role : body.role;
         if (!["employee", "admin", "super_admin"].includes(role) && body.role !== undefined) fail(400, "Choose a valid role.", { errors: { role: ["Choose Employee, Admin, or Super Admin."] } });
+        if (!isSuperAdmin(ctx) && (role === "super_admin" || target.role === "super_admin")) fail(403, "Only a Super Admin can manage Super Admin accounts.");
         if (target.id === ctx.user.id && !isAdminRole(role)) fail(400, "You cannot remove your own administrator access.", { errors: { role: ["You cannot remove your own administrator access."] } });
         if (!username || username.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "Enter a valid username and email.", { errors: { username: ["Enter a valid username and email."], email: ["Enter a valid username and email."] } });
         const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).neq("id", target.id).maybeSingle();
@@ -1969,7 +2020,8 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
           const { error } = await adminClient.auth.admin.updateUserById(target.id, { email, email_confirm: true });
           checkDb(error);
         }
-        const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active, role }).eq("id", target.id).select("*").single();
+        const storeId = isSuperAdmin(ctx) && body.store_id ? body.store_id : target.store_id;
+        const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active, role, store_id: storeId }).eq("id", target.id).select("*").single();
         checkDb(error);
         if (role !== target.role) {
           try {
@@ -1987,12 +2039,12 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       }
     }
     if (parts.length === 4 && parts[3] === "datasets" && method === "GET") {
-      const target = await adminUserById(parts[2]);
+      const target = await adminUserById(ctx, parts[2]);
       const datasets = await fetchAll(() => adminClient.from("crm_datasets").select("*").eq("owner_id", target.id).order("uploaded_at", { ascending: false }));
       return json(200, { results: await Promise.all(datasets.map(serializeDataset)) });
     }
     if (parts.length === 4 && method === "POST") {
-      const target = await adminUserById(parts[2]);
+      const target = await adminUserById(ctx, parts[2]);
       const action = parts[3];
       if (action === "toggle-active") {
         if (target.id === ctx.user.id) fail(400, "You cannot change your own active status here.");
@@ -2025,7 +2077,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const assigneeId = valueString(body.assignee);
       const title = valueString(body.title);
       if (!title) fail(400, "Enter a task.", { errors: { title: ["Enter a task."] } });
-      const assignee = await adminUserById(assigneeId);
+      const assignee = await adminUserById(ctx, assigneeId);
       if (isAdminRole(assignee.role)) fail(400, "Tasks can only be assigned to normal users.");
       const data = await saveTaskPhotos(adminClient, ctx.user.id, null, "assignment", {
         assignee: assigneeId, title, note: valueString(body.note), due_at: body.due_at || null,
@@ -2059,7 +2111,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       if (!userId) fail(400, "Select a sales user.");
       if (!/^\d{4}-\d{2}(?:-\d{2})?$/.test(monthText)) fail(400, "Choose a valid target month.");
       if (!Number.isInteger(target) || target <= 0) fail(400, "Target must be a positive whole number.");
-      const profile = await adminUserById(userId);
+      const profile = await adminUserById(ctx, userId);
       if (isAdminRole(profile.role)) fail(400, "Targets can only be assigned to sales users.");
       const month = monthText.slice(0, 7) + "-01";
       const { data, error } = await adminClient.from("crm_sales_targets").upsert({ user_id: userId, month, target }, { onConflict: "user_id,month" }).select("*").single();
@@ -2096,7 +2148,7 @@ async function overtimeContext(profile: any, workDate: string) {
 }
 
 async function serializeOvertime(item: any) {
-  const employee = await adminUserById(item.employee_id);
+  const employee = await adminUserById(ctx, item.employee_id);
   // Pending requests are commonly submitted before clocking out. Read the
   // current punches so the approval button becomes available after clock-out.
   const context = item.status === "pending" ? await overtimeContext(employee, item.work_date) : null;
@@ -2161,7 +2213,7 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
     const { data: item, error: readError } = await adminClient.from("crm_overtime_requests").select("*").eq("id", id).maybeSingle();
     checkDb(readError); if (!item) fail(404, "OT request not found.");
     if (item.status !== "pending") fail(409, "This OT request has already been reviewed.");
-    const employee = await adminUserById(item.employee_id);
+    const employee = await adminUserById(ctx, item.employee_id);
     const context = await overtimeContext(employee, item.work_date);
     let changes: any = { reviewed_by: ctx.user.id, reviewed_at: new Date().toISOString(), actual_punch_out: context.actualPunchOut };
     if (action === "approve") {

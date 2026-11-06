@@ -34,6 +34,7 @@ const VisitDetail = lazy(() => import("./pages/VisitDetail.jsx"));
 const VisitDelete = lazy(() => import("./pages/VisitDelete.jsx"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel.jsx"));
 const AdminUsers = lazy(() => import("./pages/AdminUsers.jsx"));
+const AdminStores = lazy(() => import("./pages/AdminStores.jsx"));
 const AdminTasks = lazy(() => import("./pages/AdminTasks.jsx"));
 const AdminUserDetail = lazy(() => import("./pages/AdminUserDetail.jsx"));
 const AdminUserForm = lazy(() => import("./pages/AdminUserForm.jsx"));
@@ -92,6 +93,7 @@ export default function App() {
             <Route path="sales/visits/:visitId/delete" element={<VisitDelete />} />
             <Route path="admin-panel" element={<AdminRoute><AdminPanel /></AdminRoute>} />
             <Route path="admin-panel/users" element={<AdminRoute><AdminUsers /></AdminRoute>} />
+            <Route path="admin-panel/stores" element={<AdminRoute><AdminStores /></AdminRoute>} />
             <Route path="admin-panel/tasks" element={<AdminRoute><AdminTasks /></AdminRoute>} />
             <Route path="admin-panel/users/add" element={<AdminRoute><AdminUserForm /></AdminRoute>} />
             <Route path="admin-panel/users/:userId" element={<AdminRoute><AdminUserDetail /></AdminRoute>} />

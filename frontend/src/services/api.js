@@ -537,6 +537,8 @@ export const adminApi = {
   // A short freshness window prevents a full reload on every back-navigation.
   summary: () => cachedGet("/admin/summary/", {}, 30_000),
   listUsers: () => cachedGet("/admin/users/"),
+  stores: () => cachedGet("/admin/stores/", {}, 30_000),
+  createStore: (payload, csrfToken) => apiClient.post("/admin/stores/", payload, csrfHeaders(csrfToken)),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),
   detail: (userId) => cachedGet(`/admin/users/${userId}/`),
   update: (userId, payload, csrfToken) => apiClient.patch(`/admin/users/${userId}/`, payload, csrfHeaders(csrfToken)),

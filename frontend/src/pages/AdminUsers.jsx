@@ -53,6 +53,7 @@ export default function AdminUsers() {
         </div>
         <div className="d-flex flex-wrap gap-2">
           <Link className="btn btn-outline-secondary" to="/admin-panel">Back to Admin Panel</Link>
+          <Link className="btn btn-outline-secondary" to="/admin-panel/stores">Stores</Link>
           <Link className="btn btn-primary" to="/admin-panel/users/add"><i className="bi bi-person-plus" />Add User</Link>
         </div>
       </div>

@@ -8,7 +8,9 @@ export default function AdminUserForm() {
   const { userId } = useParams();
   const edit = Boolean(userId);
   const navigate = useNavigate();
-  const { csrfToken } = useAuth();
+  const { csrfToken, user } = useAuth();
+  const [stores, setStores] = useState([]);
+  const isSuperAdmin = Boolean(user?.is_superuser);
   const cachedUser = edit ? peekCachedResponse(`/admin/users/${userId}/`)?.data : null;
   const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: "employee", is_active: true, password1: "", password2: "" });
   const [errors, setErrors] = useState({});
@@ -23,6 +25,11 @@ export default function AdminUserForm() {
       .catch(() => setErrors({ non_field_errors: ["Unable to load user details. Please reload this page."] }))
       .finally(() => setLoading(false));
   }, [edit, userId]);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    adminApi.stores().then(({ data }) => setStores(data.results || [])).catch(() => setStores([]));
+  }, [isSuperAdmin]);
 
   const change = (event) => setValues((current) => ({
     ...current,
@@ -67,7 +74,8 @@ export default function AdminUserForm() {
     <div className="panel admin-form-panel">{loading ? <p className="mb-0" role="status">Loading user details…</p> : <form onSubmit={submit}>
       {errors.non_field_errors && <div className="alert alert-danger" role="alert"><FieldErrors errors={errors.non_field_errors} /></div>}
       {["username", "email"].map((name) => <div className="mb-3" key={name}><label className="form-label" htmlFor={`user-${name}`}>{name === "username" ? "Username" : "Email"}</label><input id={`user-${name}`} className="form-control" name={name} type={name === "email" ? "email" : "text"} value={values[name] || ""} onChange={change} /><FieldErrors errors={errors[name]} /></div>)}
-      <div className="mb-3"><label className="form-label" htmlFor="user-role">Role</label><select id="user-role" className="form-select" name="role" value={values.role} onChange={change}><option value="employee">Employee</option><option value="admin">Admin</option><option value="super_admin">Super Admin</option></select><FieldErrors errors={errors.role} /></div>
+      <div className="mb-3"><label className="form-label" htmlFor="user-role">Role</label><select id="user-role" className="form-select" name="role" value={values.role} onChange={change}><option value="employee">User</option><option value="admin">Admin</option>{isSuperAdmin && <option value="super_admin">Super Admin</option>}</select><FieldErrors errors={errors.role} /></div>
+      {isSuperAdmin && <div className="mb-3"><label className="form-label" htmlFor="user-store">Store</label><select id="user-store" className="form-select" name="store_id" value={values.store_id || ""} onChange={change} required><option value="">Select a store</option>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select><FieldErrors errors={errors.store_id} /></div>}
       {!edit && ["password1", "password2"].map((name) => <div className="mb-3" key={name}><label className="form-label" htmlFor={`user-${name}`}>{name === "password1" ? "Password" : "Confirm password"}</label><PasswordInput id={`user-${name}`} name={name} value={values[name]} onChange={change} autoComplete={name === "password1" ? "new-password" : "new-password"} /><FieldErrors errors={errors[name]} /></div>)}
       <div className="form-check form-switch mb-3"><input id="user-active" className="form-check-input" type="checkbox" name="is_active" checked={values.is_active} onChange={change} /><label className="form-check-label" htmlFor="user-active">Active status</label></div>
       <div className="d-flex flex-wrap gap-2"><button className="btn btn-primary" disabled={saving || (edit && !values.id)}>{saving ? "Saving…" : edit ? "Save Changes" : "Create User"}</button><Link className="btn btn-outline-secondary" to={edit ? `/admin-panel/users/${userId}` : "/admin-panel"}>Cancel</Link></div>
