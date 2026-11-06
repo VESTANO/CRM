@@ -313,6 +313,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           user={user}
           className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
           to="/admin-panel"
+          end
           onClick={(event) => handleNavigation(event, "/admin-panel")}
         >
           <i className="bi bi-shield-lock" />
