@@ -2,6 +2,7 @@ import { createReadCache } from "./readCache.js";
 import { crmSupabase, CRM_SUPABASE_URL, CRM_SUPABASE_PUBLISHABLE_KEY } from "./crmSupabase.js";
 import { readCrmProfile } from "./crmProfile.js";
 import { createAttendanceFeed } from "./attendanceFeed.js";
+import { activeStoreId } from "./storeContext.js";
 
 export const ATTENDANCE_SUPABASE_URL = CRM_SUPABASE_URL;
 export const ATTENDANCE_SUPABASE_PUBLISHABLE_KEY = CRM_SUPABASE_PUBLISHABLE_KEY;
@@ -16,7 +17,8 @@ let attendanceGeneration = 0;
 let channelSequence = 0;
 export function clearAttendanceReadCache() { attendanceReads.clear(); attendanceSnapshots.clear(); attendanceGeneration += 1; }
 const attendanceReadKey = (type, profile, filters = {}) => JSON.stringify([
-  type, profile?.id, profile?.role, profile?.employeeId,
+  type, profile?.id, profile?.role, profile?.employeeId, profile?.storeId,
+  isAttendanceSuperAdmin(profile) ? activeStoreId() : "",
   filters.from || "", filters.to || "", filters.userId || "", filters.employeeId || "", filters.status || "",
 ]);
 attendanceSupabase.auth.onAuthStateChange((event) => {
@@ -26,8 +28,10 @@ attendanceSupabase.auth.onAuthStateChange((event) => {
 export function fetchAttendanceEmployees(profile) {
   if (!profile?.id) return Promise.reject(new Error("Sign in to the attendance system first."));
   if (!isAttendanceAdmin(profile)) return Promise.resolve([profile]);
+  const storeId = isAttendanceSuperAdmin(profile) ? activeStoreId() : profile.storeId;
+  if (!storeId) return Promise.reject(new Error("Open a store before viewing or managing its employees."));
   return attendanceReads.read(attendanceReadKey("employees", profile), async () => {
-    const { data, error } = await attendanceSupabase.from("profiles").select("id,employee_id,name,email,department,manager,active,role,created_at,shift_start_time,shift_end_time").order("name");
+    const { data, error } = await attendanceSupabase.from("profiles").select("id,employee_id,name,email,department,manager,active,role,created_at,shift_start_time,shift_end_time,store_id").eq("store_id", storeId).order("name");
     if (error) throw new Error(readError(error, "Unable to load attendance employees."));
     return (data || []).map(mapProfile);
   }, 60_000);
@@ -225,8 +229,10 @@ export async function reviewLiveTimesheetEntry(id, approvalStatus, approvalComme
 }
 
 export async function manageLiveEmployee(action, body = {}) {
+  const storeId = activeStoreId();
   const { data, error } = await attendanceSupabase.functions.invoke("admin-users", {
     body: { action, ...body },
+    headers: storeId ? { "x-crm-store-id": storeId } : {},
   });
   if (error) {
     let message = error.message || "Employee request failed.";
@@ -291,6 +297,7 @@ export function isAttendanceSuperAdmin(profile) { return normalizedAttendanceRol
 function mapProfile(profile) {
   return {
     id: profile.id,
+    storeId: profile.store_id || "",
     employeeId: profile.employee_id,
     name: profile.name,
     email: profile.email,
