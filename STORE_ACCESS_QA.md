@@ -1,6 +1,6 @@
 # Store access and creation: local verification
 
-Status: **CONDITIONAL READY** for physical device and complete hosted workflow verification. The user approved the store-only production deployment on 7 November 2026, explicitly requiring existing Attendance and CRM behavior to be preserved. Production schema and CRM API updates have been applied; frontend release follows through GitHub Pages.
+Status: **CONDITIONAL READY** for physical device and complete hosted workflow verification. The user approved the store-only production deployment on 7 November 2026, explicitly requiring existing Attendance and CRM behavior to be preserved. Production schema, CRM API and frontend updates have been deployed. GitHub Pages run `42363153775` succeeded for the store UI release.
 
 ## Scope
 
@@ -14,7 +14,7 @@ Status: **CONDITIONAL READY** for physical device and complete hosted workflow v
 | Check | Result |
 | --- | --- |
 | Frontend production build | Passed |
-| Edge Function Node handler tests | 29 passed |
+| Edge Function Node handler tests | 30 passed |
 | Existing Attendance/reminder regression checks | 39 passed |
 | Store feature API route guard tests | Passed |
 | Browser: creation modal at 390px and 1440px | Passed with synthetic local API responses |
@@ -23,6 +23,7 @@ Status: **CONDITIONAL READY** for physical device and complete hosted workflow v
 | Browser: changed feature refreshes navigation without a page reload | Passed with synthetic local API responses |
 | SQL migration compatibility | Two isolated real-SQL tests passed for the live and newer selected-store Attendance interfaces |
 | Production preservation | All six role/store Attendance checks unchanged; all original data-row and credential hashes unchanged |
+| Hosted authenticated smoke | Super Admin, Admin and Employee passed feature lookup, dashboard, sales summary, callbacks, tasks, overtime and unchanged Attendance totals; non-Super Admin store creation rejected |
 | Physical device and hosted multi-session permission change | Blocked until staging/production release validation |
 
 ## Deployment dependency
@@ -32,6 +33,8 @@ Applied only `202611070100_store_contact_details.sql`, `202611070101_store_featu
 Production verification found that the first feature-aware Attendance policy hid 23 unmapped biometric punches from Super Admin. No records changed. Migration 102 restores the original visibility for unmapped punches while continuing to enforce module access for mapped employees. All six role/store checks then matched the pre-deployment baseline exactly. The existing no-argument Attendance totals RPC retains its original interface and totals.
 
 Verified preserved original rows: 7,325 Attendance records, 30 timesheets, 37 profiles and credential records, 3 stores, 96 customers, 10 datasets, 6 tasks and 10 sales visits. API deployment uses the downloaded live shared Attendance/CORS modules unchanged. No passwords, login IDs, hardware integration configuration or existing feature selections were changed.
+
+Hosted smoke found a pre-existing overtime HTTP 500: `serializeOvertime` referenced an undefined request context. The correction passes `ctx` into the serializer from list/create/review handlers. A focused regression retains stored approved minutes and punch-out values; no overtime formula, shift/grace rule, approval decision or data row changed. Hosted overtime reads then passed for all three roles. Smoke sessions used generated sign-in links without sending mail or resetting passwords, and were individually revoked after verification.
 
 ## Latest local integration
 

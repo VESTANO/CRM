@@ -2290,7 +2290,7 @@ async function overtimeContext(profile: any, workDate: string) {
   return { start, end, officialEnd, actualPunchOut, punchCount: punches.length };
 }
 
-async function serializeOvertime(item: any) {
+async function serializeOvertime(ctx: Context, item: any) {
   const employee = await adminUserById(ctx, item.employee_id);
   // Pending requests are commonly submitted before clocking out. Read the
   // current punches so the approval button becomes available after clock-out.
@@ -2322,7 +2322,7 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
     const requests = data || [];
     const approvedMinutes = requests.filter((item: any) => item.status === "approved" && item.employee_id === ctx.user.id)
       .reduce((sum: number, item: any) => sum + Number(item.approved_minutes || 0), 0);
-    return json(200, { requests: await Promise.all(requests.map(serializeOvertime)), approvedMinutes });
+    return json(200, { requests: await Promise.all(requests.map((item: any) => serializeOvertime(ctx, item))), approvedMinutes });
   }
   if (parts.length === 1 && method === "POST") {
     const workDate = valueString(body.workDate);
@@ -2354,7 +2354,7 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
       })));
       checkDb(reminderError);
     }
-    return json(201, await serializeOvertime(data));
+    return json(201, await serializeOvertime(ctx, data));
   }
   if (parts.length === 3 && method === "POST") {
     requireAdmin(ctx);
@@ -2389,7 +2389,7 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
       reminder_at: new Date().toISOString(),
     });
     checkDb(reminderError);
-    return json(200, await serializeOvertime(data));
+    return json(200, await serializeOvertime(ctx, data));
   }
   fail(404, "Overtime API endpoint not found.");
 }
