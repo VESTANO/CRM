@@ -245,9 +245,6 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
       <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`} to="/admin-panel/stores" onClick={(event) => handleNavigation(event, "/admin-panel/stores")}>
         <i className="bi bi-shop" /><span>Stores</span>
       </SidebarNavLink>
-      <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel" ? "active" : ""}`} to="/admin-panel" onClick={(event) => handleNavigation(event, "/admin-panel")}>
-        <i className="bi bi-shield-lock" /><span>Admin Panel</span>
-      </SidebarNavLink>
       <SidebarNavLink user={user} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`} to="/admin-panel/users?role=super_admin" onClick={(event) => handleNavigation(event, "/admin-panel/users?role=super_admin")}>
         <i className="bi bi-shield-lock" /><span>Super Admins</span>
       </SidebarNavLink>

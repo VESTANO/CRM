@@ -165,3 +165,9 @@ The user reported that Super Admin did not have an **Admin Panel** link. The sha
 Two associated bugs were confirmed. From Admin Panel, **Add User** previously omitted the selected store ID for Super Admin, so the API would reject the create request. The form now carries the selected store; when no store is selected, it routes to Stores to choose one. Admin read-cache keys previously omitted the selected store, allowing store-scoped counts to remain visible after returning to the global view. Cache keys now include store context. Super Admin roles now display as **Super Admin** in the Admin Panel and account detail views.
 
 Local synthetic browser checks passed **4/4** for store Admin restrictions, Super Admin controls, global and selected-store Admin Panel access, scoped user creation payload, restored global counts, and the mobile menu. The production Pages build passed. These checks do not use production credentials or change live data. Authenticated hosted verification remains **CONDITIONAL READY**.
+
+### Per-store Admin Panel correction
+
+The user clarified that the Super Admin's **Admin Panel** belongs inside a selected store, not in the global sidebar. The global Super Admin menu now contains Stores and Super Admins. Opening a store adds Admin Panel alongside that store's CRM modules on desktop and mobile. Direct navigation to `/admin-panel` without a selected store redirects to Stores before any Admin Panel data request. Store Admin access is unchanged.
+
+Synthetic checks used two distinct stores and confirmed separate Admin Panel counts and Add User destinations, no global Admin Panel request, and the mobile menu changing after a store is opened. Both focused browser scenarios passed. The production Pages build passed. No live store, user, attendance or customer data was changed; authenticated hosted and physical-device checks remain **CONDITIONAL READY**.

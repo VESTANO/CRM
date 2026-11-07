@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
@@ -32,6 +32,12 @@ function currentMonthValue() {
 }
 
 export default function AdminPanel() {
+  const { user } = useAuth();
+  if (user?.is_superuser && !activeStoreId()) return <Navigate to="/admin-panel/stores" replace />;
+  return <StoreAdminPanel />;
+}
+
+function StoreAdminPanel() {
   const cachedSummary = peekCachedResponse("/admin/summary/")?.data;
   const cachedTargets = peekCachedResponse("/admin/targets/")?.data;
   const [data, setData] = useState(() => cachedSummary || null);
