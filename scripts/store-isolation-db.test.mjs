@@ -4,13 +4,13 @@ import test from "node:test";
 
 // Optional local PostgreSQL runtime; never connects to the hosted database.
 // npm install --prefix tmp/store-isolation-db-test --no-save --no-package-lock @electric-sql/pglite
-const { PGlite } = await import("../tmp/store-isolation-db-test/node_modules/@electric-sql/pglite/dist/index.js").catch(() => ({}));
+const { PGlite } = await import("../frontend/node_modules/@electric-sql/pglite/dist/index.js");
 const a = "84c3cf98-35f6-45ee-a440-edc154e93851", b = "763e96b0-d47d-43fc-b86c-ef49c73ba559";
 const adminA = "00000000-0000-4000-8000-000000000001", employeeA = "00000000-0000-4000-8000-000000000002";
 const adminB = "00000000-0000-4000-8000-000000000003", employeeB = "00000000-0000-4000-8000-000000000004", superAdmin = "00000000-0000-4000-8000-000000000005";
 const entryA = "00000000-0000-4000-8000-000000000011", entryB = "00000000-0000-4000-8000-000000000012";
 
-test("PostgreSQL enforces durable store ownership, RLS, totals, approvals, and punch-code boundaries", { skip: !PGlite }, async t => {
+test("PostgreSQL enforces durable store ownership, RLS, totals, approvals, and punch-code boundaries", async t => {
   const db = new PGlite();
   try {
     await db.exec(`

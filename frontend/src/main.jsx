@@ -1,13 +1,16 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "bootstrap/dist/css/bootstrap.min.css";
-import "bootstrap/dist/js/bootstrap.bundle.min.js";
+// Use the same module instance as AppLayout's Offcanvas controller. Loading the
+// prebundled runtime as well registers duplicate data handlers and scroll locks.
+import "bootstrap";
 import "bootstrap-icons/font/bootstrap-icons.css";
 import "./styles/icon-fallback.css";
 import "./styles/app.css";
 import "./styles/luxe-theme.css";
 import "./styles/admin.css";
 import "./styles/workspace-theme.css";
+import "./styles/mobile-shell.css";
 import App from "./App.jsx";
 import { ServerErrorPage } from "./pages/StatusPage.jsx";
 

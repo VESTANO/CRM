@@ -4,6 +4,7 @@ import { peekCachedResponse, remindersApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
 import { prepareReminderNotifications, reminderWorkerUrl, saveReminderWithNotifications } from "../services/reminderPush.js";
+import "../styles/mobile-tasks.css";
 
 const workerUrl = reminderWorkerUrl(import.meta.env.BASE_URL);
 
@@ -53,8 +54,19 @@ export default function Reminders() {
 
   useEffect(() => {
     loadReminders();
-    const clockInterval = window.setInterval(() => setNowTick(Date.now()), 1000);
-    const refreshInterval = window.setInterval(loadReminders, 30000);
+    const refreshVisibleReminders = () => {
+      if (document.hidden) return;
+      setNowTick(Date.now());
+      loadReminders();
+    };
+    // The UI only shows minute-level reminder times. Updating every second
+    // redraws the whole list 60 times more often than needed, including in a
+    // background tab where it cannot help the user.
+    const clockInterval = window.setInterval(() => {
+      if (!document.hidden) setNowTick(Date.now());
+    }, 60000);
+    const refreshInterval = window.setInterval(refreshVisibleReminders, 60000);
+    document.addEventListener("visibilitychange", refreshVisibleReminders);
     if ("Notification" in window && Notification.permission === "granted") {
       connectNotifications().then(() => setNotificationStatus("Desktop notifications connected."))
         .catch(() => setNotificationWarning("Desktop alerts could not reconnect. Setting a reminder will retry automatically."));
@@ -62,6 +74,7 @@ export default function Reminders() {
     return () => {
       window.clearInterval(clockInterval);
       window.clearInterval(refreshInterval);
+      document.removeEventListener("visibilitychange", refreshVisibleReminders);
     };
   }, []);
 
@@ -150,7 +163,7 @@ export default function Reminders() {
     }
   };
 
-  return <>
+  return <div className="reminders-workspace">
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active" aria-current="page">Reminders</li></ol></nav>
     <div className="page-header mb-4"><div><div className="eyebrow">Reminders</div><h1 className="h2 mb-2">Reminders</h1><p className="text-secondary mb-0">Set personal reminders and manage browser reminder alerts.</p></div></div>
 
@@ -173,12 +186,12 @@ export default function Reminders() {
       {reminders === null ? <div className="text-secondary">Loading reminders...</div> : reminders.length ? (
         <div className="list-group list-group-flush">
           {visibleReminders.map((reminder) => <div className="list-group-item px-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-3" id={`reminder-${reminder.id}`} key={reminder.id}>
-              <div className="min-w-0"><div className="fw-semibold">{reminder.text}</div><div className="text-secondary small">{formatReminderDate(reminder.reminder_at)}</div><div className="text-secondary small">{reminder.notification_status || "Scheduled"}</div>{reminder.last_delivery_error && <div className="text-warning small">{reminder.last_delivery_error}</div>}</div>
-              <div className="d-flex align-items-center gap-2"><span className="badge text-bg-light">{showDueReminders ? "Due" : "Upcoming"}</span><button className="btn btn-outline-primary btn-sm" type="button" aria-label="Edit reminder" title="Edit reminder" onClick={() => edit(reminder)}><i className="bi bi-pencil" aria-hidden="true" /></button><button className="btn btn-outline-danger btn-sm" type="button" aria-label="Remove reminder" title="Remove reminder" onClick={() => remove(reminder.id)}><i className="bi bi-trash" aria-hidden="true" /></button></div>
+              <div className="reminder-content"><div className="fw-semibold">{reminder.text}</div><div className="text-secondary small">{formatReminderDate(reminder.reminder_at)}</div><div className="text-secondary small">{reminder.notification_status || "Scheduled"}</div>{reminder.last_delivery_error && <div className="text-warning small">{reminder.last_delivery_error}</div>}</div>
+              <div className="reminder-actions d-flex align-items-center gap-2"><span className="badge text-bg-light">{showDueReminders ? "Due" : "Upcoming"}</span><button className="btn btn-outline-primary btn-sm" type="button" aria-label="Edit reminder" title="Edit reminder" onClick={() => edit(reminder)}><i className="bi bi-pencil" aria-hidden="true" /></button><button className="btn btn-outline-danger btn-sm" type="button" aria-label="Remove reminder" title="Remove reminder" onClick={() => remove(reminder.id)}><i className="bi bi-trash" aria-hidden="true" /></button></div>
             </div>)}
           {!visibleReminders.length && <div className="empty-state text-center"><p className="text-secondary mb-0">{showDueReminders ? "No due reminders." : "No upcoming reminders."}</p></div>}
         </div>
       ) : <div className="empty-state text-center"><h3 className="h5">No reminders yet</h3><p className="text-secondary mb-0">Your reminders will appear here.</p></div>}
     </section>
-  </>;
+  </div>;
 }

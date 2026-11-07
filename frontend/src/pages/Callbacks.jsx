@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { callbacksApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
+import { useDialogFocus } from "../hooks/useDialogFocus.js";
+import "../styles/mobile-business.css";
 
 
 const defaultFilters = { preset: "today", date: "", sort: "asc" };
@@ -15,6 +17,7 @@ export default function Callbacks() {
     preset: searchParams.get("preset") || defaultFilters.preset,
     date: searchParams.get("date") || "",
     sort: searchParams.get("sort") || defaultFilters.sort,
+    page: Math.max(1,Number(searchParams.get("page")) || 1),
   }), [searchParams]);
   const [data, setData] = useState(() => peekCachedResponse("/callbacks/", { params: filters })?.data || null);
   const [error, setError] = useState("");
@@ -36,12 +39,13 @@ export default function Callbacks() {
     return () => { active = false; };
   }, [filters]);
 
-  const updateFilters = (nextFilters) => {
+  const updateFilters = (nextFilters, keepPage = false) => {
     setSearchParams(() => {
       const next = new URLSearchParams();
       if (nextFilters.preset && nextFilters.preset !== defaultFilters.preset) next.set("preset", nextFilters.preset);
       if (nextFilters.date) next.set("date", nextFilters.date);
       if (nextFilters.sort && nextFilters.sort !== defaultFilters.sort) next.set("sort", nextFilters.sort);
+      if (keepPage && nextFilters.page > 1) next.set("page",nextFilters.page);
       return next;
     });
     window.setTimeout(() => document.getElementById("callback-results")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
@@ -65,7 +69,7 @@ export default function Callbacks() {
     setError("");
     setMessage("");
     try {
-      await callbacksApi.complete(callback.id, completionDialog.response, csrfToken);
+      await callbacksApi.complete(callback.id, completionDialog.response, csrfToken, callback.revision ?? 0);
       const { data: responseData } = await callbacksApi.list(filters);
       setData(responseData);
       const selectedStatus = outcomeChoices.find((choice) => choice.value === completionDialog.response)?.label;
@@ -141,7 +145,7 @@ export default function Callbacks() {
       {!data && !error ? (
         <div className="panel">Loading callbacks...</div>
       ) : results.length > 0 ? (
-        <div className="table-responsive panel p-0 responsive-table" id="callback-results" tabIndex="-1">
+        <div className="table-responsive panel p-0 responsive-table business-table" id="callback-results" tabIndex="-1">
           <table className="table table-hover align-middle mb-0">
             <thead className="table-light">
               <tr><th>Customer</th><th>Dataset</th><th>Phone</th><th>{showingCalledBack ? "Called Back At" : "Callback Date"}</th>{showingCalledBack && <th>Called Back By</th>}<th>Status</th><th>Note</th><th>Actions</th></tr>
@@ -192,6 +196,11 @@ export default function Callbacks() {
         </div>
       )}
 
+      {data?.pagination?.numPages > 1 && <nav className="d-flex flex-wrap align-items-center gap-3 my-3" aria-label="Callback pages">
+        <button className="btn btn-outline-secondary" disabled={data.pagination.page<=1} onClick={()=>updateFilters({...filters,page:data.pagination.page-1},true)}>Previous</button>
+        <span>Page {data.pagination.page} of {data.pagination.numPages} · {data.pagination.count} callbacks</span>
+        <button className="btn btn-outline-secondary" disabled={data.pagination.page>=data.pagination.numPages} onClick={()=>updateFilters({...filters,page:data.pagination.page+1},true)}>Next</button>
+      </nav>}
       {completionDialog.callback && (
         <CallbackOutcomeDialog
           customerName={completionDialog.callback.customerName}
@@ -218,10 +227,13 @@ function FilterButton({ active, children, onClick }) {
 
 
 function CallbackOutcomeDialog({ customerName, choices, value, busy, onChange, onCancel, onConfirm }) {
+  const dialogRef = useRef(null);
+  const statusRef = useRef(null);
+  useDialogFocus({ open: true, dialogRef, initialFocusRef: statusRef, onCancel, busy });
   return (
     <>
-      <div className="modal d-block" tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="callback-outcome-title">
-        <div className="modal-dialog modal-dialog-centered">
+      <div className="modal d-block business-dialog" ref={dialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="callback-outcome-title">
+        <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
           <div className="modal-content">
             <div className="modal-header">
               <h2 className="modal-title fs-5" id="callback-outcome-title">Complete Callback</h2>
@@ -233,6 +245,7 @@ function CallbackOutcomeDialog({ customerName, choices, value, busy, onChange, o
               <select
                 className="form-select"
                 id="callback-outcome-status"
+                ref={statusRef}
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 autoFocus

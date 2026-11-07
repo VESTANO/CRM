@@ -18,19 +18,10 @@ export default function PasswordInput({ id, name, value, onChange, autoComplete,
       <button
         className="btn btn-outline-secondary"
         type="button"
-        aria-label={revealed ? "Hide password" : "Show password while hovering"}
-        title={revealed ? "Hide password" : "Show password while hovering"}
-        onPointerEnter={(event) => {
-          if (event.pointerType === "mouse") setRevealed(true);
-        }}
-        onPointerLeave={(event) => {
-          if (event.pointerType === "mouse") setRevealed(false);
-        }}
-        onPointerDown={(event) => {
-          if (event.pointerType === "touch") setRevealed((current) => !current);
-        }}
-        onFocus={() => setRevealed(true)}
-        onBlur={() => setRevealed(false)}
+        aria-label={revealed ? "Hide password" : "Show password"}
+        aria-pressed={revealed}
+        title={revealed ? "Hide password" : "Show password"}
+        onClick={() => setRevealed((current) => !current)}
       >
         <i className={`bi ${revealed ? "bi-eye-slash" : "bi-eye"}`} aria-hidden="true" />
       </button>

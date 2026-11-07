@@ -6,6 +6,7 @@ import { clearCrmProfileCache, readCrmProfile } from "./crmProfile.js";
 
 import { clearAttendanceReadCache } from "./attendanceSupabase.js";
 import { activeStoreId, subscribeStore } from "./storeContext.js";
+import { prepareWorkbook, uploadStagedImport } from "../utils/workbookImport.js";
 
 const crmApiUrl = `${CRM_SUPABASE_URL}/functions/v1/crm-api/api`;
 const pendingImports = new Map();
@@ -50,7 +51,7 @@ function cacheKey(url, params = {}) {
   const query = Object.entries(params || {})
     .filter(([, value]) => value !== undefined)
     .sort(([first], [second]) => first.localeCompare(second))
-    .map(([key, value]) => `${key}=${String(value)}`)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
     .join("&");
   return `${cacheScope}|${activeStoreId()}|${url}?${query}`;
 }
@@ -91,6 +92,9 @@ function cachedGet(url, config = {}, maxAge = GET_CACHE_TTL) {
   const now = Date.now();
   if (cached?.response && now - cached.createdAt < maxAge) {
     cacheDiagnostics.hits += 1;
+    // Keep recently used pages when the bounded session cache evicts old reads.
+    getCache.delete(key);
+    getCache.set(key, cached);
     return Promise.resolve(cached.response);
   }
   if (cached?.request) {
@@ -98,21 +102,30 @@ function cachedGet(url, config = {}, maxAge = GET_CACHE_TTL) {
     return cached.request;
   }
   cacheDiagnostics.misses += 1;
+  // Search terms and pagination keys can otherwise grow for an entire shift.
+  for (const [oldKey, entry] of getCache) {
+    if (!entry.request && now - entry.createdAt >= STALE_CACHE_TTL) getCache.delete(oldKey);
+  }
+  while (getCache.size >= 200) getCache.delete(getCache.keys().next().value);
+  const entry = { ...cached, requestedAt: now };
   const request = apiClient.get(url, { ...config, crmStoreId: storeId })
     .then((response) => {
-      if (generation === cacheGeneration) getCache.set(key, { response, createdAt: Date.now() });
+      // Mutation invalidation or eviction can replace a request without changing
+      // the account/store generation. Only its own entry may publish a result.
+      if (generation === cacheGeneration && getCache.get(key) === entry) getCache.set(key, { response, createdAt: Date.now() });
       return response;
     })
     .catch((error) => {
       // A failed background refresh must not erase safe, previously rendered
       // data. It remains available until the stale-display window expires.
-      if (generation === cacheGeneration) {
+      if (generation === cacheGeneration && getCache.get(key) === entry) {
         if (cached?.response) getCache.set(key, cached);
         else getCache.delete(key);
       }
       throw error;
     });
-  getCache.set(key, { ...cached, request, requestedAt: now });
+  entry.request = request;
+  getCache.set(key, entry);
   return request;
 }
 
@@ -404,6 +417,7 @@ export const customersApi = {
   list: (params = {}) => cachedGet("/customers/", { params }, 120_000),
   detail: (datasetId, recordId) => cachedGet(`/datasets/${datasetId}/customers/${recordId}/`),
   detailById: (recordId) => cachedGet(`/customers/${recordId}/`),
+  history: (datasetId, recordId, cursor) => cachedGet(`/datasets/${datasetId}/customers/${recordId}/history/`, { params: { before_time: cursor.time, before_id: cursor.id } }),
   update: (datasetId, recordId, data, csrfToken) => (
     apiClient.patch(`/datasets/${datasetId}/customers/${recordId}/`, data, csrfHeaders(csrfToken))
   ),
@@ -414,8 +428,8 @@ export const customersApi = {
 
 export const callbacksApi = {
   list: (params = {}) => cachedGet("/callbacks/", { params: { preset: "today", date: "", sort: "asc", ...params } }),
-  complete: (recordId, response, csrfToken) => (
-    apiClient.post(`/callbacks/${recordId}/complete/`, { response }, csrfHeaders(csrfToken))
+  complete: (recordId, response, csrfToken, expectedRevision) => (
+    apiClient.post(`/callbacks/${recordId}/complete/`, { response, expected_revision: expectedRevision }, csrfHeaders(csrfToken))
   ),
 };
 
@@ -428,78 +442,39 @@ export const importApi = {
     if (!file.name.toLowerCase().endsWith(".xlsx")) throw apiError("Upload an .xlsx workbook.");
     if (file.size > 20 * 1024 * 1024) throw apiError("The workbook must be 20 MB or smaller.");
     let workbook;
+    const fileBytes = await file.arrayBuffer();
     let XLSX;
     try {
       XLSX = await loadXlsx();
-      workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+      workbook = XLSX.read(fileBytes, { type: "array", cellDates: true });
     } catch {
       throw apiError("The uploaded file is not a readable .xlsx workbook.");
     }
-    const sheets = workbook.SheetNames.map((name) => {
-      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: "", raw: false });
-      const rawHeaders = rows[0] || [];
-      const columnNames = rawHeaders.map((value, index) => value == null || String(value).trim() === "" ? `Unnamed column ${index + 1}` : String(value).trim());
-      const seen = new Map();
-      const fieldKeys = columnNames.map((value, index) => {
-        const base = value.toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/[\s-]+/g, "_") || `column_${index + 1}`;
-        const count = (seen.get(base) || 0) + 1;
-        seen.set(base, count);
-        return count === 1 ? base : `${base}_${count}`;
-      });
-      const dataRows = rows.slice(1).map((row) => row.map((value) => value instanceof Date ? value.toISOString() : value));
-      return {
-        name,
-        rows: dataRows.length,
-        columns: columnNames.length,
-        column_names: columnNames,
-        field_keys: fieldKeys,
-        data_rows: dataRows,
-        preview_headers: columnNames,
-        preview_rows: dataRows.slice(0, 5).map((row) => row.map(maskImportValue)),
-      };
-    });
-    if (!sheets.length || sheets.every((sheet) => !sheet.column_names.length)) throw apiError("No workbook headers were found.");
+    let prepared;
+    try { prepared = prepareWorkbook(XLSX, workbook); }
+    catch (error) { throw apiError(error.message); }
+    const sheets = prepared.sheets.map((sheet) => ({ ...sheet,
+      preview_headers: sheet.column_names,
+      preview_rows: sheet.records.slice(0, 5).map((row) => sheet.field_keys.map((key) => maskImportValue(row.original_data[key]))),
+    }));
+    const digest = await crypto.subtle.digest("SHA-256", fileBytes);
+    const fingerprint = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
     const token = crypto.randomUUID();
-    const inspection = { filename: file.name.split(/[\\/]/).pop(), sheet_names: workbook.SheetNames, sheets };
-    pendingImports.set(token, { datasetName, inspection, storeId: activeStoreId() });
-    return { data: { datasetName, pendingImportToken: token, inspection: { ...inspection, sheets: sheets.map(({ data_rows, ...sheet }) => sheet) } } };
+    const filename = file.name.split(/[\\/]/).pop();
+    const inspection = { filename, sheet_names: sheets.map((sheet) => sheet.name), sheets, warnings: prepared.warnings };
+    pendingImports.set(token, { datasetName, filename, fingerprint, sheets: prepared.sheets, storeId: activeStoreId() });
+    return { data: { datasetName, pendingImportToken: token, inspection: { ...inspection, sheets: sheets.map(({ records, ...sheet }) => sheet) } } };
   },
   confirm: async (pendingImportToken) => {
     const pending = pendingImports.get(pendingImportToken);
     if (!pending) throw apiError("The inspected workbook has expired. Please upload it again.");
     if (pending.storeId !== activeStoreId()) throw apiError("The selected store has changed. Inspect this workbook again in the correct store.");
     const storeConfig = { crmStoreId: pending.storeId };
-    const sheetMetadata = pending.inspection.sheets.map(({ data_rows, ...sheet }) => sheet);
-    let createdDatasetId;
-    try {
-      const { data: created } = await apiClient.post("/import/confirm/", {
-        datasetName: pending.datasetName,
-        inspection: { filename: pending.inspection.filename, sheets: sheetMetadata },
-      }, storeConfig);
-      const dataset = created.dataset;
-      createdDatasetId = dataset.id;
-      let imported = 0;
-      let skipped = 0;
-      for (const sheet of pending.inspection.sheets) {
-        const rows = [];
-        sheet.data_rows.forEach((values, index) => {
-          if (!values.some((value) => value !== "" && value != null)) { skipped += 1; return; }
-          const original_data = {};
-          sheet.field_keys.forEach((key, columnIndex) => { if (columnIndex < values.length) original_data[key] = values[columnIndex]; });
-          rows.push({ sheet_name: sheet.name, row_number: index + 2, original_data });
-        });
-        for (let offset = 0; offset < rows.length; offset += 250) {
-          const chunk = rows.slice(offset, offset + 250);
-          await apiClient.post(`/import/datasets/${dataset.id}/batch/`, { rows: chunk }, storeConfig);
-          imported += chunk.length;
-        }
-      }
-      pendingImports.delete(pendingImportToken);
-      return { data: { dataset, summary: { rows_found: pending.inspection.sheets.reduce((sum, sheet) => sum + sheet.data_rows.length, 0), rows_imported: imported, rows_skipped: skipped } } };
-    } catch (error) {
-      if (createdDatasetId) await apiClient.delete(`/import/datasets/${createdDatasetId}/`, storeConfig).catch(() => {});
-      throw error;
-    }
+    // A lost commit response is safe: retrying returns the same dataset. Keep
+    // the inspected token on failure so the user can retry without data loss.
+    const response = await uploadStagedImport(pending, (path, body) => apiClient.post(path, body, { ...storeConfig, timeout: 120000 }));
+    pendingImports.delete(pendingImportToken);
+    return response;
   },
 };
 
@@ -531,8 +506,9 @@ export const targetsApi = {
 
 export const salesApi = {
   list: (params = {}) => cachedGet("/sales/visits/", { params: salesRequestParams(params) }),
+  report: () => cachedGet("/sales/report/"),
   summary: () => cachedGet("/sales/summary/"),
-  clients: (datasetId, query = "") => cachedGet("/sales/clients/", { params: { dataset: datasetId, q: query } }),
+  clients: (datasetId, query = "", page = 1, selected = "") => cachedGet("/sales/clients/", { params: { dataset: datasetId, q: query, page, selected: selected || undefined } }),
   detail: (visitId) => cachedGet(`/sales/visits/${visitId}/`),
   create: (payload, csrfToken) => apiClient.post(
     "/sales/visits/",
@@ -552,8 +528,9 @@ export const adminApi = {
   // A short freshness window prevents a full reload on every back-navigation.
   summary: () => cachedGet("/admin/summary/", {}, 30_000),
   listUsers: (storeId = "", role = "") => cachedGet("/admin/users/", (storeId || role) ? { params: { ...(storeId ? { store: storeId } : {}), ...(role ? { role } : {}) } } : {}),
-  stores: () => cachedGet("/admin/stores/", {}, 30_000),
+  stores: ({ fresh = false } = {}) => cachedGet("/admin/stores/", {}, fresh ? 0 : 30_000),
   createStore: (payload, csrfToken) => apiClient.post("/admin/stores/", payload, csrfHeaders(csrfToken)),
+  updateStoreFeatures: (storeId, features, csrfToken) => apiClient.patch(`/admin/stores/${storeId}/features/`, { features }, csrfHeaders(csrfToken)),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),
   detail: (userId) => cachedGet(`/admin/users/${userId}/`),
   update: (userId, payload, csrfToken) => apiClient.patch(`/admin/users/${userId}/`, payload, csrfHeaders(csrfToken)),
@@ -576,6 +553,20 @@ export const adminApi = {
       payload,
       csrfHeaders(csrfToken)
     ),
+};
+
+export const storeFeaturesApi = {
+  get: ({ fresh = false } = {}) => cachedGet("/store/features/", {}, fresh ? 0 : 30_000).catch((error) => {
+    if (error.response?.status === 404) return { data: { features: {}, legacy: true } };
+    throw error;
+  }),
+};
+
+export const reportsApi = {
+  summary: () => cachedGet("/reports/summary/").catch((error) => {
+    if (error.response?.status === 404) return dashboardApi.summary();
+    throw error;
+  }),
 };
 
 // Warm normal sidebar destinations after the first screen has painted. These

@@ -15,7 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  qa:
+    uses: ./.github/workflows/phase2-qa.yml
   build:
+    needs: qa
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

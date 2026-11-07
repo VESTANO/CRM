@@ -31,6 +31,7 @@ function fixture() {
         eq: (key, value) => { filters.push([key, value]); return query; },
         in: (key, value) => { filters.push([key, value]); return query; },
         order: () => query,
+        range: () => query,
         limit: () => query,
         abortSignal: () => query,
         then: (resolve, reject) => {

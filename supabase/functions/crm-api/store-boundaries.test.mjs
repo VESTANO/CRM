@@ -10,6 +10,7 @@ const context = (role, store = a) => ({ user: { id: role === "super_admin" ? "gl
 function fixture() {
   const writes = [];
   const tables = {
+    crm_stores: [{ id: a, features: {} }, { id: b, features: {} }, { id: empty, features: {} }],
     profiles: [{ id: "admin-a", role: "admin", store_id: a }, { id: "employee-a", role: "employee", store_id: a }, { id: "employee-b", role: "employee", store_id: b }],
     crm_datasets: [{ id: 1, store_id: a, owner_id: "admin-a" }, { id: 2, store_id: b, owner_id: "employee-b" }, { id: 3, store_id: a, owner_id: "global" }],
     crm_customer_records: [{ id: 11, dataset_id: 1 }, { id: 22, dataset_id: 2 }],
@@ -19,6 +20,7 @@ function fixture() {
     crm_task_notifications: [{ id: 1, task_id: 1, recipient_id: "global", read_at: null }, { id: 2, task_id: 2, recipient_id: "global", read_at: null }],
   };
   const client = {
+    rpc: async (name, payload) => { writes.push({ table: name, payload }); return { data: { id: 'import-job' }, error: null }; },
     from: table => {
       const filters = [];
       let operation = "select", payload, range, options;
@@ -105,13 +107,15 @@ test("Super Admin imports and manual visits retain their creator and the selecte
   const app = fixture();
   const ctx = context("super_admin", a);
   await app.createImportedDataset(ctx, { datasetName: "New list", inspection: { sheets: [{ name: "Sheet1", column_names: [], field_keys: [] }] } });
-  assert.equal(app.writes[0].payload.store_id, a);
-  assert.equal(app.writes[0].payload.owner_id, "global");
+  assert.equal(app.writes[0].table, "crm_import");
+  assert.equal(app.writes[0].payload.p_store, a);
+  assert.equal(app.writes[0].payload.p_actor, "global");
   await app.createOrUpdateVisit(ctx, null, { visit_mode: "manual", client_name: "New client", visit_date: "2026-11-06", status: "healthy" }, []);
-  for (const write of app.writes.filter(row => ["crm_manual_clients", "crm_visits"].includes(row.table))) {
-    assert.equal(write.payload.store_id, a);
-    assert.equal(write.payload.owner_id, "global");
-  }
+  const visit = app.writes.find(row => row.table === "crm_save_sales_visit");
+  assert.equal(visit.payload.p_store,a);
+  assert.equal(visit.payload.p_actor,"global");
+  assert.equal(visit.payload.p_values.owner_id,"global");
+  assert.equal(visit.payload.p_client.store_id,a);
 });
 
 test("reminders and task notifications cannot be read or changed from another selected store", async () => {

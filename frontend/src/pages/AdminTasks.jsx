@@ -11,6 +11,7 @@ import TaskSubmissionDetails from "../components/TaskSubmissionDetails.jsx";
 import TaskReviewForm from "../components/TaskReviewForm.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
 import { useAuth } from "../hooks/useAuth.jsx";
+import "../styles/mobile-tasks.css";
 
 export default function AdminTasks() {
   const { userId } = useParams();
@@ -57,7 +58,7 @@ export default function AdminTasks() {
   const reviewed = (successMessage) => { setMessage(successMessage); refresh(); };
 
   return (
-    <>
+    <div className="tasks-workspace">
       {(error || taskError) && <div className="alert alert-warning" role="alert">{error || taskError}</div>}
       <TimedAlert message={message} />
       <nav aria-label="breadcrumb" className="mb-3">
@@ -161,6 +162,6 @@ export default function AdminTasks() {
           </table>
         </div>
       </section>
-    </>
+    </div>
   );
 }

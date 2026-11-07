@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import PasswordInput from "../components/PasswordInput.jsx";
-import { authApi, dashboardApi, targetsApi } from "../services/api.js";
+import { authApi, dashboardApi } from "../services/api.js";
+import "../styles/login-workspace.css";
 
 export default function Login() {
   const { isAuthenticated, login } = useAuth();
@@ -22,10 +23,8 @@ export default function Login() {
     setIsSubmitting(true);
     try {
       await login(form);
-      // Start the dashboard reads immediately; targets must not delay opening
-      // the workspace after authentication has already succeeded.
+      // Start the dashboard read immediately after authentication succeeds.
       void dashboardApi.summary().catch(() => {});
-      void targetsApi.list().catch(() => {});
       // A CRM sign-in always begins at the CRM dashboard. Attendance is an
       // optional workspace reached from the sidebar after sign-in.
       navigate("/dashboard", {
@@ -63,20 +62,20 @@ export default function Login() {
   };
 
   return (
-    <main className="auth-main luxe-login">
+    <main className="auth-main luxe-login workspace-login">
       <aside className="login-brand-panel" aria-label="Vestano CRM">
         <div className="login-brand-top">
           <span className="brand-mark">V</span>
-          <span><strong>VESTANO</strong><small>INTERNATIONAL</small></span>
+          <span><strong>VESTANO</strong><small>Customer CRM</small></span>
         </div>
         <div className="login-brand-story">
-          <span className="login-eyebrow">CUSTOMER RELATIONSHIPS</span>
-          <h2>Good service<br /><em>moves business</em><br />forward.</h2>
-          <p>Customer lists, follow-ups and sales activity, gathered in one considered workspace.</p>
+          <span className="login-eyebrow">VESTANO WORKSPACE</span>
+          <h2>Everything your team needs to <em>move forward.</em></h2>
+          <p>Customers, sales, attendance and tasks in one connected workspace.</p>
           <div className="login-brand-rule" />
-          <div className="login-brand-caption"><span>01</span><span>THE VESTANO CRM WORKSPACE</span></div>
+          <div className="login-brand-caption"><span>01</span><span>CUSTOMERS · SALES · ATTENDANCE</span></div>
         </div>
-        <div className="login-brand-footer"><span>VESTANO CRM</span><span>EST. 2018</span></div>
+        <div className="login-brand-footer"><span>VESTANO CRM</span><span>CUSTOMER OPERATIONS</span></div>
       </aside>
 
       <section className="login-access-panel">

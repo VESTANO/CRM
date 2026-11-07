@@ -9,7 +9,7 @@ const ctx = { user: { id: "owner" }, profile: { role: "employee", store_id: "sto
 
 function setup() {
   const writes = [];
-  const client = { from: (table) => {
+  const client = { rpc: async (name, values) => { writes.push({ table: name, values }); return { data: { id: 22, ...values.p_values } }; }, from: (table) => {
     let payload;
     const query = {
       select: () => query, eq: () => query,

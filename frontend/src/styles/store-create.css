@@ -1,0 +1,42 @@
+.store-card,
+.store-card > div > div { min-width: 0; }
+.store-card :is(h3, p) { overflow-wrap: anywhere; }
+
+.store-create-modal { z-index: 1060; padding: 0.75rem; }
+.store-create-backdrop { z-index: 1055; }
+.store-create-modal .modal-dialog {
+  display: flex;
+  align-items: center;
+  width: min(640px, 100%);
+  max-width: 100%;
+  height: calc(100dvh - 1.5rem);
+  margin: 0.75rem auto;
+}
+.store-create-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow: hidden;
+}
+.store-create-modal .modal-header,
+.store-create-modal .modal-footer { flex: none; }
+.store-create-modal .modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.store-create-modal .modal-footer { gap: 0.5rem; }
+.store-feature-list { border: 0; border-top: 1px solid var(--bs-border-color); padding: 1rem 0 0; margin: 1rem 0 0; min-width: 0; }
+.store-feature-list legend { float: none; width: auto; padding: 0; margin: 0 0 0.25rem; }
+.store-feature-switch { min-height: 44px; display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.75rem 0.5rem 2.75rem; border: 1px solid var(--bs-border-color); border-radius: 0.5rem; }
+.store-feature-switch .form-check-input { width: 2rem; height: 1.1rem; flex: none; margin-top: 0; margin-left: -2rem; }
+.store-feature-switch .form-check-label { overflow-wrap: anywhere; }
+@media (max-width: 767.98px) {
+  .store-create-modal .btn,
+  .store-create-modal .btn-close,
+  .store-create-modal .form-control { min-height: 44px; }
+  .store-create-modal .form-control { font-size: 16px; }
+}
+
+.store-create-modal { color: #18253d; font-family: "Segoe UI", Inter, sans-serif; }
+.store-create-modal .btn-primary { background: #3563e9; border-color: #3563e9; color: #fff; --bs-btn-bg: #3563e9; --bs-btn-border-color: #3563e9; --bs-btn-color: #fff; --bs-btn-hover-bg: #254ed0; --bs-btn-hover-border-color: #254ed0; }
+.store-create-modal .form-check-input:checked { background-color: #3563e9; border-color: #3563e9; }
+.store-create-modal .modal-title { overflow-wrap: anywhere; }
+
+.store-create-modal .btn-primary:hover { background: #254ed0; border-color: #254ed0; color: #fff; }

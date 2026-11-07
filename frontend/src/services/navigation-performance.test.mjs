@@ -69,9 +69,11 @@ test("an already-cancelled queue makes no requests", async () => {
   assert.equal(queue.calls.length, 0);
 });
 
-test("client-side Sales searches reuse the same server data", () => {
-  assert.deepEqual(salesRequestParams({ q: "Asha", dataset_name: "Kochi", payment_status: "completed" }), salesRequestParams());
+test("Sales cache keys distinguish server filters and pages", () => {
+  assert.notDeepEqual(salesRequestParams({ q: "Asha", dataset_name: "Kochi", payment_status: "completed" }), salesRequestParams());
   assert.deepEqual(salesRequestParams({ status: "converted", date_from: "2026-11-01", date_to: "2026-11-03", q: "Asha" }), {
-    status: "converted", date_from: "2026-11-01", date_to: "2026-11-03",
+    status: "converted", date_from: "2026-11-01", date_to: "2026-11-03", q: "Asha", dataset_name: undefined, payment_status: undefined, page: undefined,
   });
+  assert.notDeepEqual(salesRequestParams({ page: 2 }), salesRequestParams({ page: 1 }));
+  assert.deepEqual(salesRequestParams({ page: "1", q: "  " }), salesRequestParams());
 });

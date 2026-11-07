@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { customersApi, peekCachedResponse } from "../services/api.js";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
 import TimedAlert from "../components/TimedAlert.jsx";
+import "../styles/mobile-business.css";
 
 export default function CustomerDetail() {
   const { datasetId, recordId, id } = useParams();
@@ -13,17 +14,20 @@ export default function CustomerDetail() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let active = true;
     setDetail(peekCachedResponse(detailUrl)?.data || null);
     setError("");
     (datasetId ? customersApi.detail(datasetId, customerId) : customersApi.detailById(customerId))
-      .then(({ data }) => setDetail(data))
+      .then(({ data }) => { if (active) setDetail(data); })
       .catch((err) => {
+        if (!active) return;
         if (err.response?.status === 404) {
           setError("Customer not found or you do not have permission to access it.");
         } else {
           setError("Unable to load customer details.");
         }
       });
+    return () => { active = false; };
   }, [datasetId, customerId, detailUrl]);
 
   if (error) {
@@ -86,7 +90,7 @@ export default function CustomerDetail() {
         </dl>
       </div>
 
-      <CustomerChangeHistory entries={changeHistory} />
+      <CustomerChangeHistory entries={changeHistory} datasetId={dataset.id} recordId={record.id} nextCursor={detail.changeHistoryNextCursor} />
 
       <div className="d-flex flex-wrap gap-2">
         <Link className="btn btn-primary" to={`/datasets/${dataset.id}/customers/${record.id}/edit`}>Edit</Link>
@@ -97,8 +101,25 @@ export default function CustomerDetail() {
   );
 }
 
-export function CustomerChangeHistory({ entries, className = "mb-4" }) {
-  const rows = entries.flatMap((entry) => (
+export function CustomerChangeHistory({ entries, datasetId, recordId, nextCursor = null, className = "mb-4" }) {
+  const [history, setHistory] = useState(entries);
+  const [cursor, setCursor] = useState(nextCursor);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const sequence = useRef(0);
+  useEffect(() => { sequence.current += 1; setHistory(entries); setCursor(nextCursor); setLoading(false); setError(""); return () => { sequence.current += 1; }; }, [entries, nextCursor, datasetId, recordId]);
+  const loadMore = async () => {
+    const request = ++sequence.current;
+    setLoading(true); setError("");
+    try {
+      const { data } = await customersApi.history(datasetId, recordId, cursor);
+      if (request !== sequence.current) return;
+      setHistory((current) => [...new Map([...current, ...data.entries].map((entry) => [entry.id, entry])).values()]);
+      setCursor(data.nextCursor);
+    } catch { if (request === sequence.current) setError("Unable to load earlier changes. Please try again."); }
+    finally { if (request === sequence.current) setLoading(false); }
+  };
+  const rows = history.flatMap((entry) => (
     entry.changes.map((change) => ({
       ...change,
       historyId: entry.id,
@@ -114,12 +135,12 @@ export function CustomerChangeHistory({ entries, className = "mb-4" }) {
           <h2 className="h5 mb-1" id="customer-change-history-heading">Change History</h2>
           <p className="text-secondary small mb-0">Previous and updated CRM values, with who made each change.</p>
         </div>
-        {rows.length > 0 && <span className="badge text-bg-light">{rows.length} {rows.length === 1 ? "change" : "changes"}</span>}
+        {rows.length > 0 && <span className="badge text-bg-light">{rows.length} {rows.length === 1 ? "change" : "changes"} loaded</span>}
       </div>
       {rows.length === 0 ? (
         <p className="text-secondary mb-0">No CRM changes have been recorded yet.</p>
       ) : (
-        <div className="table-responsive customer-change-history">
+        <div className="table-responsive customer-change-history business-table">
           <table className="table table-hover align-middle mb-0 customer-change-table">
             <thead className="table-light">
               <tr>
@@ -144,6 +165,8 @@ export function CustomerChangeHistory({ entries, className = "mb-4" }) {
           </table>
         </div>
       )}
+      {error && <div className="alert alert-danger mt-3 mb-0" role="alert">{error}</div>}
+      {cursor && datasetId && recordId && <button className="btn btn-outline-secondary mt-3" type="button" onClick={loadMore} disabled={loading}>{loading ? "Loading earlier changes..." : "Load earlier changes"}</button>}
     </section>
   );
 }

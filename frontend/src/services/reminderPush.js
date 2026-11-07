@@ -1,5 +1,8 @@
 export function reminderWorkerUrl(baseUrl) {
-  return baseUrl === "/CRM/" ? "/CRM/service-worker.js" : "/service-worker.js";
+  // Django exposes its worker at the site root; Pages uses its configured
+  // repository/custom-domain base rather than a fixed repository name.
+  const base = !baseUrl || baseUrl === "/static/frontend/" ? "/" : baseUrl;
+  return `${base.replace(/\/+$/, "")}/service-worker.js`;
 }
 
 export function decodeApplicationKey(value) {

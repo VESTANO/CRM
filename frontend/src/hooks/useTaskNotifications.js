@@ -12,11 +12,11 @@ const emptySubscribe = () => noop;
 const getEmpty = () => empty;
 const emptyAction = () => Promise.resolve(false);
 
-export function useTaskNotifications() {
+export function useTaskNotifications(enabled = true) {
   const { user } = useAuth();
   const storeId = useStoreContext();
   const feed = useMemo(() => {
-    if (!user?.id || (user.is_superuser && !storeId)) return null;
+    if (!user?.id || !enabled || (user.is_superuser && !storeId)) return null;
     const key = `${user.id}|${Boolean(user.is_admin)}|${storeId}`;
     if (!feeds.has(key)) {
       const created = createTaskNotificationFeed({

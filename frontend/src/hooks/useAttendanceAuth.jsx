@@ -2,12 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { attendanceSupabase, clearAttendanceReadCache, getAttendanceSession } from "../services/attendanceSupabase.js";
 import { useAuth } from "./useAuth.jsx";
 import { clearCrmProfileCache } from "../services/crmProfile.js";
+import { useStoreFeatures } from "./useStoreFeatures.jsx";
 
 const AttendanceAuthContext = createContext(null);
 const emptyAccess = { session: null, profile: null, permission: null, owner: null };
 
 export function AttendanceAuthProvider({ children }) {
   const { user, isLoading: crmLoading, logout } = useAuth();
+  const { features, loading: featuresLoading, error: featuresError } = useStoreFeatures();
   const [access, setAccess] = useState(emptyAccess);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -18,7 +20,7 @@ export function AttendanceAuthProvider({ children }) {
     setAccess(emptyAccess);
     setIsLoading(true); setError("");
     try {
-      if (!user?.id) return false;
+      if (!user?.id || !features.attendance || featuresError) return false;
       const restored = await getAttendanceSession();
       if (request !== generation.current) return false;
       if (restored.session?.user?.id !== user.id) return false;
@@ -31,11 +33,11 @@ export function AttendanceAuthProvider({ children }) {
     } finally {
       if (request === generation.current) setIsLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, features.attendance, featuresError]);
   useEffect(() => {
-    restore();
+    if (!featuresLoading) restore();
     return () => { generation.current += 1; };
-  }, [restore]);
+  }, [restore, featuresLoading]);
   useEffect(() => {
     const { data } = attendanceSupabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {

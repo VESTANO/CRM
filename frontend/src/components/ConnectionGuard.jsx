@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import StatusPage from "../pages/StatusPage.jsx";
 import { CRM_SUPABASE_PUBLISHABLE_KEY, CRM_SUPABASE_URL } from "../services/crmSupabase.js";
-
-const PROBE_INTERVAL_MS = 5_000;
-const PROBE_TIMEOUT_MS = 4_000;
+import { createConnectionMonitor } from "../services/connectionMonitor.js";
 
 export default function ConnectionGuard({ children }) {
   const [online, setOnline] = useState(() => navigator.onLine);
   const [reconnected, setReconnected] = useState(false);
   const previousOnline = useRef(navigator.onLine);
   const dismissTimer = useRef();
+  const monitor = useRef();
 
   const updateStatus = useCallback((connected) => {
     if (connected && !previousOnline.current) {
@@ -24,47 +23,28 @@ export default function ConnectionGuard({ children }) {
     setOnline(connected);
   }, []);
 
-  const checkConnection = useCallback(async () => {
-    if (!navigator.onLine) {
-      updateStatus(false);
-      return false;
-    }
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-    try {
-      const response = await fetch(`${CRM_SUPABASE_URL}/auth/v1/health?connection_probe=${Date.now()}`, {
-        method: "GET",
-        cache: "no-store",
-        headers: { apikey: CRM_SUPABASE_PUBLISHABLE_KEY },
-        signal: controller.signal,
-      });
-      const connected = response.ok;
-      updateStatus(connected);
-      return connected;
-    } catch {
-      updateStatus(false);
-      return false;
-    } finally {
-      window.clearTimeout(timeout);
-    }
-  }, [updateStatus]);
+  const checkConnection = useCallback(() => monitor.current?.check(), []);
 
   useEffect(() => {
-    const onOffline = () => updateStatus(false);
-    const onOnline = () => { checkConnection(); };
-    window.addEventListener("online", onOnline);
-    window.addEventListener("offline", onOffline);
-    window.addEventListener("focus", checkConnection);
-    const interval = window.setInterval(checkConnection, PROBE_INTERVAL_MS);
-    checkConnection();
+    const connection = createConnectionMonitor({
+      onStatus: updateStatus,
+      probe: async (signal) => {
+        const response = await fetch(`${CRM_SUPABASE_URL}/auth/v1/health?connection_probe=${Date.now()}`, {
+          method: "GET",
+          cache: "no-store",
+          headers: { apikey: CRM_SUPABASE_PUBLISHABLE_KEY },
+          signal,
+        });
+        return response.ok;
+      },
+    });
+    monitor.current = connection;
     return () => {
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("offline", onOffline);
-      window.removeEventListener("focus", checkConnection);
-      window.clearInterval(interval);
+      connection.dispose();
+      monitor.current = undefined;
       window.clearTimeout(dismissTimer.current);
     };
-  }, [checkConnection, updateStatus]);
+  }, [updateStatus]);
 
   return <>
     {online && reconnected && <div className="crm-connection-restored" role="status" aria-live="polite" aria-atomic="true">

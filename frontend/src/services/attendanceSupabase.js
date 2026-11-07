@@ -21,6 +21,19 @@ const attendanceReadKey = (type, profile, filters = {}) => JSON.stringify([
   isAttendanceSuperAdmin(profile) ? activeStoreId() : "",
   filters.from || "", filters.to || "", filters.userId || "", filters.employeeId || "", filters.status || "",
 ]);
+
+// PostgREST caps a single SELECT response. Read every bounded page before
+// publishing a report/export; otherwise later employees and entries disappear.
+async function allAttendanceRows(build, message) {
+  const rows = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await build().range(offset, offset + pageSize - 1);
+    if (error) throw new Error(readError(error, message));
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) return rows;
+  }
+}
 attendanceSupabase.auth.onAuthStateChange((event) => {
   if (["SIGNED_OUT", "SIGNED_IN", "USER_UPDATED"].includes(event)) clearAttendanceReadCache();
 });
@@ -31,9 +44,8 @@ export function fetchAttendanceEmployees(profile) {
   const storeId = isAttendanceSuperAdmin(profile) ? activeStoreId() : profile.storeId;
   if (!storeId) return Promise.reject(new Error("Open a store before viewing or managing its employees."));
   return attendanceReads.read(attendanceReadKey("employees", profile), async () => {
-    const { data, error } = await attendanceSupabase.from("profiles").select("id,employee_id,name,email,department,manager,active,role,created_at,shift_start_time,shift_end_time,store_id").eq("store_id", storeId).order("name");
-    if (error) throw new Error(readError(error, "Unable to load attendance employees."));
-    return (data || []).map(mapProfile);
+    const rows = await allAttendanceRows(() => attendanceSupabase.from("profiles").select("id,employee_id,name,email,department,manager,active,role,created_at,shift_start_time,shift_end_time,store_id").eq("store_id", storeId).order("name").order("id"), "Unable to load attendance employees.");
+    return rows.map(mapProfile);
   }, 60_000);
 }
 
@@ -184,14 +196,15 @@ export function fetchLiveTimesheet(filters) {
 async function loadLiveTimesheet({ from = "", to = "", status = "", employeeId = "", profile }) {
   if (!profile?.id) throw new Error("Sign in to the attendance system first.");
   const employees = await fetchAttendanceEmployees(profile);
-  let query = attendanceSupabase.from("timesheet_entries").select("*").in("user_id", employees.length ? employees.map(employee => employee.id) : [noMember]).order("work_date", { ascending: false }).order("created_at", { ascending: false });
-  if (status) query = query.eq("approval_status", status);
-  if (from) query = query.gte("work_date", from);
-  if (to) query = query.lte("work_date", to);
-  if (isAttendanceAdmin(profile) && employeeId) query = query.eq("employee_id", employeeId);
-  const { data, error } = await query;
-  if (error) throw new Error(readError(error, "Unable to load live timesheet entries."));
-  return (data || []).map(mapTimesheetEntry);
+  const rows = await allAttendanceRows(() => {
+    let query = attendanceSupabase.from("timesheet_entries").select("*").in("user_id", employees.length ? employees.map(employee => employee.id) : [noMember]).order("work_date", { ascending: false }).order("created_at", { ascending: false }).order("id");
+    if (status) query = query.eq("approval_status", status);
+    if (from) query = query.gte("work_date", from);
+    if (to) query = query.lte("work_date", to);
+    if (isAttendanceAdmin(profile) && employeeId) query = query.eq("employee_id", employeeId);
+    return query;
+  }, "Unable to load live timesheet entries.");
+  return rows.map(mapTimesheetEntry);
 }
 
 function entryRpcValues(entry) {

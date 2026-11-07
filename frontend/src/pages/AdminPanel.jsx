@@ -1,12 +1,16 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, Navigate } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { useAuth } from "../hooks/useAuth.jsx";
+import { useStoreFeatures } from "../hooks/useStoreFeatures.jsx";
+import { activeStoreId } from "../services/storeContext.js";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 import TaskImagePicker from "../components/TaskImagePicker.jsx";
 import { appendPhotoUploads } from "../utils/photoCompression.js";
+import { useDialogFocus } from "../hooks/useDialogFocus.js";
+import "../styles/mobile-business.css";
 
 function getTargetsForUser(targets, userId) {
   return targets?.filter((target) => target.userId === userId) || [];
@@ -29,6 +33,13 @@ function currentMonthValue() {
 }
 
 export default function AdminPanel() {
+  const { user } = useAuth();
+  if (user?.is_superuser && !activeStoreId()) return <Navigate to="/admin-panel/stores" replace />;
+  return <StoreAdminPanel />;
+}
+
+function StoreAdminPanel() {
+  const { features } = useStoreFeatures();
   const cachedSummary = peekCachedResponse("/admin/summary/")?.data;
   const cachedTargets = peekCachedResponse("/admin/targets/")?.data;
   const [data, setData] = useState(() => cachedSummary || null);
@@ -49,6 +60,10 @@ export default function AdminPanel() {
   const [taskImages, setTaskImages] = useState([]);
   const [taskImagePreparing, setTaskImagePreparing] = useState(false);
   const { csrfToken, user } = useAuth();
+  const targetDialogRef = useRef(null), targetMonthRef = useRef(null);
+  const taskDialogRef = useRef(null), taskTitleRef = useRef(null);
+  useDialogFocus({ open: Boolean(targetUser), dialogRef: targetDialogRef, initialFocusRef: targetMonthRef, onCancel: () => closeTargetModal(), busy: targetSaving });
+  useDialogFocus({ open: Boolean(taskUser), dialogRef: taskDialogRef, initialFocusRef: taskTitleRef, onCancel: () => closeTaskModal(), busy: taskSaving || taskImagePreparing });
 
   const loadTargets = async () => {
     setTargetsLoading(true);
@@ -71,7 +86,7 @@ export default function AdminPanel() {
         if (requestError.response?.status === 403) setData(null);
         setError(requestError.response?.status === 403 ? "Administrator access required." : "Unable to load admin panel.");
       });
-    return Promise.allSettled([summary, loadTargets()]);
+    return Promise.allSettled([summary, ...(features.sales ? [loadTargets()] : [])]);
   };
 
   useEffect(() => {
@@ -222,21 +237,21 @@ export default function AdminPanel() {
         </div>
         <div className="d-flex gap-2">
           {user?.is_superuser && <Link className="btn btn-outline-secondary" to="/admin-panel/stores"><i className="bi bi-arrow-left me-1" />Back to Stores</Link>}
-          <Link className="btn btn-primary" to="/admin-panel/users/add">
+          <Link className="btn btn-primary" to={user?.is_superuser ? activeStoreId() ? `/admin-panel/users/add?store=${activeStoreId()}` : "/admin-panel/stores" : "/admin-panel/users/add"}>
             <i className="bi bi-person-plus me-1" />
-            Add User
+            {user?.is_superuser && !activeStoreId() ? "Choose store to add user" : "Add User"}
           </Link>
         </div>
       </div>
 
       {error && <div className="alert alert-warning" role="alert">{error} Showing the last loaded admin overview.</div>}
-      {targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={loadTargets}>Retry targets</button></div>}
+      {features.sales && targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={loadTargets}>Retry targets</button></div>}
 
       {targetMessage && !targetUser && !taskUser && (
         <div className={`alert alert-${targetMessageType}`}>{targetMessage}</div>
       )}
 
-      {warningTargets.length > 0 && (
+      {features.sales && warningTargets.length > 0 && (
         <section className="alert alert-warning">
           <h2 className="h6 mb-2">Target performance warnings</h2>
           <div className="d-grid gap-2">
@@ -253,8 +268,7 @@ export default function AdminPanel() {
         {[
           ["Total Users", data.metrics.totalUsers, "bi-people"],
           ["Active Users", data.metrics.activeUsers, "bi-person-check"],
-          ["Total Datasets", data.metrics.totalDatasets, "bi-collection"],
-          ["Total Customers", data.metrics.totalCustomers, "bi-person-lines-fill"],
+          ...(features.customers ? [["Total Datasets", data.metrics.totalDatasets, "bi-collection"], ["Total Customers", data.metrics.totalCustomers, "bi-person-lines-fill"]] : []),
         ].map(([label, value, icon]) => (
           <div className="summary-card" key={label}>
             <span className="metric-icon"><i className={`bi ${icon}`} /></span>
@@ -277,7 +291,7 @@ export default function AdminPanel() {
         </div>
       </section>
 
-      <section className="panel mb-4">
+      {features.tasks && <section className="panel mb-4">
         <div className="d-flex flex-wrap justify-content-between align-items-center gap-3">
           <div>
             <h2 className="h5 mb-1">Assigned Tasks</h2>
@@ -288,7 +302,7 @@ export default function AdminPanel() {
             View All Tasks
           </Link>
         </div>
-      </section>
+      </section>}
 
       <section className="panel p-0 mb-4 responsive-table">
         <div className="table-panel-header">
@@ -296,17 +310,17 @@ export default function AdminPanel() {
           <p className="text-secondary small mb-0">CRM account access and dataset target progress overview.</p>
         </div>
         <p className="table-scroll-hint">Scroll horizontally to see all user details and actions.</p>
-        <div className="table-responsive" tabIndex={0} role="region" aria-label="CRM users table, scroll horizontally to see all columns">
+        <div className="table-responsive business-table" tabIndex={0} role="region" aria-label="CRM users table, scroll horizontally to see all columns">
           <table className="table table-hover align-middle mb-0 admin-users-table">
             <thead className="table-light">
               <tr>
                 <th>Username</th>
-                <th>Lists</th>
+                {features.customers && <th>Lists</th>}
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                <th>Targets</th>
-                <th>Tasks</th>
+                {features.sales && <th>Targets</th>}
+                {features.tasks && <th>Tasks</th>}
                 <th>Date joined</th>
                 <th>Actions</th>
               </tr>
@@ -319,22 +333,22 @@ export default function AdminPanel() {
                     <td data-label="Username">
                       <div className="fw-semibold">{user.username}</div>
                     </td>
-                    <td data-label="Lists">
+                    {features.customers && <td data-label="Lists">
                       <span className="text-secondary small">
                         <AnimatedNumber value={user.dataset_count} /> datasets ·{" "}
                         <AnimatedNumber value={user.customer_count} /> customers
                       </span>
-                    </td>
+                    </td>}
                     <td data-label="Email">{user.email || "No email"}</td>
                     <td data-label="Role">
-                      <span className="badge text-bg-primary">{user.is_admin ? "Admin" : "User"}</span>
+                      <span className="badge text-bg-primary">{user.is_superuser ? "Super Admin" : user.is_admin ? "Admin" : "User"}</span>
                     </td>
                     <td data-label="Status">
                       <span className={`badge text-bg-${user.is_active ? "success" : "secondary"}`}>
                         {user.is_active ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td data-label="Targets">
+                    {features.sales && <td data-label="Targets">
                       {user.is_admin ? (
                         <span className="text-secondary small">Admin user</span>
                       ) : targetsLoading && !targetPerformance ? (
@@ -357,8 +371,8 @@ export default function AdminPanel() {
                       ) : (
                         <span className="badge text-bg-secondary">No target</span>
                       )}
-                    </td>
-                    <td data-label="Tasks">
+                    </td>}
+                    {features.tasks && <td data-label="Tasks">
                       {user.is_admin ? (
                         <span className="text-secondary small">Admin user</span>
                       ) : (
@@ -366,32 +380,32 @@ export default function AdminPanel() {
                           View Tasks
                         </Link>
                       )}
-                    </td>
+                    </td>}
                     <td data-label="Date joined">{formatDateTime(user.date_joined)}</td>
                     <td data-label="Actions">
                       <div className="admin-user-actions" role="group" aria-label={`Actions for ${user.username}`}>
                         <div className="admin-user-actions-primary">
                           <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}`}>View</Link>
                           <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
-                          <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
+                          {features.customers && <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>}
                         </div>
                         {!user.is_admin && (
                           <div className="admin-user-actions-secondary">
-                            <button
+                            {features.sales && <button
                               className="btn btn-outline-secondary btn-sm"
                               type="button"
                               onClick={() => openTargetModal(user)}
                               disabled={targetsLoading || Boolean(targetsError)}
                             >
                               Manage Targets
-                            </button>
-                            <button
+                            </button>}
+                            {features.tasks && <button
                               className="btn btn-outline-secondary btn-sm"
                               type="button"
                               onClick={() => openTaskModal(user)}
                             >
                               Assign Task
-                            </button>
+                            </button>}
                           </div>
                         )}
                       </div>
@@ -414,7 +428,7 @@ export default function AdminPanel() {
       </section>
 
       <div className="row g-4">
-        <div className="col-lg-6">
+        {features.customers && <div className="col-lg-6">
           <section className="panel">
             <h2 className="h5 mb-3">Recent datasets</h2>
             {data.recentDatasets.map((dataset) => (
@@ -424,7 +438,7 @@ export default function AdminPanel() {
               </Link>
             ))}
           </section>
-        </div>
+        </div>}
         <div className="col-lg-6">
           <section className="panel">
             <h2 className="h5 mb-3">Recently created users</h2>
@@ -439,30 +453,31 @@ export default function AdminPanel() {
       </div>
 
       {targetUser && (
-        <div className="modal d-block" tabIndex="-1" style={{ background: "rgba(0,0,0,0.5)" }}>
+        <div className="modal d-block business-dialog" ref={targetDialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="target-dialog-title" style={{ background: "rgba(0,0,0,0.5)" }}>
           <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header">
                 <div>
-                  <h5 className="modal-title">
+                  <h5 className="modal-title" id="target-dialog-title">
                     {targetBeingEdited ? "Edit Dataset Target" : "Assign Dataset Target"}
                   </h5>
                   <div className="text-secondary small">{targetUser.username}</div>
                 </div>
-                <button type="button" className="btn-close" onClick={closeTargetModal} />
+                <button type="button" className="btn-close" aria-label="Close target assignment" onClick={closeTargetModal} disabled={targetSaving} />
               </div>
               <div className="modal-body">
                 {targetMessage && (
                   <div className={`alert alert-${targetMessageType}`}>{targetMessage}</div>
                 )}
                 <div className="mb-3">
-                  <label className="form-label">Sales User</label>
-                  <input className="form-control" value={targetUser.username} disabled />
+                  <label className="form-label" htmlFor="target-sales-user">Sales User</label>
+                  <input className="form-control" id="target-sales-user" value={targetUser.username} disabled />
                 </div>
                 <div className="mb-3">
                   <label className="form-label" htmlFor="target-month">Target Month</label>
                   <input
                     id="target-month"
+                    ref={targetMonthRef}
                     className="form-control"
                     type="month"
                     value={targetMonth}
@@ -471,8 +486,9 @@ export default function AdminPanel() {
                   <div className="form-text">Converted sales visits in this month will count toward the target.</div>
                 </div>
                 <div>
-                  <label className="form-label">Target - Converted Clients</label>
+                  <label className="form-label" htmlFor="target-converted-clients">Target - Converted Clients</label>
                   <input
+                    id="target-converted-clients"
                     className="form-control"
                     type="number"
                     min="1"
@@ -501,12 +517,12 @@ export default function AdminPanel() {
       )}
 
       {taskUser && (
-        <div className="modal d-block" tabIndex="-1" style={{ background: "rgba(0,0,0,0.5)" }}>
+        <div className="modal d-block business-dialog" ref={taskDialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="task-assignment-dialog-title" style={{ background: "rgba(0,0,0,0.5)" }}>
           <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header">
                 <div>
-                  <h5 className="modal-title">Assign Task</h5>
+                  <h5 className="modal-title" id="task-assignment-dialog-title">Assign Task</h5>
                   <div className="text-secondary small">{taskUser.username}</div>
                 </div>
                 <button type="button" className="btn-close" aria-label="Close task assignment" onClick={closeTaskModal} disabled={taskSaving} />
@@ -519,6 +535,7 @@ export default function AdminPanel() {
                   <label className="form-label" htmlFor="task-title">Task</label>
                   <input
                     id="task-title"
+                    ref={taskTitleRef}
                     className="form-control"
                     maxLength={255}
                     value={taskValues.title}

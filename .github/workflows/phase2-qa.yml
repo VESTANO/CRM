@@ -1,0 +1,52 @@
+name: Isolated CRM regression
+on:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  local-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:db
+      - run: npm run build -- --mode pages
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run test:mobile
+      - run: node ../scripts/phase5-frontend-build.mjs
+      - run: npx playwright test --config ../scripts/phase5-frontend-playwright.config.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-qa-evidence
+          path: |
+            tmp/phase2/
+            tmp/phase4/
+            tmp/phase5/
+            tmp/mobile/
+            tmp/mobile-business/
+            tmp/mobile-tasks/
+            tmp/phase4-concurrency-results.json
+  django:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python manage.py test customers --verbosity 1
+        env:
+          DB_ENGINE: sqlite

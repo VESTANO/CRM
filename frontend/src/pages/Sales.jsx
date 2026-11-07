@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { peekCachedResponse, salesApi } from "../services/api.js";
 import { formatDate, formatCurrency } from "../utils/formatters.js";
-import { filterSalesVisits, salesRequestParams } from "../utils/sales.js";
+import { salesRequestParams } from "../utils/sales.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
+import "../styles/mobile-business.css";
 
 const statuses = [
   ["healthy", "Healthy"],
@@ -39,10 +40,12 @@ export default function Sales() {
   ));
   const [summary, setSummary] = useState(() => peekCachedResponse("/sales/summary/")?.data || null);
   const [error, setError] = useState("");
-  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(() => peekCachedResponse("/sales/visits/", { params: salesRequestParams(Object.fromEntries(new URLSearchParams(filterKey).entries())) })?.data?.pagination || { page: 1, numPages: 1, count: 0 });
+  const requestSequence = useRef(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const loadVisits = useCallback(() => {
+    const sequence = ++requestSequence.current;
     const params = new URLSearchParams(filterKey);
     setFilters({
       q: params.get("q") || "",
@@ -53,15 +56,14 @@ export default function Sales() {
       date_to: params.get("date_to") || "",
     });
     setIsRefreshing(Boolean(visits));
-    setPage(1);
     setError("");
     salesApi.list(Object.fromEntries(params.entries()))
-      .then((response) => setVisits(response.data.results))
-      .catch(() => setError("Unable to load client visits."))
-      .finally(() => setIsRefreshing(false));
+      .then((response) => { if (sequence === requestSequence.current) { setVisits(response.data.results); setPagination(response.data.pagination || { page: 1, numPages: 1, count: response.data.results.length }); } })
+      .catch(() => { if (sequence === requestSequence.current) setError("Unable to load client visits."); })
+      .finally(() => { if (sequence === requestSequence.current) setIsRefreshing(false); });
   }, [filterKey]);
 
-  useEffect(() => { loadVisits(); }, [loadVisits]);
+  useEffect(() => { loadVisits(); return () => { requestSequence.current += 1; }; }, [loadVisits]);
 
   useEffect(() => {
     salesApi.summary()
@@ -78,7 +80,6 @@ export default function Sales() {
     Object.entries(nextFilters).forEach(([key, value]) => {
       if (value.trim()) params.set(key, value.trim());
     });
-    setPage(1);
     setSearchParams(params);
   };
 
@@ -93,15 +94,10 @@ export default function Sales() {
     updateFilters(filters);
   };
 
-  const clientQuery = searchParams.get("q") || "";
-  const datasetQuery = searchParams.get("dataset_name") || "";
-  const paymentStatus = searchParams.get("payment_status") || "";
-  const filteredVisits = useMemo(() => filterSalesVisits(visits || [], {
-    q: clientQuery, dataset_name: datasetQuery, payment_status: paymentStatus,
-  }), [visits, clientQuery, datasetQuery, paymentStatus]);
-  const filtersActive = Boolean(filterKey);
-  const pageCount = Math.ceil(filteredVisits.length / 5);
-  const visibleVisits = filteredVisits.slice((page - 1) * 5, page * 5);
+  const filtersActive = [...searchParams.keys()].some((key) => key !== "page");
+  const { page, numPages: pageCount, count: visitCount } = pagination;
+  const visibleVisits = visits || [];
+  const changePage = (nextPage) => { const params = new URLSearchParams(filterKey); if (nextPage > 1) params.set("page", nextPage); else params.delete("page"); setSearchParams(params); };
   if (error && !visits) return <RequestError message={error} onRetry={loadVisits} />;
   if (!visits) return <LoadingPanel label="Loading client visits" />;
 
@@ -122,14 +118,14 @@ export default function Sales() {
         <div className="col-12 d-flex flex-wrap gap-2"><button className="btn btn-primary" type="submit">Filter</button>{filtersActive && <Link className="btn btn-outline-secondary" to="/sales">Clear</Link>}</div>
       </div>
       <p className="text-secondary small mb-0 mt-3" id="visit-payment-filter-help">Payment status filters apply to converted visits.</p>
-      {filtersActive && <p className="text-secondary small mb-0 mt-3" role="status">Showing <AnimatedNumber value={filteredVisits.length} /> matching visits.</p>}
+      {filtersActive && <p className="text-secondary small mb-0 mt-3" role="status">Showing <AnimatedNumber value={visitCount} /> matching visits.</p>}
     </form>
 
     {isRefreshing && <div className="customer-directory-refresh mb-3" role="status"><span className="spinner-border spinner-border-sm" aria-hidden="true" /> Updating visits</div>}
 
-    {filteredVisits.length ? <>
-      <div className="table-responsive panel p-0 responsive-table"><table className="table table-hover align-middle mb-0 sales-visits-table"><thead className="table-light"><tr>{["Client","Dataset / Source","Visit Date","Meeting Time","Meeting Location","Expense","Status","Payment status","Payment details","Payment description","Note","Actions"].map((heading)=><th key={heading}>{heading}</th>)}</tr></thead><tbody>{visibleVisits.map((visit)=><tr key={visit.id}><td data-label="Client">{visit.client_name}</td><td data-label="Dataset / Source">{visit.dataset_name || <span className="badge-response response-callback">Manual Client</span>}</td><td data-label="Visit Date">{formatDate(visit.visit_date)}</td><td data-label="Meeting Time">{visit.meeting_time?.slice(0,5)}</td><td data-label="Meeting Location">{visit.location}</td><td data-label="Expense">{formatCurrency(visit.expense)}</td><td data-label="Status"><span className={`badge-response visit-status-${visit.status}`}>{visit.status_label}</span></td><td data-label="Payment status">{visit.status === "converted" ? <span className={`badge-response payment-${visit.payment_status}`}>{visit.payment_status_label}</span> : <span className="payment-unavailable text-secondary">—</span>}</td><td data-label="Payment details">{visit.status === "converted" ? <div className="payment-summary"><small>Total: {formatCurrency(visit.total_amount)}</small><small>Paid: {formatCurrency(visit.paid_amount)}</small><small>Pending: {formatCurrency(visit.pending_amount)}</small></div> : <span className="payment-unavailable text-secondary">—</span>}</td><td data-label="Payment description">{visit.status === "converted" ? (visit.payment_description || "—") : "—"}</td><td data-label="Note" className="note-cell"><span className="sales-note-value">{visit.note || ""}</span></td><td data-label="Actions"><div className="btn-group btn-group-sm sales-actions" role="group" aria-label="Visit actions"><Link className="btn btn-outline-primary" to={`/sales/visits/${visit.id}`}>View</Link><Link className="btn btn-outline-secondary" to={`/sales/visits/${visit.id}/edit`}>Edit</Link><Link className="btn btn-outline-danger" to={`/sales/visits/${visit.id}/delete`}>Delete</Link></div></td></tr>)}</tbody></table></div>
-      {pageCount > 1 && <div className="d-flex justify-content-between align-items-center mt-3"><span className="text-secondary small">Page {page} of {pageCount}</span><div className="d-flex gap-2"><button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => setPage((current) => current - 1)} disabled={page <= 1}>Previous</button><button className="btn btn-outline-primary btn-sm" type="button" onClick={() => setPage((current) => current + 1)} disabled={page >= pageCount}>Next</button></div></div>}
+    {visibleVisits.length ? <>
+      <div className="table-responsive panel p-0 responsive-table business-table"><table className="table table-hover align-middle mb-0 sales-visits-table"><thead className="table-light"><tr>{["Client","Dataset / Source","Visit Date","Meeting Time","Meeting Location","Expense","Status","Payment status","Payment details","Payment description","Note","Actions"].map((heading)=><th key={heading}>{heading}</th>)}</tr></thead><tbody>{visibleVisits.map((visit)=><tr key={visit.id}><td data-label="Client">{visit.client_name}</td><td data-label="Dataset / Source">{visit.dataset_name || <span className="badge-response response-callback">Manual Client</span>}</td><td data-label="Visit Date">{formatDate(visit.visit_date)}</td><td data-label="Meeting Time">{visit.meeting_time?.slice(0,5)}</td><td data-label="Meeting Location">{visit.location}</td><td data-label="Expense">{formatCurrency(visit.expense)}</td><td data-label="Status"><span className={`badge-response visit-status-${visit.status}`}>{visit.status_label}</span></td><td data-label="Payment status">{visit.status === "converted" ? <span className={`badge-response payment-${visit.payment_status}`}>{visit.payment_status_label}</span> : <span className="payment-unavailable text-secondary">—</span>}</td><td data-label="Payment details">{visit.status === "converted" ? <div className="payment-summary"><small>Total: {formatCurrency(visit.total_amount)}</small><small>Paid: {formatCurrency(visit.paid_amount)}</small><small>Pending: {formatCurrency(visit.pending_amount)}</small></div> : <span className="payment-unavailable text-secondary">—</span>}</td><td data-label="Payment description">{visit.status === "converted" ? (visit.payment_description || "—") : "—"}</td><td data-label="Note" className="note-cell"><span className="sales-note-value">{visit.note || ""}</span></td><td data-label="Actions"><div className="btn-group btn-group-sm sales-actions" role="group" aria-label="Visit actions"><Link className="btn btn-outline-primary" to={`/sales/visits/${visit.id}`}>View</Link><Link className="btn btn-outline-secondary" to={`/sales/visits/${visit.id}/edit`}>Edit</Link><Link className="btn btn-outline-danger" to={`/sales/visits/${visit.id}/delete`}>Delete</Link></div></td></tr>)}</tbody></table></div>
+      {pageCount > 1 && <div className="d-flex justify-content-between align-items-center mt-3"><span className="text-secondary small">Page {page} of {pageCount}</span><div className="d-flex gap-2"><button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => changePage(page - 1)} disabled={isRefreshing || page <= 1}>Previous</button><button className="btn btn-outline-primary btn-sm" type="button" onClick={() => changePage(page + 1)} disabled={isRefreshing || page >= pageCount}>Next</button></div></div>}
     </> : <div className="empty-state text-center">{filtersActive ? <><h2 className="h5">No visits match these filters</h2><p className="text-secondary">Try changing the client name, dataset name, status, payment status, or date range.</p><Link className="btn btn-outline-secondary" to="/sales">Clear filters</Link></> : <><h2 className="h5">No client visits yet</h2><p className="text-secondary">Create your first client visit.</p><Link className="btn btn-primary" to="/sales/visits/add">Add Client Visit</Link></>}</div>}
   </>;
 }

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { importApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
+import "../styles/mobile-business.css";
 
 export default function ImportExcel() {
   const { csrfToken } = useAuth();
@@ -144,6 +145,8 @@ function InspectionSummary({ result, onConfirm, isConfirming }) {
   return (
     <section>
       <h2 className="h3 mb-3">Workbook Summary</h2>
+      {inspection.warnings?.map((warning) => <div className="alert alert-warning" key={warning}>{warning}</div>)}
+      <p className="text-secondary">Rows are validated before publishing. You can retry an interrupted upload; importing the same file again returns its existing dataset in this account and store.</p>
       <dl className="row">
         <dt className="col-sm-3">Dataset</dt>
         <dd className="col-sm-9">{datasetName}</dd>
@@ -187,7 +190,7 @@ function InspectionSummary({ result, onConfirm, isConfirming }) {
 
           <h4 className="h6 mt-4">Masked Preview</h4>
           {sheet.preview_rows.length ? (
-            <div className="table-responsive">
+            <div className="table-responsive business-table">
               <table className="table table-sm table-hover align-middle crm-table">
                 <thead className="table-light">
                   <tr>

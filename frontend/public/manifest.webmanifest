@@ -1,0 +1,12 @@
+{
+  "id": "./",
+  "name": "Customer CRM",
+  "short_name": "Customer CRM",
+  "description": "Customer relationship management and reminders",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#b8d1ec",
+  "icons": [{ "src": "notification-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

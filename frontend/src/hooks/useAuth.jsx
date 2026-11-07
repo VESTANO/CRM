@@ -6,44 +6,51 @@ import { crmSupabase } from "../services/crmSupabase.js";
 
 import { clearAttendanceReadCache } from "../services/attendanceSupabase.js";
 import { clearSelectedStore } from "../services/storeContext.js";
+import { withTimeout } from "../services/withTimeout.js";
 
 const AuthContext = createContext(null);
 const AUTH_TIMEOUT_MS = 15_000;
-
-function withTimeout(promise) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => window.setTimeout(() => reject(new Error("CRM session check timed out.")), AUTH_TIMEOUT_MS)),
-  ]);
-}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [csrfToken, setCsrfToken] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const skipNextSignedInRefresh = useRef(false);
+  const sessionVersion = useRef(0);
+  const mounted = useRef(false);
+  const refreshTimer = useRef();
 
   const refreshSession = useCallback(async () => {
+    const version = ++sessionVersion.current;
     try {
-      const { data } = await withTimeout(authApi.session());
+      const { data } = await withTimeout(authApi.session(), AUTH_TIMEOUT_MS, "CRM session check timed out.");
+      if (!mounted.current || version !== sessionVersion.current) return data;
       setApiCacheScope(data.user?.id);
       setUser(data.user);
       setCsrfToken(data.csrfToken || "");
       return data;
+    } catch (error) {
+      if (mounted.current && version === sessionVersion.current) {
+        setApiCacheScope(null);
+        setUser(null);
+        setCsrfToken("");
+      }
+      throw error;
     } finally {
       // Route guards must always resolve, including when Supabase is offline.
-      setIsLoading(false);
+      if (mounted.current && version === sessionVersion.current) setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refreshSession().catch(() => {
-      setUser(null);
-      setIsLoading(false);
-    });
+    mounted.current = true;
+    refreshSession().catch(() => {});
     const expireSession = () => {
+      sessionVersion.current += 1;
+      window.clearTimeout(refreshTimer.current);
       setApiCacheScope(null);
       setUser(null); setCsrfToken("");
+      setIsLoading(false);
       clearAttendanceReadCache();
     };
     window.addEventListener("crm:session-expired", expireSession);
@@ -57,10 +64,14 @@ export function AuthProvider({ children }) {
           skipNextSignedInRefresh.current = false;
           return;
         }
-        window.setTimeout(() => refreshSession().catch(expireSession), 0);
+        window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = window.setTimeout(() => refreshSession().catch(() => {}), 0);
       }
     });
     return () => {
+      mounted.current = false;
+      sessionVersion.current += 1;
+      window.clearTimeout(refreshTimer.current);
       window.removeEventListener("crm:session-expired", expireSession);
       authListener.subscription.unsubscribe();
     };
@@ -70,9 +81,12 @@ export function AuthProvider({ children }) {
     // A selected workspace belongs to the previous browser session, never to
     // a newly signed-in account. Super Admins must begin at Stores.
     clearSelectedStore();
+    const version = ++sessionVersion.current;
+    window.clearTimeout(refreshTimer.current);
     skipNextSignedInRefresh.current = true;
     try {
       const { data } = await authApi.login(credentials);
+      if (!mounted.current || version !== sessionVersion.current) return data;
       setApiCacheScope(data.user?.id);
       setUser(data.user);
       setCsrfToken(data.csrfToken || "");
@@ -100,11 +114,14 @@ export function AuthProvider({ children }) {
   }, [user?.id, isLoading]);
 
   const logout = useCallback(async () => {
-    await authApi.logout();
+    sessionVersion.current += 1;
+    window.clearTimeout(refreshTimer.current);
     clearSelectedStore();
     setApiCacheScope(null);
     setUser(null);
     setCsrfToken("");
+    setIsLoading(false);
+    await authApi.logout();
   }, []);
 
   const value = useMemo(

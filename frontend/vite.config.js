@@ -7,9 +7,19 @@ const pagesBuild = process.env.VITE_PAGES_BUILD === "true";
 
 export default defineConfig(({ command, mode }) => {
   const isPagesBuild = mode === "pages" || pagesBuild;
+  let resolvedBase;
   return ({
   base: command === "build" ? (isPagesBuild ? "/CRM/" : "/static/frontend/") : "/",
-  plugins: [react()],
+  plugins: [react(), {
+    name: "pages-metadata-assets",
+    configResolved(config) { resolvedBase = config.base; },
+    transformIndexHtml(html) {
+      if (!isPagesBuild) return html;
+      // Pages publishes only the Vite artifact, not Django's /static tree.
+      return html.replace(/href="[^"]*\/static\/images\/customer-crm\.svg\?v=2"/, `href="${resolvedBase}notification-icon.svg"`)
+        .replace(/href="[^"]*\/static\/manifest\.webmanifest"/, `href="${resolvedBase}manifest.webmanifest"`);
+    },
+  }],
   build: {
     outDir: isPagesBuild ? "dist" : "../backend/static/frontend",
     emptyOutDir: true,

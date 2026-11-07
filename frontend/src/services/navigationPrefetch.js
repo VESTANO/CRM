@@ -11,7 +11,7 @@ const routes = {
   "/import": { page: () => import("../pages/ImportExcel.jsx") },
   "/reminders": { page: () => import("../pages/Reminders.jsx"), reads: () => [remindersApi.list] },
   "/notifications": { page: () => import("../pages/Notifications.jsx"), reads: (user) => [user.is_admin ? adminApi.tasks : tasksApi.list] },
-  "/reports": { page: () => import("../pages/Reports.jsx"), reads: () => [dashboardApi.summary, salesApi.list] },
+  "/reports": { page: () => import("../pages/Reports.jsx"), reads: () => [dashboardApi.summary, salesApi.report] },
   "/admin-panel": { admin: true, page: () => import("../pages/AdminPanel.jsx"), reads: () => [adminApi.summary] },
   "/admin-panel/users": { admin: true, page: () => import("../pages/AdminUsers.jsx"), reads: () => [adminApi.listUsers] },
   "/admin-panel/tasks": { admin: true, page: () => import("../pages/AdminTasks.jsx"), reads: () => [adminApi.tasks] },

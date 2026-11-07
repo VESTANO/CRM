@@ -10,20 +10,20 @@ export function dateInputValue(date) {
 }
 
 export function timeFromTimestamp(timestamp) {
-  const time = String(timestamp).split(" ")[1] || "";
-  return time.slice(0, 5);
+  const parsed = parseTimestamp(timestamp);
+  return Number.isNaN(parsed.getTime()) ? "" : clockTime(parsed);
 }
 
 export function attendanceDateFromTimestamp(timestamp) {
-  const match = String(timestamp || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T]/);
-  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
-  const parsed = new Date(timestamp);
+  const parsed = parseTimestamp(timestamp);
   if (Number.isNaN(parsed.getTime())) return "";
   return dateInputValue(parsed);
 }
 
 export function parseTimestamp(timestamp) {
-  return new Date(String(timestamp).replace(" ", "T") + "+05:30");
+  const value = String(timestamp ?? "").trim().replace(" ", "T");
+  if (!value) return new Date(NaN);
+  return new Date(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(value) ? value : value + "+05:30");
 }
 
 export function attendanceWindowForTimestamp(timestamp, shift = DEFAULT_EMPLOYEE_SHIFT) {
@@ -57,9 +57,7 @@ export function countedAttendanceTime(timestamp, shift, boundary) {
 }
 
 export function timestampFromDate(date) {
-  return `${dateInputValue(date)} ${String(date.getHours()).padStart(2, "0")}:${String(
-    date.getMinutes(),
-  ).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
+  return `${dateInputValue(date)} ${new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(date)}`;
 }
 
 export function isTodayTimestamp(timestamp) {
@@ -126,7 +124,7 @@ export function calculateAttendanceDay(punches, now = new Date(), shift = DEFAUL
   return {
     workingHours,
     breakHours,
-    breakCount: Math.floor((punches.length - 1) / 2),
+    breakCount: Math.max(0, Math.floor((punches.length - 1) / 2)),
     isOpen: punches.length % 2 === 1,
     employeeStatus: status.label,
     employeeStatusClass: status.badgeClass,
@@ -151,6 +149,6 @@ export function buildAttendanceDays(records) {
   }
 
   return [...grouped.values()]
-    .map((group) => ({ ...group, punches: group.punches.sort((a, b) => a.localeCompare(b)) }))
+    .map((group) => ({ ...group, punches: group.punches.sort((a, b) => parseTimestamp(a) - parseTimestamp(b)) }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }

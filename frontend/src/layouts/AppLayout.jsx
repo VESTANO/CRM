@@ -1,15 +1,19 @@
-import { Suspense, useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router-dom";
 import { Offcanvas } from "bootstrap";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
 import { useTaskNotifications } from "../hooks/useTaskNotifications.js";
 import TaskNotificationAlerts from "../components/TaskNotificationAlerts.jsx";
-import { callbacksApi, warmNavigationData } from "../services/api.js";
+import { callbacksApi } from "../services/api.js";
 import { prefetchNavigation } from "../services/navigationPrefetch.js";
 import { RouteLoadingIndicator } from "../components/RequestState.jsx";
 import { activeStoreId, clearSelectedStore } from "../services/storeContext.js";
 import { useStoreContext } from "../hooks/useStoreContext.js";
+import { lockDocumentScroll, recoverOrphanedScrollLock } from "../utils/documentScrollLock.js";
+
+import { useStoreFeatures } from "../hooks/useStoreFeatures.jsx";
+import { featureForPath, storeHomePath } from "../services/storeFeatures.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -51,32 +55,67 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { profile: attendanceProfile, isLoading: attendanceAuthLoading } = useAttendanceAuth();
+  const { features, loading: featuresLoading, error: featuresError } = useStoreFeatures();
   const location = useLocation();
+  const navigationType = useNavigationType();
+  const previousPath = useRef(null);
   const storeId = useStoreContext();
-  const { unreadCount: notificationCount } = useTaskNotifications();
+  const { unreadCount: notificationCount } = useTaskNotifications(features.tasks && !featuresLoading && !featuresError);
   const [todayCallbackCount, setTodayCallbackCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
   const roleLabel = user?.is_superuser ? "Super Admin" : user?.is_admin ? "Admin" : "User";
   const isDashboard = location.pathname === "/dashboard" || location.pathname === "/";
   const selectedSuperAdminStore = Boolean(user?.is_superuser && activeStoreId());
 
+  useLayoutEffect(() => {
+    // A new page begins at its heading. Native POP restoration owns Back /
+    // Forward; same-page search/filter changes keep the user's position.
+    if (navigationType !== "POP" && previousPath.current !== location.pathname) {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
+    previousPath.current = location.pathname;
+  }, [location.key, location.pathname, navigationType]);
+
+  useEffect(() => {
+    const menu = document.getElementById("mobileNav");
+    let releaseScroll;
+    const lock = () => { releaseScroll ||= lockDocumentScroll(); };
+    const unlock = () => { releaseScroll?.(); releaseScroll = undefined; };
+    const desktop = window.matchMedia("(min-width: 992px)");
+    const closeOnDesktop = () => { if (desktop.matches) Offcanvas.getInstance(menu)?.hide(); };
+    recoverOrphanedScrollLock();
+    menu.addEventListener("show.bs.offcanvas", lock);
+    menu.addEventListener("hidden.bs.offcanvas", unlock);
+    window.addEventListener("pageshow", recoverOrphanedScrollLock);
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => {
+      menu.removeEventListener("show.bs.offcanvas", lock);
+      menu.removeEventListener("hidden.bs.offcanvas", unlock);
+      window.removeEventListener("pageshow", recoverOrphanedScrollLock);
+      desktop.removeEventListener("change", closeOnDesktop);
+      const instance = Offcanvas.getInstance(menu);
+      if (instance) {
+        if (menu.matches(".show,.showing")) {
+          menu.addEventListener("hidden.bs.offcanvas", () => instance.dispose(), { once: true });
+          instance.hide();
+        } else instance.dispose();
+      }
+      unlock();
+    };
+  }, []);
+
+  useEffect(() => {
+    const menu = document.getElementById("mobileNav");
+    if (menu.matches(".show,.showing")) Offcanvas.getInstance(menu)?.hide();
+    recoverOrphanedScrollLock();
+  }, [location.key]);
+
   useEffect(() => {
     if (user?.is_superuser && location.pathname === "/admin-panel/stores") clearSelectedStore();
   }, [user?.is_superuser, location.pathname]);
 
   useEffect(() => {
-    if (user?.is_superuser && !storeId) return undefined;
-    const controller = new AbortController();
-    const warmTimer = window.setTimeout(() => {
-      warmNavigationData(Boolean(user?.is_admin), { signal: controller.signal });
-    }, 2500);
-    return () => {
-      window.clearTimeout(warmTimer);
-      controller.abort();
-    };
-  }, [user?.id, user?.is_admin, storeId]);
-
-  useEffect(() => {
+    if (!features.callbacks || featuresLoading || featuresError) return undefined;
     let isMounted = true;
     setTodayCallbackCount(0);
 
@@ -102,11 +141,11 @@ export default function AppLayout() {
       window.removeEventListener("crm:callbacks-updated", loadTodayCallbacks);
       window.removeEventListener("focus", loadTodayCallbacks);
     };
-  }, [storeId]);
+  }, [storeId, features.callbacks, featuresLoading, featuresError]);
 
   return (
     <div className="workspace-shell">
-      <TaskNotificationAlerts />
+      {features.tasks && !featuresLoading && !featuresError && <TaskNotificationAlerts />}
       <header className="mobile-topbar d-lg-none">
         <button
           className="mobile-menu-button"
@@ -118,14 +157,14 @@ export default function AppLayout() {
         >
           <i className="bi bi-list" aria-hidden="true" />
         </button>
-        <NavLink className="mobile-brand" to="/dashboard">
+        <NavLink className="mobile-brand" to={storeHomePath(features)}>
           <span className="brand-mark">V</span>
           <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
         </NavLink>
       </header>
 
       <aside className="app-sidebar d-none d-lg-flex">
-        <NavLink className="app-brand" to="/dashboard">
+        <NavLink className="app-brand" to={storeHomePath(features)}>
           <span className="brand-mark">V</span>
           <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
         </NavLink>
@@ -135,7 +174,7 @@ export default function AppLayout() {
         <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} />
       </aside>
 
-      <div className="offcanvas offcanvas-start" tabIndex="-1" id="mobileNav" aria-labelledby="mobileNavLabel">
+      <div className="offcanvas offcanvas-start" tabIndex="-1" id="mobileNav" data-bs-scroll="true" aria-labelledby="mobileNavLabel">
         <div className="offcanvas-header">
           <h2 className="h5 offcanvas-title" id="mobileNavLabel">VESTANO CRM</h2>
           <button type="button" className="btn-close" data-bs-dismiss="offcanvas" aria-label="Close" />
@@ -165,7 +204,7 @@ export default function AppLayout() {
         </div>
         <div className="content-wrap">
           <Suspense fallback={<RouteLoadingIndicator />}>
-            <Outlet key={`${user?.id}|${storeId}`} />
+            {featuresLoading ? <RouteLoadingIndicator /> : featuresError ? <div className="alert alert-danger" role="alert">Unable to verify this store's access. Please try again.</div> : featureForPath(location.pathname) === "dashboard" && !features.dashboard ? <Navigate to={storeHomePath(features)} replace /> : featureForPath(location.pathname) && !features[featureForPath(location.pathname)] ? <div className="alert alert-warning" role="alert">This feature is not enabled for your store.</div> : <Outlet key={`${user?.id}|${storeId}`} />}
           </Suspense>
         </div>
       </main>
@@ -174,6 +213,7 @@ export default function AppLayout() {
 }
 
 function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoading, notificationCount = 0, todayCallbackCount = 0 }) {
+  const { features } = useStoreFeatures();
   const navigate = useNavigate();
   const location = useLocation();
   const customerRouteActive = location.pathname.startsWith("/datasets") || location.pathname.startsWith("/customers");
@@ -194,8 +234,6 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
     event.preventDefault();
     const menu = document.getElementById("mobileNav");
     menu.addEventListener("hidden.bs.offcanvas", () => {
-      document.querySelectorAll(".offcanvas-backdrop").forEach((backdrop) => backdrop.remove());
-      document.body.classList.remove("modal-open");
       navigate(path);
     }, { once: true });
     Offcanvas.getOrCreateInstance(menu).hide();
@@ -207,8 +245,8 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
 
   if (user?.is_superuser && !activeStoreId()) {
     return <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>
-      <SidebarNavLink user={user} className={() => `sidebar-link ${["/admin-panel/stores", "/admin-panel"].includes(location.pathname) ? "active" : ""}`} to="/admin-panel/stores" onClick={(event) => handleNavigation(event, "/admin-panel/stores")}>
-        <i className="bi bi-shop" /><span>Stores</span>
+      <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`} to="/admin-panel/stores" onClick={(event) => handleNavigation(event, "/admin-panel/stores")}>
+        <i className="bi bi-shop" /><span>Stores &amp; access</span>
       </SidebarNavLink>
       <SidebarNavLink user={user} className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`} to="/admin-panel/users?role=super_admin" onClick={(event) => handleNavigation(event, "/admin-panel/users?role=super_admin")}>
         <i className="bi bi-shield-lock" /><span>Super Admins</span>
@@ -218,7 +256,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
 
   return (
     <nav className="sidebar-nav" aria-label={mobile ? "Mobile navigation" : "Main navigation"}>
-      {navItems.map((item) => {
+      {navItems.filter((item) => { const feature = featureForPath(item.to || item.children?.[0]?.to || ""); return !feature || features[feature]; }).map((item) => {
         if (item.children) {
           const submenuId = mobile ? "mobile-customer-submenu" : "desktop-customer-submenu";
           const isAttendanceMenu = item.label === "Attendance";
@@ -333,7 +371,7 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
           </SidebarNavLink>
         );
       })}
-      {user?.is_admin && !user?.is_superuser && (
+      {user?.is_admin && (
         <SidebarNavLink
           user={user}
           className={() => `sidebar-link ${location.pathname === "/admin-panel" ? "active" : ""}`}
@@ -347,8 +385,8 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
       )}
       {user?.is_superuser && (
         <>
-          <SidebarNavLink user={user} className={() => `sidebar-link ${["/admin-panel/stores", "/admin-panel"].includes(location.pathname) ? "active" : ""}`} to="/admin-panel/stores" end onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel/stores"); }}>
-            <i className="bi bi-shop" /><span>Stores</span>
+          <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/stores" ? "active" : ""}`} to="/admin-panel/stores" end onClick={(event) => { setOpenMenu(null); handleNavigation(event, "/admin-panel/stores"); }}>
+            <i className="bi bi-shop" /><span>Stores &amp; access</span>
           </SidebarNavLink>
           <SidebarNavLink user={user} className={() => `sidebar-link ${location.pathname === "/admin-panel/users" && location.search.includes("role=super_admin") ? "active" : ""}`} to="/admin-panel/users?role=super_admin" onClick={(event) => { clearSelectedStore(); setOpenMenu(null); handleNavigation(event, "/admin-panel/users?role=super_admin"); }}>
             <i className="bi bi-shield-lock" /><span>Super Admins</span>

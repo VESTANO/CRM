@@ -37,17 +37,18 @@ function setup(existingProfile = false, syncError = null) {
   const fail = (status, message, payload) => { throw Object.assign(new Error(message), { status, payload }); };
   const requireAdmin = (ctx) => { if (!["admin", "super_admin"].includes(ctx.profile.role)) fail(403, "Administrator access required."); };
   const target = { id: "target-user", employee_id: "NEWUSER", email: "new@example.com", role: "admin", active: true };
-  const run = new Function("adminClient", "requireAdmin", "valueString", "fail", "checkDb", "profileWithCounts", "json", "syncAttendanceAdmin", "adminUserById", "isAdminRole", `${handler}; return handleAdmin;`)(
+  const run = new Function("adminClient", "requireAdmin", "valueString", "fail", "checkDb", "profileWithCounts", "json", "syncAttendanceAdmin", "adminUserById", "isAdminRole", "isSuperAdmin", `${handler}; return handleAdmin;`)(
     client, requireAdmin, (value) => String(value || "").trim(), fail,
     (error) => { if (error) throw error; }, async (profile) => profile,
     (status, data) => ({ status, data }),
     async (profile, exactRole) => { synced.push(profile); syncModes.push(exactRole); if (syncError) throw syncError; },
     async () => target, (role) => ["admin", "super_admin"].includes(role),
+    (ctx) => ctx.profile.role === "super_admin",
   );
   return { writes, synced, syncModes, deleted, accounts: () => accounts,
     edit: (body, ownAccount = false, callerRole = "admin") => run({ user: { id: ownAccount ? target.id : "caller" }, profile: { role: callerRole } }, "PATCH", ["admin", "users", target.id], new URLSearchParams(), body),
     create: (body, role = "admin") => run({ profile: { role } }, "POST", ["admin", "users"], new URLSearchParams(), {
-    username: "NEWUSER", email: "new@example.com", password1: "password123", password2: "password123", ...body,
+    username: "NEWUSER", email: "new@example.com", password1: "password123", password2: "password123", store_id: "store-1", ...body,
   }) };
 }
 
@@ -55,7 +56,7 @@ test("selected roles survive both profile creation paths; omitted role defaults 
   for (const existing of [false, true]) {
     for (const role of ["employee", "admin", "super_admin", undefined]) {
       const app = setup(existing);
-      const result = await app.create(role === undefined ? {} : { role });
+      const result = await app.create(role === undefined ? {} : { role }, role === "super_admin" ? "super_admin" : "admin");
       assert.equal(result.status, 201);
       assert.equal(result.data.role, role ?? "employee");
       assert.equal(app.writes[0].role, role ?? "employee");
@@ -67,7 +68,7 @@ test("selected roles survive both profile creation paths; omitted role defaults 
 test("editing a role saves the selection and synchronizes the exact Attendance role", async () => {
   for (const role of ["employee", "super_admin"]) {
     const app = setup();
-    const result = await app.edit({ role });
+    const result = await app.edit({ role }, false, role === "super_admin" ? "super_admin" : "admin");
     assert.equal(result.data.role, role);
     assert.equal(app.synced[0].role, role);
     assert.deepEqual(app.syncModes, [true]);

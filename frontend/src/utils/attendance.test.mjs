@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAttendanceDays, calculateAttendanceDay, countedAttendanceTime, dateInputValue } from "./attendance.js";
+import { attendanceDateFromTimestamp, buildAttendanceDays, calculateAttendanceDay, countedAttendanceTime, dateInputValue, parseTimestamp, timeFromTimestamp, timestampFromDate } from "./attendance.js";
 
 test("paired punches subtract lunch and count the break", () => {
   const totals = calculateAttendanceDay([
@@ -37,4 +37,17 @@ test("employee and date grouping keeps different employees separate", () => {
   assert.equal(days.length, 2);
   assert.deepEqual(days.find((day) => day.userId === "crm:1").punches, ["2026-10-29 09:30:00", "2026-10-29 17:30:00"]);
   assert.equal(dateInputValue(new Date("2026-10-29T20:00:00Z")), "2026-10-30");
+});
+test('UTC and offset punches use the India calendar day and the same working-hours rules',()=>{
+  assert.equal(attendanceDateFromTimestamp('2026-11-06T23:30:00Z'),'2026-11-07');
+  assert.equal(timeFromTimestamp('2026-11-07T04:00:00Z'),'09:30');
+  assert.equal(parseTimestamp('2026-11-07T09:30:00+05:30').toISOString(),'2026-11-07T04:00:00.000Z');
+  const day=calculateAttendanceDay(['2026-11-07T04:00:00Z','2026-11-07T12:00:00Z'],new Date('2026-11-07T14:00:00Z'));
+  assert.equal(day.workingHours,8);assert.equal(day.employeeStatus,'Left');
+  const grouped=buildAttendanceDays([{userId:'A',timestamp:'2026-11-07 09:30:00'},{userId:'A',timestamp:'2026-11-07T02:00:00Z'}]);
+  assert.deepEqual(grouped[0].punches,['2026-11-07T02:00:00Z','2026-11-07 09:30:00']);
+});
+test('empty attendance has no negative break count and timestamps ignore host timezone',()=>{
+  assert.equal(calculateAttendanceDay([],new Date('2026-11-07T10:00:00Z')).breakCount,0);
+  assert.equal(timestampFromDate(new Date('2026-11-07T23:00:00Z')),'2026-11-08 04:30:00');
 });

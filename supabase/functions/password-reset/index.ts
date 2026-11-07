@@ -8,24 +8,12 @@ const brevoSenderEmail = Deno.env.get("BREVO_SENDER_EMAIL") || "";
 const brevoSenderName = Deno.env.get("BREVO_SENDER_NAME") || "Vestano CRM";
 const defaultResetUrl = "https://vestano.online/login";
 const resetRedirectUrl = Deno.env.get("PASSWORD_RESET_REDIRECT_URL") || defaultResetUrl;
-const resetCooldownMs = 60_000;
 
 function response(status = 200, body: Record<string, unknown> = { ok: true }) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function validEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function maskEmail(email: string) {
-  const [local, domain] = email.split("@");
-  if (!local || !domain) return "your work email";
-  const visible = local.slice(-3);
-  return `****${visible}@${domain}`;
 }
 
 function escapeHtml(value: string) {
@@ -40,23 +28,10 @@ async function sha256(value: string) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function isCoolingDown(adminClient: ReturnType<typeof createClient>, emailHash: string) {
-  const { data, error } = await adminClient
-    .from("crm_password_reset_requests")
-    .select("requested_at")
-    .eq("email_hash", emailHash)
-    .maybeSingle();
+async function claimResetCooldown(adminClient: ReturnType<typeof createClient>, emailHash: string) {
+  const { data, error } = await adminClient.rpc("crm_claim_password_reset", { p_email_hash: emailHash });
   if (error) throw error;
-  if (!data?.requested_at) return false;
-  return Date.now() - new Date(data.requested_at).getTime() < resetCooldownMs;
-}
-
-async function recordRequest(adminClient: ReturnType<typeof createClient>, emailHash: string) {
-  const { error } = await adminClient.from("crm_password_reset_requests").upsert({
-    email_hash: emailHash,
-    requested_at: new Date().toISOString(),
-  });
-  if (error) throw error;
+  return data === true;
 }
 
 async function sendBrevoResetEmail(email: string, actionLink: string) {
@@ -93,41 +68,20 @@ Deno.serve(async (request) => {
     const adminClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-    let { data: profile, error: profileError } = await adminClient
-      .from("profiles")
-      .select("email, active")
-      .eq("employee_id", identity)
-      .maybeSingle();
+    // Resolve exact case-insensitive identities in SQL rather than ILIKE URL
+    // filters, where PostgREST also treats '*' as a wildcard alias. The private
+    // resolver checks current profile activity for migrated email aliases.
+    const { data: profiles, error: profileError } = await adminClient.rpc("crm_password_reset_profile", { p_identity: identity });
     if (profileError) throw profileError;
-    if (!profile && validEmail(identity)) {
-      const byEmail = await adminClient
-        .from("profiles")
-        .select("email, active")
-        .eq("email", identity.toLowerCase())
-        .maybeSingle();
-      profile = byEmail.data;
-      profileError = byEmail.error;
-      if (profileError) throw profileError;
-    }
-    if (profile && !profile.active) return accepted();
-
-    // Imported accounts can retain a legacy sign-in email while Supabase uses
-    // a distinct auth email. Honor that alias without revealing its presence.
-    let recipientEmail = profile?.email || "";
-    if (!profile) {
-      const { data: legacy, error: legacyError } = await adminClient
-        .from("crm_legacy_auth")
-        .select("auth_email, is_active")
-        .eq("original_email", identity.toLowerCase())
-        .maybeSingle();
-      if (legacyError) throw legacyError;
-      if (!legacy?.is_active) return accepted();
-      recipientEmail = legacy.auth_email || "";
-    }
+    if (!Array.isArray(profiles) || profiles.length !== 1 || !profiles[0].active) return accepted();
+    const recipientEmail = profiles[0].email || "";
     if (!recipientEmail) return accepted();
 
     const emailHash = await sha256(recipientEmail.toLowerCase());
-    if (await isCoolingDown(adminClient, emailHash)) return accepted();
+    // Claim before generating or sending mail so parallel requests cannot each
+    // pass a read-then-write cooldown check. Provider failures retain the claim
+    // for its bounded 60-second window, preventing a retry flood.
+    if (!await claimResetCooldown(adminClient, emailHash)) return accepted();
 
     const { data: generated, error: linkError } = await adminClient.auth.admin.generateLink({
       type: "recovery",
@@ -137,10 +91,11 @@ Deno.serve(async (request) => {
     if (linkError || !generated.properties?.action_link) throw linkError || new Error("No recovery link was generated.");
 
     await sendBrevoResetEmail(recipientEmail, generated.properties.action_link);
-    await recordRequest(adminClient, emailHash);
-    return response(200, { ok: true, maskedEmail: maskEmail(recipientEmail) });
+    return accepted();
   } catch (error) {
     console.error("Password-reset request failed:", error instanceof Error ? error.message : error);
-    return response(503, { error: "Password recovery is temporarily unavailable." });
+    // An account-dependent provider/database failure must not distinguish a
+    // registered identity from an unknown one at this public endpoint.
+    return accepted();
   }
 });

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { customersApi, peekCachedResponse } from "../services/api.js";
 import { formatDate } from "../utils/formatters.js";
+import "../styles/mobile-business.css";
 
 const CLIENT_NAME_LABELS = new Set([
   "name",
@@ -175,7 +176,7 @@ export default function Customers() {
               <span className="badge text-bg-light">Page {pagination.page} of {pagination.numPages}</span>
             </div>
           </div>
-          {results.length ? <><div className="table-responsive panel p-0 customer-directory-table">
+          {results.length ? <><div className="table-responsive panel p-0 customer-directory-table business-table">
             <table className="table table-hover align-middle mb-0">
               <thead className="table-light">
                 <tr>

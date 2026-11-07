@@ -12,6 +12,7 @@ import TaskReviewForm from "../components/TaskReviewForm.jsx";
 import TaskSubmissionDetails from "../components/TaskSubmissionDetails.jsx";
 import { formatDateTime } from "../utils/formatters.js";
 import TaskNotificationInbox from "../components/TaskNotificationInbox.jsx";
+import "../styles/mobile-tasks.css";
 
 export default function Notifications() {
   const { csrfToken, user } = useAuth();
@@ -43,7 +44,7 @@ export default function Notifications() {
   }
   const taskSaved = (successMessage) => { setMessage(successMessage); loadTasks(); };
 
-  return <>
+  return <div className="task-notifications-workspace">
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active" aria-current="page">Notifications</li></ol></nav>
     <div className="page-header mb-4"><div><div className="eyebrow">Notifications</div><h1 className="h2 mb-2">Notifications</h1><p className="text-secondary mb-0">{isAdmin ? "Review submitted work and approve it or return it with a rejection note." : "Review assigned tasks, submit your work, and follow admin feedback."}</p></div></div>
     {taskError && <div className="alert alert-danger" role="alert">{taskError}</div>}
@@ -79,5 +80,5 @@ export default function Notifications() {
         })}
       </div> : <div className="empty-state text-center"><h3 className="h5">{isAdmin ? "No submitted tasks" : "No assigned tasks"}</h3><p className="text-secondary mb-0">{isAdmin ? "User submissions will appear here for review." : "Tasks assigned by admin will appear here."}</p></div>}
     </section>
-  </>;
+  </div>;
 }

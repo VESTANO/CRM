@@ -15,6 +15,23 @@ const pageSize = 1000;
 
 type Context = { user: any; profile: any; activeStoreId?: string };
 
+const defaultStoreFeatures = {
+  dashboard: true,
+  customers: true, sales: true, attendance: true, callbacks: true,
+  reminders: true, reports: true, tasks: true,
+};
+type StoreFeature = keyof typeof defaultStoreFeatures;
+
+function validateStoreFeatures(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(400, "Choose store features.", { errors: { features: ["Choose store features."] } });
+  const features = { ...defaultStoreFeatures };
+  for (const [key, enabled] of Object.entries(value)) {
+    if (!(key in features) || typeof enabled !== "boolean") fail(400, "Choose valid store features.", { errors: { features: ["Use the available feature switches."] } });
+    (features as any)[key] = enabled;
+  }
+  return features;
+}
+
 class ApiError extends Error {
   status: number;
   payload: any;
@@ -37,8 +54,18 @@ function fail(status: number, message: string, payload: any = null): never {
 
 function checkDb(error: any) {
   if (!error) return;
-  const status = error.code === "23505" ? 409 : error.code === "23503" ? 400 : 400;
-  throw new ApiError(status, error.message || "Database request failed.");
+  const code = String(error.code || "");
+  if (code === "23505") fail(409, "This record already exists or the request conflicts with a newer change.");
+  if (code === "23503") fail(400, "This record is still linked to another record. Reload and check its related records.");
+  if (code === "42501") fail(403, "You do not have permission to perform this action.");
+  if (code.startsWith("08") || code.startsWith("XX") || code.startsWith("PGRST") || ["57014","55P03","40001","40P01"].includes(code)) {
+    fail(503, "The database could not complete this request. Your changes may not have been saved. Reload to check before retrying.");
+  }
+  if (code.startsWith("22")) fail(400, "One or more values are invalid. Check the entered dates, amounts and identifiers.");
+  // P0001 is reserved for our explicit business validation messages. Other
+  // provider/SQL diagnostics can contain internal schema or supplied values.
+  if (code === "P0001") fail(400, error.message || "The request was rejected.");
+  fail(503, "The database request failed. Reload to check the current record before retrying.");
 }
 
 function bytesToBase64(value: Uint8Array) {
@@ -88,34 +115,35 @@ function legacyAuthClient(request: Request) {
   return createClient(supabaseUrl, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
+function legacySessionResponse(session: any) {
+  const response = json(200, { access_token: session.access_token, refresh_token: session.refresh_token });
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  return response;
+}
+
 async function handleLegacyLogin(request: Request, body: any) {
   const identity = String(body?.identity || "").trim().toLocaleLowerCase();
   const password = typeof body?.password === "string" ? body.password : "";
-  if (!identity || !password) fail(400, "Enter your username and password.");
+  if (!identity || identity.length > 256 || !password || password.length > 1024) fail(400, "Enter your username and password.");
 
-  const { data: accounts, error } = await adminClient.from("crm_legacy_auth").select("*");
+  const { data: accounts, error } = await adminClient.rpc("crm_legacy_login_account", { p_identity: identity });
   checkDb(error);
-  const usernameMatches = (accounts || []).filter((item: any) => String(item.username).toLocaleLowerCase() === identity);
-  const emailMatches = (accounts || []).filter((item: any) => String(item.original_email || "").toLocaleLowerCase() === identity);
-  const matches = usernameMatches.length ? usernameMatches : emailMatches;
-  if (!matches.length) fail(404, "No imported CRM account matches that username or email.");
-  if (matches.length > 1) fail(409, "More than one imported account uses that email. Sign in with your username.");
+  if (!accounts || accounts.length !== 1) fail(401, "Invalid username or password.");
 
-  const account = matches[0];
-  if (!account.is_active) fail(403, "This CRM account is inactive.");
+  const account = accounts[0];
   if (!account.password_hash) {
     const authClient = legacyAuthClient(request);
     const { data, error: signInError } = await authClient.auth.signInWithPassword({ email: account.auth_email, password });
-    if (signInError || !data.session) fail(401, "Invalid username or password.");
-    return json(200, { access_token: data.session.access_token, refresh_token: data.session.refresh_token });
+    if (signInError || !data.session || data.user?.id !== account.auth_user_id) fail(401, "Invalid username or password.");
+    return legacySessionResponse(data.session);
   }
   if (account.password_hash.startsWith("!") || !await verifyDjangoPassword(password, account.password_hash)) {
-    fail(401, account.password_hash.startsWith("!")
-      ? "This account has no usable password. Ask an administrator to reset it."
-      : "Invalid username or password.");
+    fail(401, "Invalid username or password.");
   }
 
-  const { error: updateError } = await adminClient.auth.admin.updateUserById(account.auth_user_id, { password });
+  const { error: updateError } = await adminClient.auth.admin.updateUserById(account.auth_user_id, {
+    password, app_metadata: { crm_legacy_password_upgrade: true },
+  });
   if (updateError) {
     console.error("Legacy CRM password upgrade failed:", updateError.message);
     fail(400, "The old password was verified, but Supabase could not accept it. Ask an administrator to reset the password.");
@@ -126,8 +154,8 @@ async function handleLegacyLogin(request: Request, body: any) {
   checkDb(clearError);
   const authClient = legacyAuthClient(request);
   const { data, error: signInError } = await authClient.auth.signInWithPassword({ email: account.auth_email, password });
-  if (signInError || !data.session) fail(401, "Your password was upgraded. Sign in again with the same username and password.");
-  return json(200, { access_token: data.session.access_token, refresh_token: data.session.refresh_token });
+  if (signInError || !data.session || data.user?.id !== account.auth_user_id) fail(401, "Your password was upgraded. Sign in again with the same username and password.");
+  return legacySessionResponse(data.session);
 }
 
 async function allAuthUsers() {
@@ -161,14 +189,13 @@ function remapUserId(id: any, users: Map<string, string>, label: string, nullabl
 async function migrateLegacyData(request: Request, body: any) {
   const token = request.headers.get("x-crm-migration-token") || "";
   if (!token) fail(401, "Migration authorization is required.");
+  if (body?.version !== 1 || !Array.isArray(body.users) || body.users.length === 0) fail(400, "The local CRM migration payload is invalid.");
   const tokenHash = await sha256Hex(token);
-  const { data: authorization, error: authorizationError } = await adminClient.from("crm_migration_authorizations")
-    .select("token_hash,expires_at,used_at").eq("token_hash", tokenHash).maybeSingle();
+  const { data: claimed, error: authorizationError } = await adminClient.rpc("crm_claim_legacy_migration", { p_token_hash: tokenHash });
   checkDb(authorizationError);
-  if (!authorization || authorization.used_at || new Date(authorization.expires_at).getTime() <= Date.now()) {
+  if (!claimed) {
     fail(401, "Migration authorization is invalid, expired, or already used.");
   }
-  if (body?.version !== 1 || !Array.isArray(body.users) || body.users.length === 0) fail(400, "The local CRM migration payload is invalid.");
 
   const [profilesResult, legacyResult, authUsers] = await Promise.all([
     adminClient.from("profiles").select("id,employee_id,email"),
@@ -333,10 +360,6 @@ async function migrateLegacyData(request: Request, body: any) {
   const { error: sequenceError } = await adminClient.rpc("crm_reset_identity_sequences");
   checkDb(sequenceError);
 
-  const { data: consumed, error: consumeError } = await adminClient.from("crm_migration_authorizations")
-    .update({ used_at: new Date().toISOString() }).eq("token_hash", tokenHash).is("used_at", null).select("token_hash").maybeSingle();
-  checkDb(consumeError);
-  if (!consumed) fail(409, "This migration authorization was already used.");
   return json(200, { status: "complete", users: legacyRows.length, imported: {
     datasets: (body.datasets || []).length,
     dataset_columns: (body.dataset_columns || []).length,
@@ -392,6 +415,19 @@ function applyBusinessScope(query: any, ctx: Context) {
   return isAdminRole(ctx.profile.role) ? query : query.eq("owner_id", ctx.user.id);
 }
 
+async function storeFeaturesFor(ctx: Context) {
+  const storeId = profileScope(ctx);
+  if (!storeId) return { ...defaultStoreFeatures };
+  const { data, error } = await adminClient.from("crm_stores").select("features").eq("id", storeId).maybeSingle();
+  checkDb(error);
+  if (!data) fail(404, "Store not found.");
+  return { ...defaultStoreFeatures, ...(data.features || {}) };
+}
+
+async function requireStoreFeature(ctx: Context, feature: StoreFeature) {
+  if (!(await storeFeaturesFor(ctx))[feature]) fail(403, "This feature is not enabled for your store.");
+}
+
 function applyProfileScope(query: any, ctx: Context) {
   const storeId = profileScope(ctx);
   return storeId ? query.eq("store_id", storeId) : query;
@@ -399,7 +435,7 @@ function applyProfileScope(query: any, ctx: Context) {
 
 async function accessibleStoreUserIds(ctx: Context) {
   if (hasGlobalStoreAccess(ctx)) return null;
-  const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", profileScope(ctx)));
+  const profiles = await fetchAll(() => adminClient.from("profiles").select("id").eq("store_id", profileScope(ctx)).order("id"));
   return profiles.map((profile: any) => profile.id);
 }
 
@@ -562,16 +598,22 @@ async function countRecords(datasetId: number) {
   return count || 0;
 }
 
+async function datasetRecordCounts(ids: number[]) {
+  if (!ids.length) return [];
+  const { data, error } = await adminClient.rpc("crm_dataset_counts", { p_ids: ids });
+  checkDb(error);
+  return data || [];
+}
+
 async function targetAndConversions(ownerId: string, month: string) {
   const { data: target, error: targetError } = await adminClient
     .from("crm_sales_targets").select("id,target").eq("user_id", ownerId).eq("month", month).maybeSingle();
   checkDb(targetError);
-  if (!target) return { target: null, converted: 0, remaining_target: null };
   const { count, error } = await adminClient.from("crm_visits").select("id", { count: "exact", head: true })
     .eq("owner_id", ownerId).eq("status", "converted").gte("visit_date", month).lt("visit_date", nextMonth(month));
   checkDb(error);
   const converted = count || 0;
-  return { target: target.target, converted_count: converted, remaining_target: Math.max(target.target - converted, 0) };
+  return { target: target?.target ?? null, converted_count: converted, remaining_target: target ? Math.max(target.target - converted, 0) : null };
 }
 
 async function serializeDataset(dataset: any) {
@@ -603,13 +645,13 @@ async function serializeDatasets(datasets: any[]) {
     fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id", ownerIds)),
     fetchAll(() => adminClient.from("crm_sales_targets").select("user_id,target").in("user_id", ownerIds).eq("month", currentMonth)),
     fetchAll(() => adminClient.from("crm_visits").select("owner_id").in("owner_id", ownerIds).eq("status", "converted").gte("visit_date", currentMonth).lt("visit_date", followingMonth)),
-    Promise.all(datasets.map(async (dataset: any) => [Number(dataset.id), await countRecords(Number(dataset.id))] as const)),
+    datasetRecordCounts(datasets.map((dataset: any) => dataset.id)),
   ]);
   const profileById = new Map(profiles.map((profile: any) => [profile.id, profile]));
   const targetByOwner = new Map(targets.map((target: any) => [target.user_id, Number(target.target || 0)]));
   const conversionsByOwner = new Map<string, number>();
   for (const visit of convertedVisits) conversionsByOwner.set(visit.owner_id, (conversionsByOwner.get(visit.owner_id) || 0) + 1);
-  const countByDataset = new Map(customerCounts);
+  const countByDataset = new Map(customerCounts.map((row: any) => [Number(row.dataset_id),Number(row.customer_count)]));
   return datasets.map((dataset: any) => {
     const profile = profileById.get(dataset.owner_id);
     const target = targetByOwner.get(dataset.owner_id);
@@ -677,6 +719,7 @@ async function serializeRecord(record: any, columns: any[] = []) {
     sheet_name: record.sheet_name,
     row_number: record.row_number,
     original_data: record.original_data || {},
+    revision: record.revision ?? 0,
     response: record.response,
     response_label: responseLabels[record.response] || record.response,
     callback_date: record.callback_date,
@@ -707,30 +750,48 @@ function recordChangeList(change: any, changedBy: string | null) {
   return { id: change.id, changed_by_username: changedBy, changed_at: change.changed_at, changes };
 }
 
-async function customerChangeHistory(recordId: number) {
-  const { data, error } = await adminClient.from("crm_customer_record_changes").select("*")
-    .eq("record_id", recordId).order("changed_at", { ascending: false }).order("id", { ascending: false });
+function positiveQueryId(value: string) {
+  const id = Number(value);
+  if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(id)) fail(400, "Invalid query identifier.");
+  return id;
+}
+
+async function customerChangeHistoryPage(recordId: number, beforeTime: string | null = null, beforeId: number | null = null) {
+  const { data, error } = await adminClient.rpc("crm_customer_history_page", { p_record: recordId, p_before_time: beforeTime, p_before_id: beforeId });
   checkDb(error);
-  return await Promise.all((data || []).map(async (item: any) => recordChangeList(item, await profileName(item.changed_by))));
+  const records = data?.records || [];
+  const ids = [...new Set(records.map((item: any) => item.changed_by).filter(Boolean))];
+  const names = new Map<string,string>();
+  if (ids.length) {
+    const { data: profiles, error: profileError } = await adminClient.from("profiles").select("id,employee_id,name").in("id", ids);
+    checkDb(profileError);
+    for (const profile of profiles || []) names.set(profile.id, profile.employee_id || profile.name);
+  }
+  return { entries: records.map((item: any) => recordChangeList(item, names.get(item.changed_by) || null)), nextCursor: data?.nextCursor || null };
+}
+
+async function customerChangeHistory(recordId: number) {
+  return (await customerChangeHistoryPage(recordId)).entries;
 }
 
 async function recordDetail(ctx: Context, record: any, dataset: any, choices = false) {
   const columns = (await datasetColumns(Number(dataset.id))).filter((column) => column.sheet_name === record.sheet_name);
   const [datasetPayload, recordPayload, history] = await Promise.all([
-    serializeDataset(dataset), serializeRecord(record, columns), customerChangeHistory(Number(record.id)),
+    serializeDataset(dataset), serializeRecord(record, columns), customerChangeHistoryPage(Number(record.id)),
   ]);
   const result: any = {
     dataset: datasetPayload,
     record: recordPayload,
     fieldRows: fieldRows(record, columns),
-    changeHistory: history,
+    changeHistory: history.entries,
+    changeHistoryNextCursor: history.nextCursor,
   };
   if (choices) result.responseChoices = responseChoices;
   return result;
 }
 
-async function callbackPayload(record: any, dataset: any) {
-  const columns = (await datasetColumns(Number(dataset.id))).filter((column) => column.sheet_name === record.sheet_name);
+async function callbackPayload(record: any, dataset: any, loadedColumns?: any[], reviewerNames?: Map<string,string>) {
+  const columns = (loadedColumns || await datasetColumns(Number(dataset.id))).filter((column) => column.sheet_name === record.sheet_name);
   const values = record.original_data || {};
   const phoneKeys = ["phone_number", "phone", "mobile_number", "mobile", "contact_number", "telephone"];
   let phone = "";
@@ -739,20 +800,24 @@ async function callbackPayload(record: any, dataset: any) {
     id: record.id, datasetId: record.dataset_id, datasetName: dataset.name,
     customerName: displayName(record, columns), phone,
     callbackDate: record.callback_date, callbackCompletedAt: record.callback_completed_at,
-    callbackCompletedBy: await profileName(record.callback_completed_by),
+    callbackCompletedBy: reviewerNames ? reviewerNames.get(record.callback_completed_by) || null : await profileName(record.callback_completed_by),
     status: record.response, statusLabel: responseLabels[record.response] || record.response,
-    note: record.note, updatedAt: record.updated_at,
+    note: record.note, updatedAt: record.updated_at, revision: record.revision ?? 0,
   };
 }
 
-async function logCustomerChange(recordId: number, userId: string, previous: any, updated: any) {
-  const before = { response: previous.response, callback_date: previous.callback_date || "", note: previous.note || "" };
-  const after = { response: updated.response, callback_date: updated.callback_date || "", note: updated.note || "" };
-  if (JSON.stringify(before) === JSON.stringify(after)) return;
-  const { error } = await adminClient.from("crm_customer_record_changes").insert({
-    record_id: recordId, changed_by: userId, previous_values: before, updated_values: after,
+async function updateCustomerWithHistory(ctx: Context, recordId: number, changes: any, complete = false) {
+  const values: any = {};
+  for (const key of ["response", "callback_date", "note", "expected_revision"]) if (changes[key] !== undefined) values[key] = changes[key];
+  const { data, error } = await adminClient.rpc("crm_update_customer", {
+    p_actor: ctx.user.id, p_store: requireStoreContext(ctx), p_record: recordId, p_changes: values, p_complete: complete,
   });
+  if (error?.code === "42501" || error?.code === "P0002") fail(404, "Customer not found.");
+  if (error?.code === "40001") fail(409, "This callback is no longer pending.");
+  if (error?.code === "PT409") fail(409, "This customer changed since you opened it. Your draft has been kept; reload the latest record before saving.");
+  if (error?.code === "PT428") fail(428, "Reload this customer before saving.");
   checkDb(error);
+  return data;
 }
 
 function queryParams(url: URL) { return url.searchParams; }
@@ -877,25 +942,23 @@ async function serializeTasks(tasks: any[]) {
 async function serializeTask(task: any) { return (await serializeTasks([task]))[0]; }
 
 async function targetPayload(target: any) {
-  const [userName, converted] = await Promise.all([
-    profileName(target.user_id),
-    (async () => {
-      const { count, error } = await adminClient.from("crm_visits").select("id", { count: "exact", head: true })
-        .eq("owner_id", target.user_id).eq("status", "converted")
-        .gte("visit_date", target.month).lt("visit_date", nextMonth(target.month));
-      checkDb(error);
-      return count || 0;
-    })(),
-  ]);
+  const userName = await profileName(target.user_id);
   const allTargets = await fetchAll(() => adminClient.from("crm_sales_targets").select("target,month")
     .eq("user_id", target.user_id).order("month", { ascending: false }));
+  const months = [...allTargets.map((item: any) => String(item.month)),String(target.month)].sort();
+  const visits = await fetchAll(() => adminClient.from("crm_visits").select("id,visit_date").order("id")
+    .eq("owner_id", target.user_id).eq("status", "converted").gte("visit_date",months[0]).lt("visit_date",nextMonth(months[months.length-1])));
+  const conversions = new Map<string,number>();
+  for (const visit of visits) {
+    const month = String(visit.visit_date).slice(0,7);
+    conversions.set(month,(conversions.get(month) || 0)+1);
+  }
+  const converted = conversions.get(String(target.month).slice(0,7)) || 0;
   let lowTargetCount = 0;
   for (const item of allTargets) {
-    const { count, error } = await adminClient.from("crm_visits").select("id", { count: "exact", head: true })
-      .eq("owner_id", target.user_id).eq("status", "converted")
-      .gte("visit_date", item.month).lt("visit_date", nextMonth(item.month));
-    checkDb(error);
-    const percent = item.target ? Math.round(((count || 0) / item.target) * 100) : 0;
+    if (String(item.month) >= monthStart()) continue;
+    const count = conversions.get(String(item.month).slice(0,7)) || 0;
+    const percent = item.target ? Math.round((count / item.target) * 100) : 0;
     if (percent <= 30) lowTargetCount += 1;
   }
   const percentage = target.target ? Math.round((converted / target.target) * 100) : 0;
@@ -942,6 +1005,7 @@ async function serializeVisit(visit: any, includeFields = false) {
   }
   const payload: any = {
     id: visit.id,
+    revision: visit.revision ?? 0,
     client_name: customer ? displayName(customer, columns) : manualClient?.client_name || "",
     client_source: customer ? "Excel Customer" : "Manual Client",
     dataset_id: dataset?.id || null, dataset_name: dataset?.name || null,
@@ -955,7 +1019,7 @@ async function serializeVisit(visit: any, includeFields = false) {
     payment_status: visit.payment_status,
     payment_status_label: ({ not_paid: "Not Paid", partially_paid: "Partially Paid", completed: "Completed", one_time: "One-time Payment" } as any)[visit.payment_status] || visit.payment_status,
     total_amount: visit.total_amount, paid_amount: visit.paid_amount,
-    pending_amount: Math.max(Number(visit.total_amount || 0) - Number(visit.paid_amount || 0), 0),
+    pending_amount: Math.max(Math.round((Number(visit.total_amount || 0) - Number(visit.paid_amount || 0)) * 100) / 100, 0),
     payment_description: visit.payment_description || "", note: visit.note || "",
     created_at: visit.created_at, updated_at: visit.updated_at,
   };
@@ -1000,6 +1064,7 @@ async function serializeVisitList(visits: any[]) {
     const sheetColumns = customer ? (columnsByDataset.get(Number(customer.dataset_id)) || []).filter((column) => column.sheet_name === customer.sheet_name) : [];
     return {
       id: visit.id,
+      revision: visit.revision,
       client_name: customer ? displayName(customer, sheetColumns) : manualClient?.client_name || "",
       client_source: customer ? "Excel Customer" : "Manual Client",
       dataset_id: dataset?.id || null,
@@ -1025,7 +1090,7 @@ async function serializeVisitList(visits: any[]) {
       payment_status_label: ({ not_paid: "Not Paid", partially_paid: "Partially Paid", completed: "Completed", one_time: "One-time Payment" } as any)[visit.payment_status] || visit.payment_status,
       total_amount: visit.total_amount,
       paid_amount: visit.paid_amount,
-      pending_amount: Math.max(Number(visit.total_amount || 0) - Number(visit.paid_amount || 0), 0),
+      pending_amount: Math.max(Math.round((Number(visit.total_amount || 0) - Number(visit.paid_amount || 0)) * 100) / 100, 0),
       payment_description: visit.payment_description || "",
       note: visit.note || "",
       created_at: visit.created_at,
@@ -1056,39 +1121,24 @@ async function dashboardSummary(ctx: Context) {
     checkDb(error);
     return [choice.value, count || 0] as const;
   });
-  const visitRequest = fetchAll(() => {
-    return applyBusinessScope(adminClient.from("crm_visits").select("owner_id,visit_date,expense,total_amount,paid_amount,payment_status"), ctx);
-  });
-  const [recordCountRows, visits, recentDatasets] = await Promise.all([
+  const visitRequest = (async () => {
+    const { data, error } = await adminClient.rpc("crm_visit_summary", { p_store: requireStoreContext(ctx), p_owner: isAdminRole(ctx.profile.role) ? null : ctx.user.id, p_today: indiaDate() });
+    checkDb(error); return data;
+  })();
+  const [recordCountRows, visitSummary, recentDatasets] = await Promise.all([
     Promise.all(recordCountRequests),
     visitRequest,
     serializeDatasets(datasets.slice(0, 3)),
   ]);
   const counts = Object.fromEntries(recordCountRows);
   const totalCustomers = recordCountRows.reduce((sum, [, count]) => sum + count, 0);
-  const today = indiaDate();
-  const month = today.slice(0, 7);
-  const paymentTotal = visits.reduce((sum: number, item: any) => sum + Number(item.total_amount || 0), 0);
-  const paidTotal = visits.reduce((sum: number, item: any) => sum + Number(item.paid_amount || 0), 0);
   return {
     totalDatasets: datasets.length,
     totalCustomers,
     responseStats: responseChoices.map((item) => ({ ...item, count: counts[item.value] || 0 })),
     recentDatasets,
-    payments: {
-      totalAmount: paymentTotal, paidAmount: paidTotal,
-      pendingAmount: Math.max(paymentTotal - paidTotal, 0),
-      paidCount: visits.filter((item: any) => Number(item.paid_amount) > 0).length,
-      pendingCount: visits.filter((item: any) => Number(item.total_amount) > Number(item.paid_amount)).length,
-      oneTimeCount: visits.filter((item: any) => item.payment_status === "one_time").length,
-      completedCount: visits.filter((item: any) => item.payment_status === "completed").length,
-    },
-    sales: {
-      totalVisits: visits.length,
-      todaysVisits: visits.filter((item: any) => item.visit_date === today).length,
-      monthVisits: visits.filter((item: any) => String(item.visit_date).slice(0, 7) === month).length,
-      totalVisitExpenses: visits.reduce((sum: number, item: any) => sum + Number(item.expense || 0), 0),
-    },
+    payments: visitSummary.payments,
+    sales: visitSummary.sales,
   };
 }
 
@@ -1122,17 +1172,9 @@ async function datasetDetail(ctx: Context, id: string, params: URLSearchParams) 
     checkDb(error);
     pageRecords = data || [];
   } else {
-    const records = await visibleRecords(ctx, [Number(dataset.id)]);
-    for (const record of records) stats[record.response] = (stats[record.response] || 0) + 1;
-    const filtered = records.filter((record: any) => {
-      if (responseFilter && record.response !== responseFilter) return false;
-      const values = Object.values(record.original_data || {}).map(String).concat([responseLabels[record.response] || record.response, record.note || ""]);
-      return values.some((value) => value.toLocaleLowerCase().includes(query));
-    });
-    filteredCount = filtered.length;
-    numPages = Math.max(1, Math.ceil(filteredCount / 20));
-    page = Math.min(requestedPage, numPages);
-    pageRecords = filtered.slice((page - 1) * 20, page * 20);
+    const result = await customerSearchPage([Number(dataset.id)], query, responseFilter, requestedPage, 20, "dataset");
+    stats = result.stats; filteredCount = result.count;
+    numPages = result.numPages; page = result.page; pageRecords = result.records;
   }
   const groupedColumns = new Map<string, any[]>();
   for (const column of columns) groupedColumns.set(column.sheet_name, [...(groupedColumns.get(column.sheet_name) || []), column]);
@@ -1193,23 +1235,43 @@ async function datasetExport(ctx: Context, id: string, params: URLSearchParams) 
   };
 }
 
-async function deleteDataset(ctx: Context, dataset: any) {
-  const recordRows = await fetchAll(() => adminClient.from("crm_customer_records").select("id").eq("dataset_id", dataset.id));
-  const customerIds = recordRows.map((item: any) => item.id);
+async function customerVisitImagePaths(customerIds: number[]) {
+  const paths = new Set<string>();
   if (customerIds.length) {
     for (let offset = 0; offset < customerIds.length; offset += 500) {
       const visitRows = await fetchAll(() => adminClient.from("crm_visits").select("id").in("customer_id", customerIds.slice(offset, offset + 500)));
       const visitIds = visitRows.map((item: any) => item.id);
       if (!visitIds.length) continue;
       const images = await fetchAll(() => adminClient.from("crm_visit_images").select("storage_path,thumbnail_path").in("visit_id", visitIds));
-      if (images.length) {
-        const { error } = await adminClient.storage.from("crm-visit-images").remove(images.flatMap((item: any) => [item.storage_path, item.thumbnail_path].filter(Boolean)));
-        checkDb(error);
-      }
+      for (const image of images) for (const path of [image.storage_path,image.thumbnail_path]) if (path) paths.add(path);
     }
   }
+  return [...paths];
+}
+
+async function cleanupDeletedCustomerImages(paths: string[]) {
+  for (let offset = 0; offset < paths.length; offset += 100) {
+    try {
+      const { error } = await adminClient.storage.from("crm-visit-images").remove(paths.slice(offset,offset+100));
+      if (error) console.error("Deleted customer photo cleanup failed:", error.message);
+    } catch (error) { console.error("Deleted customer photo cleanup failed:", error instanceof Error ? error.message : "Storage unavailable"); }
+  }
+}
+
+async function deleteDataset(ctx: Context, dataset: any) {
+  const recordRows = await fetchAll(() => adminClient.from("crm_customer_records").select("id").eq("dataset_id", dataset.id));
+  const paths = await customerVisitImagePaths(recordRows.map((item: any) => item.id));
   const { error } = await adminClient.from("crm_datasets").delete().eq("id", dataset.id);
   checkDb(error);
+  await cleanupDeletedCustomerImages(paths);
+}
+
+async function customerSearchPage(ids: number[], query: string, status: string, page: number, size: number, mode: string) {
+  const { data, error } = await adminClient.rpc("crm_customer_page", {
+    p_ids: ids, p_query: query, p_status: status, p_page: Math.min(2147483647, Math.floor(page)), p_size: size, p_mode: mode,
+  });
+  checkDb(error);
+  return data;
 }
 
 async function customerList(ctx: Context, params: URLSearchParams) {
@@ -1259,17 +1321,11 @@ async function customerList(ctx: Context, params: URLSearchParams) {
     const pageDatasetIds = [...new Set(pageRecords.map((record: any) => Number(record.dataset_id)))];
     await Promise.all(pageDatasetIds.map(async (datasetId) => columnsByDataset.set(datasetId, await datasetColumns(datasetId))));
   } else {
-    // Free-text client-name search still needs JSON field inspection because
-    // imported workbooks may use arbitrary column names.
-    const records = await visibleRecords(ctx, datasetIds);
-    await Promise.all(datasets.map(async (dataset: any) => columnsByDataset.set(Number(dataset.id), await datasetColumns(Number(dataset.id)))));
-    const searchRecords = records.filter((record: any) => displayName(record, columnsByDataset.get(Number(record.dataset_id)) || []).toLocaleLowerCase().includes(query));
-    for (const record of searchRecords) counts[record.response] = (counts[record.response] || 0) + 1;
-    const filtered = statusFilter ? searchRecords.filter((record: any) => record.response === statusFilter) : searchRecords;
-    filteredCount = filtered.length;
-    numPages = Math.max(1, Math.ceil(filteredCount / 50));
-    page = Math.min(requestedPage, numPages);
-    pageRecords = filtered.slice((page - 1) * 50, page * 50);
+    const result = await customerSearchPage(datasetIds, query, statusFilter, requestedPage, 50, "customers");
+    counts = result.stats; filteredCount = result.count;
+    numPages = result.numPages; page = result.page; pageRecords = result.records;
+    const pageIds = [...new Set(pageRecords.map((record: any) => Number(record.dataset_id)))];
+    await Promise.all(pageIds.map(async (datasetId) => columnsByDataset.set(datasetId, await datasetColumns(datasetId))));
   }
   const results = await Promise.all(pageRecords.map(async (record: any) => {
     const dataset = datasetById.get(Number(record.dataset_id));
@@ -1289,10 +1345,7 @@ async function customerList(ctx: Context, params: URLSearchParams) {
 
 async function listCallbacks(ctx: Context, params: URLSearchParams) {
   const datasets = await accessibleDatasets(ctx);
-  const records = await visibleRecords(ctx, datasets.map((item: any) => Number(item.id)));
   const byId = new Map(datasets.map((item: any) => [Number(item.id), item]));
-  const pending = records.filter((item: any) => item.response === "callback" && !item.callback_completed_at);
-  const calledBack = records.filter((item: any) => Boolean(item.callback_completed_at));
   const today = indiaDate();
   const tomorrowDate = new Date(today + "T12:00:00+05:30");
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
@@ -1300,8 +1353,7 @@ async function listCallbacks(ctx: Context, params: URLSearchParams) {
   let preset = valueString(params.get("preset") || "today").toLowerCase();
   const dateValue = valueString(params.get("date"));
   let selectedDate: string | null = null;
-  let list = pending;
-  if (preset === "called_back" && !dateValue) list = calledBack;
+  if (preset === "called_back" && !dateValue) { /* completed queue */ }
   else if (dateValue) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) fail(400, "Enter a valid callback date.");
     selectedDate = dateValue;
@@ -1309,22 +1361,25 @@ async function listCallbacks(ctx: Context, params: URLSearchParams) {
   } else if (preset === "today") selectedDate = today;
   else if (preset === "tomorrow") selectedDate = tomorrow;
   else if (preset !== "all") { preset = "today"; selectedDate = today; }
-  if (selectedDate) list = list.filter((item: any) => item.callback_date === selectedDate);
   const sort = valueString(params.get("sort") || "asc").toLowerCase() === "desc" ? "desc" : "asc";
-  list.sort((a: any, b: any) => {
-    if (preset === "called_back") return String(b.updated_at).localeCompare(String(a.updated_at)) || Number(b.id) - Number(a.id);
-    const aa = a.callback_date || (sort === "asc" ? "9999-99-99" : "0000-00-00");
-    const bb = b.callback_date || (sort === "asc" ? "9999-99-99" : "0000-00-00");
-    const comparison = aa.localeCompare(bb);
-    return (sort === "desc" ? -comparison : comparison) || (sort === "desc" ? String(b.updated_at).localeCompare(String(a.updated_at)) : String(a.updated_at).localeCompare(String(b.updated_at))) || Number(a.id) - Number(b.id);
+  const { data: queue, error } = await adminClient.rpc("crm_callback_page", {
+    p_ids: datasets.map((item: any) => item.id), p_today: today, p_tomorrow: tomorrow,
+    p_date: selectedDate, p_completed: preset === "called_back", p_desc: sort === "desc",
+    p_page: Math.min(2147483647,Math.max(1,Math.floor(Number(params.get("page")) || 1))),
   });
+  checkDb(error);
+  const list = queue.records;
+  const ids = [...new Set(list.map((r: any) => r.dataset_id))];
+  const reviewers = [...new Set(list.map((r: any) => r.callback_completed_by).filter(Boolean))];
+  const [columns, profiles] = await Promise.all([
+    ids.length ? fetchAll(() => adminClient.from("crm_dataset_columns").select("*").in("dataset_id",ids).order("column_order")) : [],
+    reviewers.length ? fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id",reviewers)) : [],
+  ]);
+  const names = new Map<string,string>(profiles.map((p: any) => [p.id,p.employee_id || p.name]));
   return {
-    results: await Promise.all(list.map((record: any) => callbackPayload(record, byId.get(Number(record.dataset_id))))),
-    counts: {
-      today: pending.filter((item: any) => item.callback_date === today).length,
-      tomorrow: pending.filter((item: any) => item.callback_date === tomorrow).length,
-      total: pending.length, calledBack: calledBack.length,
-    },
+    results: await Promise.all(list.map((record: any) => callbackPayload(record, byId.get(Number(record.dataset_id)),columns.filter((c: any) => c.dataset_id===record.dataset_id),names))),
+    counts: queue.counts,
+    pagination: queue.pagination,
     filters: { preset, date: selectedDate, sort, today, tomorrow },
     outcomeChoices: responseChoices.filter((item) => item.value !== "callback"),
   };
@@ -1364,19 +1419,19 @@ async function listReminders(ctx: Context) {
 
 async function listTargets(ctx: Context, userId: string | null = null) {
   const storeUserIds = hasGlobalStoreAccess(ctx) ? null : await accessibleStoreUserIds(ctx);
-  let query = adminClient.from("crm_sales_targets").select("*").order("month", { ascending: false });
-  if (userId) query = query.eq("user_id", userId);
-  if (storeUserIds) query = storeUserIds.length ? query.in("user_id", storeUserIds) : query.eq("user_id", "00000000-0000-0000-0000-000000000000");
-  const { data, error } = await query;
-  checkDb(error);
-  const targets = data || [];
+  const targets = await fetchAll(() => {
+    let query = adminClient.from("crm_sales_targets").select("*").order("month", { ascending: false }).order("id");
+    if (userId) query = query.eq("user_id", userId);
+    if (storeUserIds) query = storeUserIds.length ? query.in("user_id", storeUserIds) : query.eq("user_id", "00000000-0000-0000-0000-000000000000");
+    return query;
+  });
   if (!targets.length) return [];
   const userIds = [...new Set(targets.map((target: any) => target.user_id))];
   const firstMonth = [...targets].sort((a: any, b: any) => String(a.month).localeCompare(String(b.month)))[0].month;
   const lastMonth = [...targets].sort((a: any, b: any) => String(b.month).localeCompare(String(a.month)))[0].month;
   const [profiles, visits] = await Promise.all([
     fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id", userIds)),
-    fetchAll(() => adminClient.from("crm_visits").select("owner_id,visit_date").in("owner_id", userIds).eq("status", "converted").gte("visit_date", firstMonth).lt("visit_date", nextMonth(lastMonth))),
+    fetchAll(() => adminClient.from("crm_visits").select("id,owner_id,visit_date").in("owner_id", userIds).eq("status", "converted").gte("visit_date", firstMonth).lt("visit_date", nextMonth(lastMonth)).order("id")),
   ]);
   const profileById = new Map(profiles.map((profile: any) => [profile.id, profile]));
   const convertedByUserMonth = new Map<string, number>();
@@ -1386,6 +1441,7 @@ async function listTargets(ctx: Context, userId: string | null = null) {
   }
   const lowCountsByUser = new Map<string, number>();
   for (const target of targets) {
+    if (String(target.month) >= monthStart()) continue;
     const converted = convertedByUserMonth.get(`${target.user_id}|${String(target.month).slice(0, 7)}`) || 0;
     const percentage = target.target ? Math.round((converted / target.target) * 100) : 0;
     if (percentage <= 30) lowCountsByUser.set(target.user_id, (lowCountsByUser.get(target.user_id) || 0) + 1);
@@ -1426,7 +1482,9 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
   const location = valueString(body.location);
   const status = valueString(body.status || "healthy");
   const validStatuses = ["healthy", "follow_up_required", "interested", "not_interested", "converted"];
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) addError("visit_date", "Enter a valid date.");
+  const parsedDate = new Date(date + "T00:00:00Z");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) addError("visit_date", "Enter a valid date.");
+  if (!["existing", "manual"].includes(mode)) addError("visit_mode", "Choose an existing or manual client.");
   if (meeting && !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(meeting)) addError("meeting_time", "Enter a valid meeting time.");
   if (location.length > 255) addError("location", "Enter a meeting location up to 255 characters.");
   if (!validStatuses.includes(status)) addError("status", "Choose a valid visit status.");
@@ -1434,23 +1492,33 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
   const numbers: Record<string, number> = {};
   for (const name of numberFields) {
     const parsed = Number(body[name] || 0);
-    if (!Number.isFinite(parsed) || parsed < 0) addError(name, "Enter a valid non-negative amount.");
+    const maximum = name === "expense" ? 99999999.99 : 9999999999.99;
+    if (!["string", "number", "undefined"].includes(typeof body[name]) || !Number.isFinite(parsed) || parsed < 0 || parsed > maximum || Math.abs(parsed - Math.round(parsed * 100) / 100) > 0.0000001) addError(name, "Enter a non-negative amount with at most two decimal places within the supported range.");
     numbers[name] = parsed;
   }
-  if (errors.visit_date || errors.meeting_time || errors.location || errors.status || numberFields.some((key) => errors[key])) {
+  const paymentStatuses = ["not_paid", "partially_paid", "completed", "one_time"];
+  const paymentStatus = valueString(body.payment_status || "not_paid");
+  const requestKey = visitId ? "" : valueString(body.request_key);
+  if (requestKey && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestKey)) addError("request_key", "Reload the visit form before retrying.");
+  if (!paymentStatuses.includes(paymentStatus)) addError("payment_status", "Choose a valid payment status.");
+  if (numbers.paid_amount > numbers.total_amount) addError("paid_amount", "Paid amount cannot exceed the total amount.");
+  if (valueString(body.note).length > 2000) addError("note", "Enter a note up to 2000 characters.");
+  if (valueString(body.payment_description).length > 2000) addError("payment_description", "Enter a payment description up to 2000 characters.");
+  if (Object.keys(errors).length) {
     fail(400, "Please correct the highlighted fields.", { errors });
   }
 
   const previous = visitId ? await visibleVisit(ctx, visitId) : null;
   let customerId: number | null = null;
   let manualClientId: number | null = null;
+  let clientValues: any = null;
   let visitOwnerId = previous?.owner_id || ctx.user.id;
   if (mode === "manual") {
     const clientName = valueString(body.client_name);
     if (!clientName || clientName.length > 255) addError("client_name", "Enter a client name up to 255 characters.");
     if (valueString(body.email) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valueString(body.email))) addError("email", "Enter a valid email address.");
     if (errors.client_name || errors.email) fail(400, "Please correct the highlighted fields.", { errors });
-    const clientValues = {
+    clientValues = {
       store_id: previous?.store_id || storeId,
       owner_id: previous?.owner_id || ctx.user.id,
       client_name: clientName,
@@ -1459,17 +1527,7 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
       company: valueString(body.company).slice(0, 255),
       location: valueString(body.client_location).slice(0, 255),
     };
-    if (previous?.manual_client_id) {
-      const { data, error } = await adminClient.from("crm_manual_clients").update(clientValues).eq("id", previous.manual_client_id).select("id").single();
-      checkDb(error);
-      if (!data) fail(502, "Unable to save the client.");
-      manualClientId = data.id;
-    } else {
-      const { data, error } = await adminClient.from("crm_manual_clients").insert(clientValues).select("id").single();
-      checkDb(error);
-      if (!data) fail(502, "Unable to save the client.");
-      manualClientId = data.id;
-    }
+    manualClientId = previous?.manual_client_id || null;
   } else {
     const dataset = await accessibleDataset(ctx, body.dataset);
     if (!previous) visitOwnerId = dataset.owner_id;
@@ -1481,11 +1539,6 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
     else customerId = record.id;
     if (errors.customer) fail(400, "Please correct the highlighted fields.", { errors });
   }
-  const paymentStatuses = ["not_paid", "partially_paid", "completed", "one_time"];
-  const paymentStatus = valueString(body.payment_status || "not_paid");
-  if (!paymentStatuses.includes(paymentStatus)) addError("payment_status", "Choose a valid payment status.");
-  if (status === "converted" && numbers.paid_amount > numbers.total_amount) addError("paid_amount", "Paid amount cannot exceed the total amount.");
-  if (errors.payment_status || errors.paid_amount) fail(400, "Please correct the highlighted fields.", { errors });
   const values = {
     store_id: previous?.store_id || storeId,
     owner_id: visitOwnerId,
@@ -1501,16 +1554,37 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
     paid_amount: numbers.paid_amount,
     payment_description: valueString(body.payment_description),
     note: valueString(body.note),
+    request_key: requestKey || null,
+    ...(visitId && body.expected_revision !== undefined ? { expected_revision: body.expected_revision } : {}),
+    request_images: requestKey ? await Promise.all(files.map(async (file) => ({
+      name: file.name, type: file.type, digest: [...new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))].map((byte) => byte.toString(16).padStart(2,"0")).join(""),
+    }))) : [],
   };
+  // Upload first; metadata, manual-client edits and the visit commit together.
+  // A failed database save removes only this request's newly uploaded objects.
+  const uploaded = files.length || thumbnails.length
+    ? await uploadPhotoObjects(adminClient, "crm-visit-images", ctx.user.id, files, thumbnails)
+    : { images: [], paths: [] };
   let saved: any;
-  if (previous) {
-    const { data, error } = await adminClient.from("crm_visits").update(values).eq("id", visitId).select("*").single();
+  try {
+    const { data, error } = await adminClient.rpc("crm_save_sales_visit", {
+      p_actor: ctx.user.id, p_store: storeId, p_visit: visitId, p_values: values, p_client: clientValues, p_images: uploaded.images,
+    });
+    if (error?.code === "PT409") fail(409, "This visit changed since you opened it. Your draft has been kept; reload the latest visit before saving.");
+    if (error?.code === "PT428") fail(428, "Reload this visit before saving.");
     checkDb(error); saved = data;
-  } else {
-    const { data, error } = await adminClient.from("crm_visits").insert(values).select("*").single();
-    checkDb(error); saved = data;
+    if (saved._replayed && uploaded.paths.length) {
+      const { error: cleanupError } = await adminClient.storage.from("crm-visit-images").remove(uploaded.paths);
+      if (cleanupError) console.error("Replayed visit photo cleanup failed:", cleanupError.message);
+    }
+    delete saved._replayed;
+  } catch (error) {
+    if (uploaded.paths.length) {
+      const { error: cleanupError } = await adminClient.storage.from("crm-visit-images").remove(uploaded.paths);
+      if (cleanupError) console.error("Visit photo cleanup failed:", cleanupError.message);
+    }
+    throw error;
   }
-  await uploadVisitImages(Number(saved.id), files, thumbnails);
   return await serializeVisit(saved, true);
 }
 
@@ -1523,65 +1597,19 @@ async function visibleVisit(ctx: Context, id: number) {
 }
 
 async function createImportedDataset(ctx: Context, body: any) {
-  const storeId = requireStoreContext(ctx);
-  const datasetName = valueString(body.datasetName);
-  const inspection = body.inspection || {};
-  if (!datasetName || datasetName.length > 255) fail(400, "Enter a dataset name up to 255 characters.", { errors: { dataset_name: ["Enter a dataset name up to 255 characters."] } });
-  if (!Array.isArray(inspection.sheets) || !inspection.sheets.length) fail(400, "No workbook sheets were found.");
-  const filename = (valueString(inspection.filename || body.filename || "workbook.xlsx").split(/[\\/]/).pop() || "workbook.xlsx").slice(0, 255);
-  const { data: dataset, error: datasetError } = await adminClient.from("crm_datasets").insert({
-    owner_id: ctx.user.id, store_id: storeId, name: datasetName, original_filename: filename,
-  }).select("*").single();
-  checkDb(datasetError);
-  let rowsFound = 0;
-  let rowsImported = 0;
-  let rowsSkipped = 0;
-  for (const sheet of inspection.sheets) {
-    const names: string[] = Array.isArray(sheet.column_names) ? sheet.column_names : [];
-    const keys: string[] = Array.isArray(sheet.field_keys) ? sheet.field_keys : names.map((_name, index) => "column_" + (index + 1));
-    if (names.length > 500 || names.length !== keys.length) fail(400, "This workbook contains an invalid column layout.");
-    const columnRows = names.map((name, index) => ({
-      dataset_id: dataset.id, sheet_name: String(sheet.name || "Sheet1").slice(0, 255),
-      original_name: String(name || "Column " + (index + 1)).slice(0, 255),
-      field_key: String(keys[index] || "column_" + (index + 1)).slice(0, 255), column_order: index + 1,
-    }));
-    if (columnRows.length) {
-      const { error } = await adminClient.from("crm_dataset_columns").insert(columnRows);
-      checkDb(error);
-    }
-  }
-  return { dataset: await serializeDataset(dataset), importSummary: { filename, rows_found: rowsFound, rows_imported: rowsImported, rows_skipped: rowsSkipped, errors: 0 } };
+  return await stagedImport(ctx, "start", null, body);
 }
 
-async function importRecordBatch(ctx: Context, datasetId: string, body: any) {
-  const dataset = await accessibleDataset(ctx, datasetId);
-  const rows = body.rows;
-  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 500) fail(400, "Send between 1 and 500 customer rows per import batch.");
-  const columns = await datasetColumns(Number(dataset.id));
-  const keysBySheet = new Map<string, Set<string>>();
-  for (const column of columns) {
-    const keys = keysBySheet.get(column.sheet_name) || new Set<string>();
-    keys.add(column.field_key);
-    keysBySheet.set(column.sheet_name, keys);
-  }
-  const insertRows = rows.map((row: any) => {
-    const sheetName = valueString(row.sheet_name);
-    const rowNumber = Number(row.row_number);
-    const allowedKeys = keysBySheet.get(sheetName);
-    if (!allowedKeys || !Number.isSafeInteger(rowNumber) || rowNumber < 2 || !row.original_data || typeof row.original_data !== "object" || Array.isArray(row.original_data)) {
-      fail(400, "The workbook contains an invalid customer row.");
-    }
-    const originalData: Record<string, any> = {};
-    for (const key of allowedKeys) {
-      const value = row.original_data[key];
-      if (value === null || ["string", "number", "boolean"].includes(typeof value)) originalData[key] = value ?? "";
-      else if (value !== undefined) originalData[key] = String(value);
-    }
-    return { dataset_id: dataset.id, sheet_name: sheetName, row_number: rowNumber, original_data: originalData };
+async function stagedImport(ctx: Context, action: string, jobId: string | null, body: any) {
+  const { data, error } = await adminClient.rpc("crm_import", {
+    p_actor: ctx.user.id, p_store: requireStoreContext(ctx), p_action: action, p_job: jobId, p_payload: body,
   });
-  const { error } = await adminClient.from("crm_customer_records").insert(insertRows);
-  checkDb(error);
-  return json(201, { inserted: insertRows.length });
+  if (error) {
+    if (error.code === "42501") fail(403, "This import is not accessible in your account and store.");
+    if (["P0001", "22P02", "23514", "22003"].includes(error.code)) fail(400, error.message);
+    checkDb(error);
+  }
+  return data;
 }
 
 async function routeApi(ctx: Context, request: Request, apiPath: string, params: URLSearchParams, body: any, files: File[], thumbnails: File[] = []) {
@@ -1589,11 +1617,36 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   const path = apiPath.replace(/^\/+|\/+$/g, "");
   const parts = path ? path.split("/").map(decodeURIComponent) : [];
 
+  if (path === "store/features" && method === "GET") return json(200, { features: await storeFeaturesFor(ctx) });
+  const requiredFeature: StoreFeature | null =
+    parts[0] === "dashboard" ? "dashboard" :
+    parts[0] === "reports" ? "reports" :
+    ["datasets", "customers", "import"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "users" && parts[3] === "datasets") ? "customers" :
+    ["sales", "targets"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "targets") ? "sales" :
+    ["attendance", "overtime"].includes(parts[0]) ? "attendance" :
+    parts[0] === "callbacks" ? "callbacks" :
+    ["reminders", "push"].includes(parts[0]) ? "reminders" :
+    ["tasks", "task-notifications"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "tasks") ? "tasks" : null;
+  if (requiredFeature) await requireStoreFeature(ctx, requiredFeature);
+
   if (hasGlobalStoreAccess(ctx) && !["auth", "push"].includes(parts[0])
       && !(parts[0] === "admin" && ["stores", "users"].includes(parts[1]))) requireStoreContext(ctx);
 
-  if (path === "dashboard/" || path === "dashboard") {
-    if (method === "GET") return json(200, await dashboardSummary(ctx));
+  if (path === "dashboard/" || path === "dashboard" || path === "reports/summary") {
+    if (method === "GET") {
+      const summary = await dashboardSummary(ctx);
+      const features = await storeFeaturesFor(ctx);
+      if (!features.sales) {
+        summary.sales = { totalVisits: 0, todaysVisits: 0, monthVisits: 0, totalVisitExpenses: 0 };
+        summary.payments = { totalAmount: 0, paidAmount: 0, pendingAmount: 0, paidCount: 0, pendingCount: 0, oneTimeCount: 0, completedCount: 0 };
+      }
+      if (!features.customers) {
+        summary.totalDatasets = 0; summary.totalCustomers = 0;
+        summary.recentDatasets = [];
+        summary.responseStats = summary.responseStats.map((item: any) => ({ ...item, count: 0 }));
+      }
+      return json(200, summary);
+    }
   }
 
   if (parts[0] === "datasets") {
@@ -1619,6 +1672,12 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
         return json(204);
       }
     }
+    if (parts.length === 5 && parts[2] === "customers" && parts[4] === "history" && method === "GET") {
+      const { record } = await accessibleRecord(ctx, parts[3], parts[1]);
+      const time = params.get("before_time"), id = params.get("before_id");
+      if (Boolean(time) !== Boolean(id) || (time && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(time) || !Number.isFinite(Date.parse(time))))) fail(400, "Invalid history cursor.");
+      return json(200, await customerChangeHistoryPage(Number(record.id), time, id ? positiveQueryId(id) : null));
+    }
     if (parts.length === 4 && parts[2] === "customers") {
       const { record, dataset } = await accessibleRecord(ctx, parts[3], parts[1]);
       if (method === "GET") return json(200, await recordDetail(ctx, record, dataset, true));
@@ -1627,16 +1686,19 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
         if (!responseLabels[response]) fail(400, "Choose a valid response status.", { errors: { response: ["Choose a valid response status."] } });
         const callbackDate = body.callback_date === undefined ? record.callback_date : (valueString(body.callback_date) || null);
         if (callbackDate && !/^\d{4}-\d{2}-\d{2}$/.test(callbackDate)) fail(400, "Enter a valid callback date.", { errors: { callback_date: ["Enter a valid date."] } });
-        const note = body.note === undefined ? record.note : String(body.note || "");
-        const { data, error } = await adminClient.from("crm_customer_records").update({ response, callback_date: callbackDate, note })
-          .eq("id", record.id).select("*").single();
-        checkDb(error);
-        await logCustomerChange(Number(record.id), ctx.user.id, record, data);
+        const changes: any = {};
+        if (body.response !== undefined) changes.response = response;
+        if (body.callback_date !== undefined) changes.callback_date = callbackDate;
+        if (body.note !== undefined) changes.note = String(body.note || "");
+        if (body.expected_revision !== undefined) changes.expected_revision = body.expected_revision;
+        const data = await updateCustomerWithHistory(ctx, Number(record.id), changes);
         return json(200, await recordDetail(ctx, data, dataset, false));
       }
       if (method === "DELETE") {
+        const paths = await customerVisitImagePaths([Number(record.id)]);
         const { error } = await adminClient.from("crm_customer_records").delete().eq("id", record.id);
         checkDb(error);
+        await cleanupDeletedCustomerImages(paths);
         return json(204);
       }
     }
@@ -1660,12 +1722,7 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
       if (record.response !== "callback" || record.callback_completed_at) fail(400, "This callback is no longer pending.");
       const outcome = valueString(body.response);
       if (!responseLabels[outcome] || outcome === "callback") fail(400, "Choose a valid callback outcome.", { errors: { response: ["Choose a valid callback outcome."] } });
-      const previous = record;
-      const { data, error } = await adminClient.from("crm_customer_records").update({
-        response: outcome, callback_completed_at: new Date().toISOString(), callback_completed_by: ctx.user.id,
-      }).eq("id", record.id).select("*").single();
-      checkDb(error);
-      await logCustomerChange(Number(record.id), ctx.user.id, previous, data);
+      const data = await updateCustomerWithHistory(ctx, Number(record.id), { response: outcome, expected_revision: body.expected_revision }, true);
       return json(200, {
         record: await serializeRecord(data, (await datasetColumns(Number(dataset.id))).filter((item: any) => item.sheet_name === data.sheet_name)),
         callback: await callbackPayload(data, dataset),
@@ -1674,11 +1731,14 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
     }
   }
 
-  if (parts[0] === "import" && parts[1] === "confirm" && parts.length === 2 && method === "POST") {
+  if (parts[0] === "import" && parts[1] === "start" && parts.length === 2 && method === "POST") {
     return json(201, await createImportedDataset(ctx, body));
   }
+  if (parts[0] === "import" && parts[1] === "jobs" && parts.length === 4 && method === "POST" && ["batch", "commit"].includes(parts[3])) {
+    return json(200, await stagedImport(ctx, parts[3], parts[2], body));
+  }
   if (parts[0] === "import" && parts[1] === "datasets") {
-    if (parts.length === 4 && parts[3] === "batch" && method === "POST") return await importRecordBatch(ctx, parts[2], body);
+    if (method === "POST") fail(409, "Reload CRM and inspect the workbook again to use the safe import workflow.");
     if (parts.length === 3 && method === "DELETE") {
       const dataset = await accessibleDataset(ctx, parts[2]);
       await deleteDataset(ctx, dataset);
@@ -1786,9 +1846,9 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
 
   if (parts[0] === "tasks") {
     if (parts.length === 1 && method === "GET") {
-      const { data, error } = await adminClient.from("crm_assigned_tasks").select("*").eq("assignee_id", ctx.user.id)
-        .order("status").order("due_at").order("created_at", { ascending: false });
-      checkDb(error); return json(200, { results: await serializeTasks(data || []) });
+      const tasks = await fetchAll(() => adminClient.from("crm_assigned_tasks").select("*").eq("assignee_id", ctx.user.id)
+        .order("status").order("due_at").order("created_at", { ascending: false }).order("id", { ascending: false }));
+      return json(200, { results: await serializeTasks(tasks) });
     }
     if (parts.length === 2 && method === "PATCH") {
       const id = parseId(parts[1]);
@@ -1809,34 +1869,37 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   }
 
   if (parts[0] === "sales") {
+    if (parts[1] === "report" && parts.length === 2 && method === "GET") {
+      const { data, error } = await adminClient.rpc("crm_sales_report", { p_store: requireStoreContext(ctx), p_owner: isAdminRole(ctx.profile.role) ? null : ctx.user.id, p_today: indiaDate() });
+      checkDb(error); return json(200,data);
+    }
     if (parts[1] === "summary" && method === "GET") {
-      const visits = await accessibleVisits(ctx);
-      const today = indiaDate();
-      const month = today.slice(0, 7);
-      return json(200, {
-        totalVisits: visits.length,
-        todaysVisits: visits.filter((item: any) => item.visit_date === today).length,
-        monthVisits: visits.filter((item: any) => String(item.visit_date).slice(0, 7) === month).length,
-        totalVisitExpenses: visits.reduce((sum: number, item: any) => sum + Number(item.expense || 0), 0),
-      });
+      const { data, error } = await adminClient.rpc("crm_visit_summary", { p_store: requireStoreContext(ctx), p_owner: isAdminRole(ctx.profile.role) ? null : ctx.user.id, p_today: indiaDate() });
+      checkDb(error); return json(200,data.sales);
     }
     if (parts[1] === "clients" && method === "GET") {
       const dataset = await accessibleDataset(ctx, params.get("dataset") || "");
-      const columns = await datasetColumns(Number(dataset.id));
-      const records = await visibleRecords(ctx, [Number(dataset.id)]);
-      const query = valueString(params.get("q")).toLocaleLowerCase();
-      const filtered = records.filter((record: any) => !query || Object.values(record.original_data || {}).map(String).join(" ").toLocaleLowerCase().includes(query));
-      return json(200, { results: await Promise.all(filtered.map(async (record: any) => {
-        const sheetColumns = columns.filter((column) => column.sheet_name === record.sheet_name);
-        return { id: record.id, label: displayName(record, sheetColumns), sheetName: record.sheet_name, rowNumber: record.row_number };
-      })) });
+      const query = valueString(params.get("q"));
+      const page = positiveQueryId(params.get("page") || "1");
+      if (query.length > 500 || page > 1000000) fail(400, "Invalid client query.");
+      const selected = params.get("selected");
+      const { data, error } = await adminClient.rpc("crm_sales_client_page", { p_dataset: Number(dataset.id), p_query: query, p_page: page, p_selected: selected ? positiveQueryId(selected) : null });
+      checkDb(error);
+      const records = [...(data?.records || [])];
+      if (data?.selected && !records.some((record: any) => record.id === data.selected.id)) records.unshift(data.selected);
+      return json(200, { results: records.map((record: any) => ({ id: record.id, label: record.search_name || `Customer row ${record.row_number}`, sheetName: record.sheet_name, rowNumber: record.row_number })), pagination: data?.pagination });
     }
     if (parts[1] === "visits" && parts.length === 2) {
       if (method === "GET") {
         const status = valueString(params.get("status"));
         const validStatus = ["healthy", "follow_up_required", "interested", "not_interested", "converted"].includes(status) ? status : "";
-        const visits = await accessibleVisits(ctx, { status: validStatus, dateFrom: valueString(params.get("date_from")), dateTo: valueString(params.get("date_to")) });
-        return json(200, { results: await serializeVisitList(visits) });
+        const filters: any = { status: validStatus, q: valueString(params.get("q")), dataset_name: valueString(params.get("dataset_name")), payment_status: valueString(params.get("payment_status")), date_from: valueString(params.get("date_from")), date_to: valueString(params.get("date_to")) };
+        const page = positiveQueryId(params.get("page") || "1");
+        if (filters.q.length > 500 || filters.dataset_name.length > 500 || page > 1000000 || (filters.payment_status && !["not_paid", "partially_paid", "completed", "one_time"].includes(filters.payment_status))) fail(400, "Invalid sales query.");
+        for (const field of ["date_from", "date_to"]) if (filters[field] && (!/^\d{4}-\d{2}-\d{2}$/.test(filters[field]) || !Number.isFinite(Date.parse(filters[field])) || new Date(filters[field]).toISOString().slice(0, 10) !== filters[field])) fail(400, "Invalid visit date.");
+        const { data, error } = await adminClient.rpc("crm_sales_visit_page", { p_store: requireStoreContext(ctx), p_owner: isAdminRole(ctx.profile.role) ? null : ctx.user.id, p_filters: filters, p_page: page });
+        checkDb(error);
+        return json(200, { results: await serializeVisitList(data?.records || []), pagination: data?.pagination });
       }
       if (method === "POST") return json(201, await createOrUpdateVisit(ctx, null, body, files, thumbnails));
     }
@@ -1847,9 +1910,13 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
       if (method === "DELETE") {
         const { data: images, error: imageError } = await adminClient.from("crm_visit_images").select("storage_path,thumbnail_path").eq("visit_id", visit.id);
         checkDb(imageError);
-        if (images?.length) await adminClient.storage.from("crm-visit-images").remove(images.flatMap((item: any) => [item.storage_path, item.thumbnail_path].filter(Boolean)));
         const { error } = await adminClient.from("crm_visits").delete().eq("id", visit.id);
-        checkDb(error); return json(204);
+        checkDb(error);
+        if (images?.length) {
+          const { error: cleanupError } = await adminClient.storage.from("crm-visit-images").remove(images.flatMap((item: any) => [item.storage_path, item.thumbnail_path].filter(Boolean)));
+          if (cleanupError) console.error("Deleted visit photo cleanup failed:", cleanupError.message);
+        }
+        return json(204);
       }
     }
   }
@@ -1885,15 +1952,13 @@ async function profilesWithCounts(profiles: any[]) {
     fetchAll(() => adminClient.from("crm_stores").select("id,name")),
   ]);
   const datasetIds = datasets.map((dataset: any) => Number(dataset.id));
-  const customers = datasetIds.length
-    ? await fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id").in("dataset_id", datasetIds))
-    : [];
+  const customers = await datasetRecordCounts(datasetIds);
   const datasetCounts = new Map<string, number>();
   const customerCountsByDataset = new Map<number, number>();
   const customerCountsByOwner = new Map<string, number>();
   const storeNames = new Map(stores.map((store: any) => [store.id, store.name]));
   for (const dataset of datasets) datasetCounts.set(dataset.owner_id, (datasetCounts.get(dataset.owner_id) || 0) + 1);
-  for (const customer of customers) customerCountsByDataset.set(Number(customer.dataset_id), (customerCountsByDataset.get(Number(customer.dataset_id)) || 0) + 1);
+  for (const customer of customers) customerCountsByDataset.set(Number(customer.dataset_id),Number(customer.customer_count));
   for (const dataset of datasets) customerCountsByOwner.set(dataset.owner_id, (customerCountsByOwner.get(dataset.owner_id) || 0) + (customerCountsByDataset.get(Number(dataset.id)) || 0));
   return profiles.map((profile: any) => userPayload(profile, {
     store_name: storeNames.get(profile.store_id) || "",
@@ -1914,31 +1979,59 @@ async function adminUserById(ctx: Context, id: string) {
 async function handleAdmin(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any, files: File[] = [], thumbnails: File[] = []) {
   requireAdmin(ctx);
   if (parts[1] === "stores") {
+    if (parts.length === 4 && parts[3] === "features" && method === "PATCH") {
+      requireSuperAdmin(ctx);
+      const features = validateStoreFeatures(body.features);
+      const { data, error } = await adminClient.from("crm_stores").update({ features }).eq("id", parts[2]).select("*").maybeSingle();
+      checkDb(error);
+      if (!data) fail(404, "Store not found.");
+      return json(200, data);
+    }
     if (parts.length === 2 && method === "GET") {
       let query = adminClient.from("crm_stores").select("*").order("name");
       if (!isSuperAdmin(ctx)) query = query.eq("id", ctx.profile.store_id);
       const { data, error } = await query;
       checkDb(error);
-      return json(200, { results: data || [] });
+      return json(200, { results: data || [], capabilities: { store_features: true } });
     }
     if (parts.length === 2 && method === "POST") {
       requireSuperAdmin(ctx);
       const name = valueString(body.name);
-      if (!name || name.length > 120) fail(400, "Enter a store name up to 120 characters.", { errors: { name: ["Enter a store name up to 120 characters."] } });
-      const { data, error } = await adminClient.from("crm_stores").insert({ name, created_by: ctx.user.id }).select("*").single();
+      const contactPerson = valueString(body.contact_person);
+      const contactEmail = valueString(body.contact_email).toLowerCase();
+      const contactPhone = valueString(body.contact_phone);
+      const addressLine1 = valueString(body.address_line1);
+      const city = valueString(body.city);
+      const state = valueString(body.state);
+      const postalCode = valueString(body.postal_code);
+      const features = validateStoreFeatures(body.features ?? defaultStoreFeatures);
+      const errors: Record<string, string[]> = {};
+      if (!name || name.length > 120) errors.name = ["Enter a store name up to 120 characters."];
+      if (contactPerson.length > 120) errors.contact_person = ["Enter a contact person up to 120 characters."];
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail) || contactEmail.length > 254) errors.contact_email = ["Enter a valid contact email."];
+      if (!/^\+?[0-9][0-9\s().-]{6,19}$/.test(contactPhone) || contactPhone.length > 20) errors.contact_phone = ["Enter a valid phone number with 7 to 20 characters."];
+      if (addressLine1.length > 240) errors.address_line1 = ["Enter an address up to 240 characters."];
+      if (city.length > 100) errors.city = ["Enter a city up to 100 characters."];
+      if (state.length > 100) errors.state = ["Enter a state or region up to 100 characters."];
+      if (postalCode.length > 20) errors.postal_code = ["Enter a postal code up to 20 characters."];
+      if (Object.keys(errors).length) fail(400, "Complete the store details.", { errors });
+      const { data, error } = await adminClient.from("crm_stores").insert({
+        name, contact_person: contactPerson || null, contact_email: contactEmail,
+        contact_phone: contactPhone, address_line1: addressLine1 || null,
+        city: city || null, state: state || null, postal_code: postalCode || null, features, created_by: ctx.user.id,
+      }).select("*").single();
       checkDb(error);
       return json(201, data);
     }
   }
   if (parts[1] === "summary" && method === "GET") {
+    const features = await storeFeaturesFor(ctx);
     const [profiles, datasets, authUsers] = await Promise.all([
       fetchAll(() => applyProfileScope(adminClient.from("profiles").select("*").order("employee_id"), ctx)),
-      accessibleDatasets(ctx),
+      features.customers ? accessibleDatasets(ctx) : Promise.resolve([]),
       allAuthUsers(),
     ]);
-    const customers = datasets.length
-      ? await fetchAll(() => adminClient.from("crm_customer_records").select("dataset_id").in("dataset_id", datasets.map((dataset: any) => dataset.id)))
-      : [];
+    const customers = await datasetRecordCounts(datasets.map((dataset: any) => dataset.id));
     // Build all user and dataset counts from the three bulk queries above.
     // The former implementation made two extra database requests per user,
     // then repeated those requests for the recent-users section.
@@ -1948,7 +2041,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
     const customerCountsByDataset = new Map<number, number>();
     const customerCountsByUser = new Map<string, number>();
     for (const dataset of datasets) datasetCounts.set(dataset.owner_id, (datasetCounts.get(dataset.owner_id) || 0) + 1);
-    for (const customer of customers) customerCountsByDataset.set(customer.dataset_id, (customerCountsByDataset.get(customer.dataset_id) || 0) + 1);
+    for (const customer of customers) customerCountsByDataset.set(Number(customer.dataset_id),Number(customer.customer_count));
     for (const dataset of datasets) {
       customerCountsByUser.set(dataset.owner_id, (customerCountsByUser.get(dataset.owner_id) || 0) + (customerCountsByDataset.get(dataset.id) || 0));
     }
@@ -1971,7 +2064,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         totalUsers: profiles.length,
         activeUsers: profiles.filter((item: any) => item.active).length,
         totalDatasets: datasets.length,
-        totalCustomers: customers.length,
+        totalCustomers: customers.reduce((sum: number, row: any) => sum + Number(row.customer_count || 0), 0),
       },
       users: userRows,
       recentDatasets,
@@ -2019,23 +2112,24 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       });
       checkDb(createError);
       if (!created.user) fail(502, "Unable to create the user account.");
-      let { data: profile, error: readError } = await adminClient.from("profiles").select("*").eq("id", created.user.id).maybeSingle();
-      checkDb(readError);
-      if (!profile) {
-        const { data: inserted, error: insertError } = await adminClient.from("profiles").insert({
-          id: created.user.id, employee_id: username, name: username, email, role, active: body.is_active !== false,
-          store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id),
-        }).select("*").single();
-        checkDb(insertError); profile = inserted;
-      } else {
-        const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false, store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id) }).eq("id", profile.id).select("*").single();
-        checkDb(updateError); profile = updated;
-      }
+      let profile: any;
       try {
+        const { data: readProfile, error: readError } = await adminClient.from("profiles").select("*").eq("id", created.user.id).maybeSingle();
+        checkDb(readError); profile = readProfile;
+        if (!profile) {
+          const { data: inserted, error: insertError } = await adminClient.from("profiles").insert({
+            id: created.user.id, employee_id: username, name: username, email, role, active: body.is_active !== false,
+            store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id),
+          }).select("*").single();
+          checkDb(insertError); profile = inserted;
+        } else {
+          const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false, store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id) }).eq("id", profile.id).select("*").single();
+          checkDb(updateError); profile = updated;
+        }
         await syncAttendanceAdmin(profile);
       } catch (error) {
         const { error: cleanupError } = await adminClient.auth.admin.deleteUser(created.user.id);
-        if (cleanupError) fail(503, "Attendance setup failed and the CRM account could not be rolled back. Contact an administrator before retrying.");
+        if (cleanupError) fail(503, "Account setup failed and the CRM account could not be rolled back. Contact an administrator before retrying.");
         throw error;
       }
       return json(201, await profileWithCounts(profile));
@@ -2056,27 +2150,45 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).neq("id", target.id).maybeSingle();
         checkDb(duplicate.error);
         if (duplicate.data) fail(400, "A user with that username or email already exists.", { errors: { username: ["A user with that username or email already exists."], email: ["A user with that username or email already exists."] } });
-        if (email !== target.email) {
-          const { error } = await adminClient.auth.admin.updateUserById(target.id, { email, email_confirm: true });
-          checkDb(error);
-        }
         const requestedStoreId = isSuperAdmin(ctx) ? valueString(body.store_id) : "";
         // Store ownership is immutable after creation. Every CRM record is
         // scoped through its owner's store, so moving an existing account
         // would otherwise carry its historical data into another store.
-        if (requestedStoreId && requestedStoreId !== target.store_id) {
+        if (target.role !== "super_admin" && role !== "super_admin" && requestedStoreId && requestedStoreId !== target.store_id) {
           fail(400, "An existing account cannot be moved to another store. Create a new account in that store instead.", {
             errors: { store_id: ["Existing accounts stay in their original store."] },
           });
         }
-        const storeId = target.store_id;
+        let storeId = role === "super_admin" ? null : target.store_id;
+        if (target.role === "super_admin" && role !== "super_admin") {
+          if (!requestedStoreId) fail(400, "Choose a store before changing a global account to a store role.", { errors: { store_id: ["Choose the store for this account."] } });
+          if (target.store_binding_id && requestedStoreId !== target.store_binding_id) {
+            fail(400, "This account must return to its original store. Create a new account for another store.", {
+              errors: { store_id: ["Choose this account's original store."] },
+            });
+          }
+          const { data: selectedStore, error: storeError } = await adminClient.from("crm_stores").select("id").eq("id", requestedStoreId).maybeSingle();
+          checkDb(storeError);
+          if (!selectedStore) fail(400, "The selected store no longer exists.", { errors: { store_id: ["Choose an existing store."] } });
+          storeId = selectedStore.id;
+        }
+        if (email !== target.email) {
+          const { error } = await adminClient.auth.admin.updateUserById(target.id, { email, email_confirm: true });
+          checkDb(error);
+        }
         const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active, role, store_id: storeId }).eq("id", target.id).select("*").single();
-        checkDb(error);
+        if (error) {
+          if (email !== target.email) {
+            const { error: restoreError } = await adminClient.auth.admin.updateUserById(target.id, { email: target.email, email_confirm: true });
+            if (restoreError) fail(503, "The profile update failed and its authentication email could not be restored. Contact an administrator.");
+          }
+          checkDb(error);
+        }
         if (role !== target.role) {
           try {
             await syncAttendanceAdmin(data, true);
           } catch (syncError) {
-            const { error: rollbackError } = await adminClient.from("profiles").update({ employee_id: target.employee_id, email: target.email, active: target.active, role: target.role }).eq("id", target.id);
+            const { error: rollbackError } = await adminClient.from("profiles").update({ employee_id: target.employee_id, email: target.email, active: target.active, role: target.role, store_id: target.store_id }).eq("id", target.id);
             const { error: authRollbackError } = email !== target.email
               ? await adminClient.auth.admin.updateUserById(target.id, { email: target.email, email_confirm: true })
               : { error: null };
@@ -2090,7 +2202,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
     if (parts.length === 4 && parts[3] === "datasets" && method === "GET") {
       const target = await adminUserById(ctx, parts[2]);
       const datasets = await fetchAll(() => adminClient.from("crm_datasets").select("*").eq("owner_id", target.id).order("uploaded_at", { ascending: false }));
-      return json(200, { results: await Promise.all(datasets.map(serializeDataset)) });
+      return json(200, { results: await serializeDatasets(datasets) });
     }
     if (parts.length === 4 && method === "POST") {
       const target = await adminUserById(ctx, parts[2]);
@@ -2117,14 +2229,14 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
   if (parts[1] === "tasks") {
     if (parts.length === 2 && method === "GET") {
       const userId = valueString(params.get("userId"));
-      let query = adminClient.from("crm_assigned_tasks").select("*").order("status").order("due_at").order("created_at", { ascending: false });
-      if (userId) query = query.eq("assignee_id", userId);
-      if (!hasGlobalStoreAccess(ctx)) {
-        const storeUserIds = await accessibleStoreUserIds(ctx);
-        query = storeUserIds.length ? query.in("assignee_id", storeUserIds) : query.eq("assignee_id", "00000000-0000-0000-0000-000000000000");
-      }
-      const { data, error } = await query;
-      checkDb(error); return json(200, { results: await serializeTasks(data || []) });
+      const storeUserIds = hasGlobalStoreAccess(ctx) ? null : await accessibleStoreUserIds(ctx);
+      const tasks = await fetchAll(() => {
+        let query = adminClient.from("crm_assigned_tasks").select("*").order("status").order("due_at").order("created_at", { ascending: false }).order("id", { ascending: false });
+        if (userId) query = query.eq("assignee_id", userId);
+        if (storeUserIds) query = storeUserIds.length ? query.in("assignee_id", storeUserIds) : query.eq("assignee_id", "00000000-0000-0000-0000-000000000000");
+        return query;
+      });
+      return json(200, { results: await serializeTasks(tasks) });
     }
     if (parts.length === 2 && method === "POST") {
       const assigneeId = valueString(body.assignee);
@@ -2163,7 +2275,8 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const monthText = valueString(body.month);
       const target = Number(body.target);
       if (!userId) fail(400, "Select a sales user.");
-      if (!/^\d{4}-\d{2}(?:-\d{2})?$/.test(monthText)) fail(400, "Choose a valid target month.");
+      const monthDate = new Date((monthText.length === 7 ? monthText + "-01" : monthText) + "T00:00:00Z");
+      if (!/^\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?$/.test(monthText) || Number.isNaN(monthDate.getTime()) || monthDate.toISOString().slice(0, monthText.length) !== monthText) fail(400, "Choose a valid target month.");
       if (!Number.isInteger(target) || target <= 0) fail(400, "Target must be a positive whole number.");
       const profile = await adminUserById(ctx, userId);
       if (isAdminRole(profile.role)) fail(400, "Targets can only be assigned to sales users.");
@@ -2194,29 +2307,34 @@ async function overtimeContext(profile: any, workDate: string) {
   const officialEnd = String(Math.floor(officialMinutes / 60) % 24).padStart(2, "0") + ":" + String(officialMinutes % 60).padStart(2, "0");
   const { data, error } = await adminClient.from("attendance_records").select("punched_at")
     .eq("user_id", profile.id).gte("punched_at", workDate + "T00:00:00+05:30")
-    .lte("punched_at", workDate + "T23:59:59+05:30").order("punched_at");
+    .lt("punched_at", new Date(Date.parse(workDate + "T00:00:00+05:30") + 86400000).toISOString()).order("punched_at");
   checkDb(error);
   const punches = data || [];
   const lastPunch = punches.at(-1)?.punched_at;
-  const officialEndAt = new Date(`${workDate}T${officialEnd}:00+05:30`).getTime();
+  const officialEndAt = new Date(`${workDate}T${end}:00+05:30`).getTime() + 5 * 60000;
   const actualPunchOut = punches.length >= 2 && punches.length % 2 === 0
     && new Date(lastPunch).getTime() > officialEndAt ? lastPunch : null;
   return { start, end, officialEnd, actualPunchOut, punchCount: punches.length };
 }
 
-async function serializeOvertime(item: any) {
+async function serializeOvertime(ctx: Context, item: any) {
   const employee = await adminUserById(ctx, item.employee_id);
   // Pending requests are commonly submitted before clocking out. Read the
   // current punches so the approval button becomes available after clock-out.
-  const context = item.status === "pending" ? await overtimeContext(employee, item.work_date) : null;
+  const context = item.status === "pending" ? await overtimeContext({ ...employee,
+    shift_start_time: item.assigned_start_time, shift_end_time: item.assigned_end_time,
+  }, item.work_date) : null;
   const reviewedBy = item.reviewed_by ? await profileName(item.reviewed_by) : null;
+  const actualPunchOut = context ? context.actualPunchOut : item.actual_punch_out;
+  const cutoff = Date.parse(`${item.work_date}T${String(item.assigned_end_time).slice(0,5)}:00+05:30`) + 5 * 60000;
+  const verifiedMinutes = actualPunchOut ? Math.max(0,Math.floor((Date.parse(actualPunchOut)-cutoff)/60000)) : null;
   return {
     id: item.id, employeeId: employee.employee_id, employeeName: employee.name || employee.employee_id,
     username: employee.employee_id, workDate: item.work_date,
     assignedStartTime: String(item.assigned_start_time).slice(0, 5),
     assignedEndTime: String(item.assigned_end_time).slice(0, 5),
     officialEndTime: String(item.official_end_time).slice(0, 5),
-    declaredLeaveTime: item.declared_leave_time, actualPunchOut: context ? context.actualPunchOut : item.actual_punch_out,
+    declaredLeaveTime: item.declared_leave_time, actualPunchOut, verifiedMinutes,
     requestedMinutes: item.requested_minutes, approvedMinutes: item.approved_minutes,
     status: item.status, rejectionMessage: item.rejection_message,
     reviewedBy, reviewedAt: item.reviewed_at, createdAt: item.created_at,
@@ -2225,50 +2343,26 @@ async function serializeOvertime(item: any) {
 
 async function handleOvertime(ctx: Context, method: string, parts: string[], body: any) {
   if (parts.length === 1 && method === "GET") {
-    let query = adminClient.from("crm_overtime_requests").select("*").order("work_date", { ascending: false }).order("created_at", { ascending: false });
-    if (!isAdminRole(ctx.profile.role)) query = query.eq("employee_id", ctx.user.id);
-    else if (!hasGlobalStoreAccess(ctx)) {
-      const storeUserIds = await accessibleStoreUserIds(ctx);
-      query = storeUserIds.length ? query.in("employee_id", storeUserIds) : query.eq("employee_id", "00000000-0000-0000-0000-000000000000");
-    }
-    const { data, error } = await query;
-    checkDb(error);
-    const requests = data || [];
+    const admin = isAdminRole(ctx.profile.role);
+    const storeUserIds = admin && !hasGlobalStoreAccess(ctx) ? await accessibleStoreUserIds(ctx) : null;
+    const requests = await fetchAll(() => {
+      let query = adminClient.from("crm_overtime_requests").select("*").order("work_date", { ascending: false }).order("created_at", { ascending: false }).order("id", { ascending: false });
+      if (!admin) query = query.eq("employee_id", ctx.user.id);
+      else if (storeUserIds) query = storeUserIds.length ? query.in("employee_id", storeUserIds) : query.eq("employee_id", "00000000-0000-0000-0000-000000000000");
+      return query;
+    });
     const approvedMinutes = requests.filter((item: any) => item.status === "approved" && item.employee_id === ctx.user.id)
       .reduce((sum: number, item: any) => sum + Number(item.approved_minutes || 0), 0);
-    return json(200, { requests: await Promise.all(requests.map(serializeOvertime)), approvedMinutes });
+    return json(200, { requests: await Promise.all(requests.map((item: any) => serializeOvertime(ctx, item))), approvedMinutes });
   }
   if (parts.length === 1 && method === "POST") {
     const workDate = valueString(body.workDate);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) fail(400, "Choose a valid working date.");
     const declared = new Date(String(body.declaredLeaveTime || ""));
     if (Number.isNaN(declared.getTime())) fail(400, "Enter a valid expected leaving time.");
-    const context = await overtimeContext(ctx.profile, workDate);
-    const officialMinutes = Number(context.officialEnd.slice(0, 2)) * 60 + Number(context.officialEnd.slice(3, 5));
-    const declaredLocal = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(declared);
-    const declaredMinutes = Number(declaredLocal.slice(0, 2)) * 60 + Number(declaredLocal.slice(3, 5));
-    if (declaredMinutes <= officialMinutes) fail(400, "Expected leaving time must be after the official end time.");
-    const requestedMinutes = Math.max(0, declaredMinutes - officialMinutes);
-    const { data, error } = await adminClient.from("crm_overtime_requests").insert({
-      employee_id: ctx.user.id, work_date: workDate, assigned_start_time: context.start,
-      assigned_end_time: context.end, official_end_time: context.officialEnd,
-      declared_leave_time: declared.toISOString(), actual_punch_out: context.actualPunchOut,
-      requested_minutes: requestedMinutes,
-    }).select("*").single();
-    checkDb(error);
-    const admins = await fetchAll(() => applyProfileScope(
-      adminClient.from("profiles").select("id").eq("active", true).in("role", ["admin", "super_admin"]),
-      ctx,
-    ));
-    if (admins.length) {
-      const { error: reminderError } = await adminClient.from("crm_reminders").insert(admins.map((item: any) => ({
-        owner_id: item.id,
-        text: "New OT request from " + (ctx.profile.name || ctx.profile.employee_id) + " for " + workDate,
-        reminder_at: new Date().toISOString(),
-      })));
-      checkDb(reminderError);
-    }
-    return json(201, await serializeOvertime(data));
+    if (indiaDate(declared) !== workDate) fail(400, "Expected leaving time must be on the selected working date.");
+    const data = await writeOvertime(ctx, null, "create", { workDate, declaredLeaveTime: declared.toISOString() });
+    return json(201, await serializeOvertime(ctx, data));
   }
   if (parts.length === 3 && method === "POST") {
     requireAdmin(ctx);
@@ -2278,34 +2372,22 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
     checkDb(readError); if (!item) fail(404, "OT request not found.");
     if (item.status !== "pending") fail(409, "This OT request has already been reviewed.");
     const employee = await adminUserById(ctx, item.employee_id);
-    const context = await overtimeContext(employee, item.work_date);
-    let changes: any = { reviewed_by: ctx.user.id, reviewed_at: new Date().toISOString(), actual_punch_out: context.actualPunchOut };
-    if (action === "approve") {
-      if (!context.actualPunchOut) fail(400, "Approval requires a final punch-out record.");
-      const officialMinutes = Number(String(item.official_end_time).slice(0, 2)) * 60 + Number(String(item.official_end_time).slice(3, 5));
-      const actual = new Date(context.actualPunchOut);
-      const actualLocal = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(actual);
-      const actualMinutes = Number(actualLocal.slice(0, 2)) * 60 + Number(actualLocal.slice(3, 5));
-      changes.status = "approved";
-      changes.approved_minutes = Math.max(0, actualMinutes - officialMinutes);
-    } else if (action === "reject") {
-      const message = valueString(body.message);
-      if (!message) fail(400, "Enter a rejection reason.");
-      changes.status = "rejected";
-      changes.rejection_message = message;
-    } else fail(400, "Unknown review action.");
-    const { data, error } = await adminClient.from("crm_overtime_requests").update(changes).eq("id", id).select("*").single();
-    checkDb(error);
-    const outcome = changes.status === "approved" ? "approved" : "rejected";
-    const { error: reminderError } = await adminClient.from("crm_reminders").insert({
-      owner_id: item.employee_id,
-      text: "Your OT request for " + item.work_date + " was " + outcome + "." + (changes.rejection_message ? " " + changes.rejection_message : ""),
-      reminder_at: new Date().toISOString(),
-    });
-    checkDb(reminderError);
-    return json(200, await serializeOvertime(data));
+    const data = await writeOvertime(ctx, id, action, { message: valueString(body.message) });
+    return json(200, await serializeOvertime(ctx, data));
   }
   fail(404, "Overtime API endpoint not found.");
+}
+
+async function writeOvertime(ctx: Context, id: number | null, action: string, values: any) {
+  const { data, error } = await adminClient.rpc("crm_write_overtime", {
+    p_actor: ctx.user.id, p_store: requireStoreContext(ctx), p_id: id, p_action: action, p_values: values,
+  });
+  if (error?.code === "42501") fail(403, "This overtime request is not accessible.");
+  if (["23505", "P0001"].includes(error?.code)) fail(409, error.code === "23505" ? "An OT request already exists for this working date." : error.message);
+  if (["22023", "22007", "22008", "22P02"].includes(error?.code)) fail(400, error.message);
+  if (error?.code === "P0002") fail(404, "OT request not found.");
+  checkDb(error);
+  return data;
 }
 
 function mapProfile(profile: any) {
@@ -2412,6 +2494,7 @@ Deno.serve(async (request: Request) => {
     if (request.method === "POST" && apiPath.replace(/^\/+|\/+$/g, "") === "auth/attendance-session") {
       // authenticate() supplies the trusted CRM identity; never accept an
       // employee ID from the request when opening another project's session.
+      await requireStoreFeature(ctx, "attendance");
       return await startAttendanceSession(ctx);
     }
     const { values, files, thumbnails } = await requestBody(request);
