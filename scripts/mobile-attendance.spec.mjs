@@ -111,14 +111,15 @@ for (const width of widths) test(`${width}px attendance pages, timesheet modal, 
   await page.setViewportSize({ width, height: 740 });
   for (const route of ['/attendance/approvals', '/attendance/overtime']) {
     await page.goto(route);
-    const reject = await showTableAction(page, 'Reject'); await reject.click();
+    const timesheetReview=route==='/attendance/approvals';
+    const reject = await showTableAction(page, timesheetReview?'Review':'Reject'); await reject.click();
     const review = page.getByRole('dialog'); await expect(review).toBeVisible();
     await review.getByRole('textbox').fill('Mobile feedback: please correct this entry.');
     await verifyLayout(page, `${route} rejection`, width, samples);
     await page.keyboard.press('Escape'); await expect(review).not.toBeVisible();
     await expect(reject).toBeFocused();
     await reject.click(); await review.getByRole('textbox').fill('Mobile feedback: please correct this entry.');
-    await review.getByRole('button', { name: 'Confirm rejection', exact: true }).click();
+    await review.getByRole('button', { name: timesheetReview?'Reject':'Confirm rejection', exact: true }).click();
     await expect(review).not.toBeVisible();
     expect(await page.evaluate(() => getComputedStyle(document.body).overflowY)).not.toBe('hidden');
   }
@@ -231,10 +232,10 @@ for (const width of widths) test(`${width}px remaining popup variants and scoped
 
     const admin = await actor('admin', { profileImage: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=' });
     await admin.page.goto('/attendance/approvals');
-    await (await showTableAction(admin.page, 'Approve')).click();
-    dialog = admin.page.getByRole('dialog', { name: 'Approve timesheet entry?', exact: true });
-    await verifyLayout(admin.page, 'timesheet approval confirmation', width, samples);
-    await dialog.getByRole('button', { name: 'Confirm approval', exact: true }).click(); await expect(dialog).not.toBeVisible();
+    await (await showTableAction(admin.page, 'Review')).click();
+    dialog = admin.page.getByRole('dialog', { name: 'Review timesheet', exact: true });
+    await verifyLayout(admin.page, 'timesheet approval popup', width, samples);
+    await dialog.getByRole('button', { name: 'Approve', exact: true }).click(); await expect(dialog).not.toBeVisible();
     await admin.page.goto('/attendance/overtime');
     await (await showTableAction(admin.page, 'Approve')).click();
     dialog = admin.page.getByRole('dialog', { name: 'Approve overtime request?', exact: true });

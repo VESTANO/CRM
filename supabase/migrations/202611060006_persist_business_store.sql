@@ -6,10 +6,21 @@ alter table public.crm_manual_clients add column store_id uuid references public
 alter table public.crm_visits add column store_id uuid references public.crm_stores(id) on delete restrict;
 alter table public.crm_reminders add column store_id uuid references public.crm_stores(id) on delete restrict;
 
-update public.crm_datasets d set store_id=p.store_id from public.profiles p where p.id=d.owner_id;
-update public.crm_manual_clients d set store_id=p.store_id from public.profiles p where p.id=d.owner_id;
-update public.crm_visits d set store_id=p.store_id from public.profiles p where p.id=d.owner_id;
-update public.crm_reminders d set store_id=p.store_id from public.profiles p where p.id=d.owner_id;
+-- This derived ownership backfill must not rewrite historical edit times.
+-- Suspend only an enabled timestamp trigger; preserve its previous state.
+do $backfill$
+declare target text; timestamp_trigger text; pause_timestamp boolean;
+begin
+  foreach target in array array['crm_datasets','crm_manual_clients','crm_visits','crm_reminders'] loop
+    timestamp_trigger:=target||'_updated_at';
+    select exists(select 1 from pg_trigger where tgrelid=format('public.%I',target)::regclass
+      and tgname=timestamp_trigger and tgenabled='O') into pause_timestamp;
+    if pause_timestamp then execute format('alter table public.%I disable trigger %I',target,timestamp_trigger); end if;
+    execute format('update public.%I d set store_id=p.store_id from public.profiles p where p.id=d.owner_id',target);
+    if pause_timestamp then execute format('alter table public.%I enable trigger %I',target,timestamp_trigger); end if;
+  end loop;
+end;
+$backfill$;
 
 -- An unclassified business record fails this migration instead of being guessed
 -- into Vestano or another store. Personal global reminders may remain unscoped.

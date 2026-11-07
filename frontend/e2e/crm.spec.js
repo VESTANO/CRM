@@ -56,7 +56,7 @@ async function fixture(page,{signedIn=true,role='admin'}={}) {
     else if(/\/datasets\/[12]\/$/.test(path)) payload={dataset:{id:Number(path.split('/').at(-2)),name:path.endsWith('/2/')?'Second QA':'Imported QA',customer_count:2},recordsBySheet:[],responseChoices:[],responseStats:[],filters:{},pagination:{page:1,numPages:1,pageRange:[1]}};
     else if(path.endsWith('/datasets/')) payload={results:[{id:1,name:'Imported QA',customer_count:2},{id:2,name:'Second QA',customer_count:3}]};
     else if(path.endsWith('/targets/')) payload={results:[]};
-    else if(path.endsWith('/dashboard/')) payload={totalDatasets:2,totalCustomers:20,responseStats:[],recentDatasets:[],payments:{},sales:{}};
+    else if(path.endsWith('/dashboard/')||path.endsWith('/reports/summary/')) payload={totalDatasets:2,totalCustomers:20,responseStats:[],recentDatasets:[],payments:{},sales:{}};
     else if(path.endsWith('/sales/report/')) payload={totalVisits:3,totalExpenses:12.35,activeMonths:1,statuses:[{value:'converted',label:'Converted',count:3}],recentMonths:Array.from({length:6},(_,i)=>({key:`2026-${String(i+6).padStart(2,'0')}`,label:`Month ${i+1}`,count:i===5?3:0}))};
     else if(path.endsWith('/tasks/1/')) payload={};
     else if(path.endsWith('/tasks/')) payload={results:role==='employee'?[{id:1,title:'Inspect display',status:'pending',created_at:'2026-11-01',assignment_images:[],completion_images:[]}]:[]};
@@ -130,12 +130,26 @@ test('login form, logout and expired-session route guard',async({page})=>{
   await expect(page).toHaveURL(/login/);
   await page.goto('/admin-panel/tasks'); await expect(page).toHaveURL(/login/);
 });
+
+test('ordinary store-account login survives a rejected legacy credential probe',async({page})=>{
+  await fixture(page,{signedIn:false});
+  await page.route('**/auth/legacy-login/',route=>route.fulfill({status:401,json:{detail:'Invalid username or password.'},headers:{'access-control-allow-origin':'*'}}));
+  await page.route('**/auth/v1/token**',route=>route.fulfill({json:session,headers:{'access-control-allow-origin':'*'}}));
+  await page.goto('/login');
+  await page.getByLabel(/Username|Employee ID/i).fill('qa@example.test');
+  await page.getByLabel('Password',{exact:true}).fill('Existing-store-password');
+  await page.getByRole('button',{name:'Continue to CRM'}).click();
+  await expect(page.getByRole('heading',{name:/CRM Dashboard/})).toBeVisible();
+});
 test('timesheet rejection dialog posts feedback through the attendance RPC',async({page})=>{
   const mutations=await fixture(page); await page.goto('/attendance/approvals');
-  await page.getByRole('button',{name:'Reject',exact:true}).click();
-  const dialog=page.getByRole('dialog'); await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeDisabled();
-  await dialog.getByLabel('Rejection feedback').fill('Correct the work date');
-  await dialog.getByRole('button',{name:'Confirm rejection'}).click(); await expect(dialog).not.toBeVisible();
+  await page.getByRole('button',{name:'Review',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Review timesheet'});
+  await dialog.getByRole('button',{name:'Reject',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toHaveText('Enter feedback before rejecting this entry.');
+  expect(mutations.filter(r=>r.path.endsWith('/rpc/review_timesheet_entry'))).toHaveLength(0);
+  await dialog.getByLabel('Approval comment').fill('Correct the work date');
+  await dialog.getByRole('button',{name:'Reject',exact:true}).click(); await expect(dialog).not.toBeVisible();
   expect(mutations.find(r=>r.path.endsWith('/rpc/review_timesheet_entry')).body.p_approval_comment).toBe('Correct the work date');
 });
 test('customer search, status selection, editing and callback completion',async({page})=>{

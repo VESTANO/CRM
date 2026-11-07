@@ -127,12 +127,13 @@ test('Phase 4 actual SQL/handler security, legacy credential revocation and priv
     await db.exec(sql('202611070010_phase4_security'));
     await db.exec(sql('202611070011_phase4_performance'));
     await db.exec(sql('202611070012_optimistic_concurrency'));
+    await db.exec(sql('202611070104_native_login_compatibility'));
 
-    await t.test('migration revokes already stale/signed-in credentials and preserves untouched imports',async()=>{
+    await t.test('migration preserves existing passwords; sign-in and metadata timestamps do not prove a password change',async()=>{
       const rows=(await db.query('select auth_user_id,password_hash from crm_legacy_auth order by local_user_id')).rows;
       assert.equal(rows.find(row=>row.auth_user_id===fresh.id).password_hash,hash);
-      assert.equal(rows.find(row=>row.auth_user_id===stale.id).password_hash,null);
-      assert.equal(rows.find(row=>row.auth_user_id===used.id).password_hash,null);
+      assert.equal(rows.find(row=>row.auth_user_id===stale.id).password_hash,hash);
+      assert.equal(rows.find(row=>row.auth_user_id===used.id).password_hash,hash);
     });
 
     await t.test('root cause reproduction: absent trigger, old imported password replaces a reset password',async()=>{
@@ -162,6 +163,16 @@ test('Phase 4 actual SQL/handler security, legacy credential revocation and priv
       assert.equal((await db.query('select password_hash from crm_legacy_auth where auth_user_id=$1',[imported.id])).rows[0].password_hash,null);
       assert.equal((await app.login(' EMP6 ')).status,200);assert.equal(app.authWrites.length,1);
       assert.deepEqual((await db.query('select raw_app_meta_data from auth.users where id=$1',[imported.id])).rows[0].raw_app_meta_data,{});
+    });
+
+    await t.test('native store usernames and emails authenticate through existing clients without password replacement',async()=>{
+      const native=await account(db,90),app=handlers(db);
+      await db.query('delete from crm_legacy_auth where auth_user_id=$1',[native.id]);
+      await db.query("update auth.users set encrypted_password='Current-store-password' where id=$1",[native.id]);
+      for(const identity of ['EMP90',native.email])assert.equal((await app.login(identity,'Current-store-password')).status,200);
+      await assert.rejects(app.login('EMP90','Incorrect-password'),error=>error.status===401);
+      assert.equal(app.authWrites.length,0);
+      assert.equal((await db.query('select encrypted_password from auth.users where id=$1',[native.id])).rows[0].encrypted_password,'Current-store-password');
     });
 
     await t.test('a reset between legacy verification and provider write cannot be overwritten',async()=>{

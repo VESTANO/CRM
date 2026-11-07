@@ -38,7 +38,7 @@ async function fixture(page) {
     else if(path.includes('/auth/v1/user'))payload=session.user;
     else if(path.includes('/auth/v1/'))payload={};
     else if(path.endsWith('/task-notifications/'))payload={results:[],unreadCount:0};
-    else if(path.endsWith('/dashboard/'))payload={totalDatasets:99999999,totalCustomers:999999999,responseStats:choices,recentDatasets:[dataset],payments:{},sales:{}};
+    else if(path.endsWith('/dashboard/')||path.endsWith('/reports/summary/'))payload={totalDatasets:99999999,totalCustomers:999999999,responseStats:choices,recentDatasets:[dataset],payments:{},sales:{}};
     else if(path.endsWith('/sales/report/'))payload={totalVisits:999999999,totalExpenses:9999999999.99,activeMonths:999999,statuses:choices,recentMonths:Array.from({length:6},(_,i)=>({key:`2026-${String(i+6).padStart(2,'0')}`,label:['Jun','Jul','Aug','Sep','Oct','Nov'][i],count:123456789+i}))};
     else if(path.endsWith('/sales/summary/'))payload={totalVisits:999999999,todaysVisits:99999999,monthVisits:99999999,totalVisitExpenses:9999999999.99};
     else if(path.endsWith('/sales/visits/1/'))payload=visit;

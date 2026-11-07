@@ -47,6 +47,11 @@ test("PostgreSQL enforces durable store ownership, RLS, totals, approvals, and p
       insert into public.attendance_records values ('${entryA}','${employeeA}','A','EMPA','Employee A'),('${entryB}','${employeeB}','B','EMPB','Employee B');
       insert into public.attendance_mappings(punch_code,user_id) values ('A','${employeeA}'),('B','${employeeB}');
     `);
+    await db.exec(`create function public.crm_set_updated_at() returns trigger language plpgsql as $$begin new.updated_at:=now();return new;end$$;`);
+    for (const table of ['crm_datasets','crm_visits','crm_manual_clients','crm_reminders']) {
+      await db.exec(`alter table ${table} add column updated_at timestamptz not null default '2026-01-01T00:00:00Z';
+        create trigger ${table}_updated_at before update on ${table} for each row execute function crm_set_updated_at();`);
+    }
     for (const migration of ["202611060004_isolate_attendance_by_store.sql", "202611060006_persist_business_store.sql", "202611060007_scope_attendance_operations.sql"]) {
       await db.exec(readFileSync(new URL(`../supabase/migrations/${migration}`, import.meta.url), "utf8"));
     }
@@ -59,6 +64,9 @@ test("PostgreSQL enforces durable store ownership, RLS, totals, approvals, and p
       }
       assert.equal((await db.query("select name from crm_datasets where id=1")).rows[0].name, "Vestano original");
       assert.equal((await db.query("select store_id from crm_reminders where id=2")).rows[0].store_id, null);
+      for (const table of ['crm_datasets','crm_visits','crm_manual_clients','crm_reminders']) {
+        assert.equal(Number((await db.query(`select count(*) n from ${table} where updated_at<>'2026-01-01T00:00:00Z'`)).rows[0].n),0,'ownership backfill preserves edit times');
+      }
     });
 
     await t.test("records cannot transfer stores and global creators must choose a store", async () => {
@@ -103,6 +111,21 @@ test("PostgreSQL enforces durable store ownership, RLS, totals, approvals, and p
         assert.deepEqual((await db.query("select user_id from attendance_records")).rows.map(row => row.user_id), [employeeA]);
         assert.deepEqual((await db.query("select user_id from timesheet_entries")).rows.map(row => row.user_id), [employeeA]);
       } finally { await db.exec("reset role"); }
+    });
+    await t.test('release retains the published totals RPC and denies disabled attendance in the selected-store RPC', async () => {
+      await db.exec(`alter table crm_stores add column features jsonb default '{"attendance":true}';`);
+      const featureSql=readFileSync(new URL('../supabase/migrations/202611070101_store_features.sql',import.meta.url),'utf8');
+      const featureStart=featureSql.indexOf('create or replace function public.store_feature_enabled_for_user');
+      await db.exec(featureSql.slice(featureStart,featureSql.indexOf('-- Direct Supabase reads',featureStart)));
+      await db.exec(readFileSync(new URL('../supabase/migrations/202611070103_release_attendance_compatibility.sql',import.meta.url),'utf8'));
+      await actor(superAdmin);
+      assert.equal(Number((await db.query('select get_dashboard_totals() totals')).rows[0].totals.hours),24);
+      assert.equal(Number((await db.query('select get_store_dashboard_totals($1) totals',[a])).rows[0].totals.hours),8);
+      await db.query(`update crm_stores set features='{"attendance":false}' where id=$1`,[b]);
+      await assert.rejects(db.query('select get_store_dashboard_totals($1)',[b]),/not enabled/);
+      await actor(adminB);
+      assert.equal(Number((await db.query('select get_dashboard_totals() totals')).rows[0].totals.hours),0);
+      await assert.rejects(db.query('select get_store_dashboard_totals($1)',[b]),/not enabled/);
     });
   } finally { await db.close(); }
 });

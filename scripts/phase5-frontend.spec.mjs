@@ -48,7 +48,7 @@ async function fixture(page) {
     else if (path.includes('/auth/v1/')) payload = {};
     else if (path.endsWith('/task-notifications/')) payload = { results: [], unread_count: 0 };
     else if (path.endsWith('/datasets/')) payload = { results: datasets };
-    else if (path.endsWith('/dashboard/')) payload = { totalDatasets: 100, totalCustomers: 25_000, responseStats: statusOptions, recentDatasets: datasets.slice(0, 5), payments: {}, sales: {} };
+    else if (path.endsWith('/dashboard/') || path.endsWith('/reports/summary/')) payload = { totalDatasets: 100, totalCustomers: 25_000, responseStats: statusOptions, recentDatasets: datasets.slice(0, 5), payments: {}, sales: {} };
     else if (path.endsWith('/customers/')) {
       const query = url.searchParams.get('q'), pageNumber = Number(url.searchParams.get('page') || 1);
       payload = { results: Array.from({ length: query ? 1 : 50 }, (_, index) => customer(query ? 24999 : (pageNumber - 1) * 50 + index + 1)), statusOptions, totalCount: 25_000, searchQuery: query || '', pagination: { page: pageNumber, numPages: query ? 1 : 500, count: query ? 1 : 25_000 } };

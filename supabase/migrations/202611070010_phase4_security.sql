@@ -56,14 +56,11 @@ revoke all on function public.crm_preserve_profile_store() from public,anon,auth
 create trigger crm_preserve_profile_store before insert or update on public.profiles
 for each row execute function public.crm_preserve_profile_store();
 
--- The original import did not record the original Auth password fingerprint.
--- A subsequent Auth update or successful sign-in means its old Django hash can
--- no longer be trusted as an upgrade credential. These accounts use their
--- current password or the normal recovery/admin-reset workflow after rollout.
-update public.crm_legacy_auth l set password_hash=null,
-  password_upgraded_at=coalesce(l.password_upgraded_at,now()),updated_at=now()
-from auth.users u where u.id=l.auth_user_id and l.password_hash is not null
-  and (u.last_sign_in_at is not null or u.updated_at>l.created_at);
+-- Preserve existing credentials during rollout. Auth updated_at/sign-in times
+-- also change for magic links and session maintenance; they are not evidence
+-- of a password change. The import has no original Auth password fingerprint,
+-- so historical revocation cannot safely be inferred from those timestamps.
+-- The trigger below revokes retained hashes on actual future password changes.
 
 -- A retained Django credential must never replace a password subsequently set
 -- by recovery, an administrator, or the authenticated account itself. Keep the

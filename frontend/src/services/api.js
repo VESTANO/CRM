@@ -269,7 +269,7 @@ export const authApi = {
       if (!user) throw apiError("This account is inactive or has no CRM profile.", 403);
       return { data: { user, csrfToken: "" } };
     } catch (error) {
-      if (error.response?.status !== 404) throw error;
+      if (![401, 404].includes(error.response?.status)) throw error;
     }
     let email = identity;
     if (!identity.includes("@")) {
@@ -401,7 +401,11 @@ apiClient.interceptors.response.use(
     } else if (!error.response) {
       error.response = { status: 0, data: { detail: "The CRM service is unreachable. Check your connection and retry." } };
     }
-    if (error.response?.status === 401 && typeof window !== "undefined") {
+    // A rejected credential probe is not an expired authenticated session.
+    // Signing out here races the ordinary-password fallback and invalidates
+    // AuthProvider's pending login even when the next authentication succeeds.
+    const credentialProbe = /\/auth\/legacy-login\/?$/.test(String(error.config?.url || ""));
+    if (error.response?.status === 401 && !credentialProbe && typeof window !== "undefined") {
       // Do not delay every failed API request on a secondary sign-out call.
       void crmSupabase.auth.signOut().catch(() => {});
       window.dispatchEvent(new Event("crm:session-expired"));

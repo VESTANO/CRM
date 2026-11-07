@@ -17,14 +17,14 @@ async function setup() {
   await db.exec(sql('202611020001_crm_core'));
   const photos=sql('202611030013_photo_optimization');
   await db.exec(photos.slice(photos.indexOf('alter table public.crm_visit_images'),photos.indexOf('-- Keep the existing assignment')));
-  await db.exec(`create table crm_stores(id uuid primary key,name text);alter table profiles add column store_id uuid references crm_stores;
+  await db.exec(`create table crm_stores(id uuid primary key,name text,features jsonb default '{"customers":true}');alter table profiles add column store_id uuid references crm_stores;
     insert into auth.users values('${actor}'),('${other}');insert into crm_stores values('${store}','A'),('${foreign}','B');
     insert into profiles(id,employee_id,name,email,role,store_id) values('${actor}','A','Employee A','a@example.test','employee','${store}'),('${other}','B','Employee B','b@example.test','employee','${foreign}');`);
   await db.exec(sql('202611060006_persist_business_store'));
   await db.exec(sql('202611070006_customer_integrity'));
   await db.exec(`insert into crm_datasets(id,owner_id,store_id,name,original_filename) values(1,'${actor}','${store}','A','a.xlsx'),(2,'${other}','${foreign}','B','b.xlsx');
     insert into crm_customer_records(id,dataset_id,sheet_name,row_number,original_data) values(1,1,'Leads',2,'{"name":"Alice","phone":"0012345678"}'),(2,2,'Leads',2,'{"name":"Bob"}');`);
-  const allowed=new Set(['crm_customer_records','crm_datasets','crm_customer_record_changes','crm_visits','crm_visit_images']);
+  const allowed=new Set(['crm_stores','crm_customer_records','crm_datasets','crm_customer_record_changes','crm_visits','crm_visit_images']);
   const removed=[];
   const client={storage:{from:()=>({remove:async paths=>{removed.push(...paths);return {};}})},rpc:async(name,p)=>{
     try {const {rows}=await db.query('select crm_update_customer($1,$2,$3,$4::jsonb,$5) result',[p.p_actor,p.p_store,p.p_record,JSON.stringify(p.p_changes),p.p_complete]);return {data:rows[0].result,error:null};}

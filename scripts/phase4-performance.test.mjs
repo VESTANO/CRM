@@ -18,7 +18,7 @@ const bytes=value=>Buffer.byteLength(JSON.stringify(value));
 // functions above; no business rules are reimplemented by this adapter.
 function handlers(db) {
   const reads=[];const calls=[];
-  const tables=new Set(['crm_datasets','crm_customer_records','crm_dataset_columns','crm_manual_clients','profiles']);
+  const tables=new Set(['crm_stores','crm_datasets','crm_customer_records','crm_dataset_columns','crm_manual_clients','profiles']);
   const client={rpc:async(name,p)=>{
     assert.ok(['crm_customer_history_page','crm_sales_visit_page','crm_sales_client_page'].includes(name));calls.push({name,p});
     try {const params=Object.values(p).map(v=>v&&typeof v==='object'?JSON.stringify(v):v);const args=Object.keys(p).map((k,i)=>`${k}=>$${i+1}`).join(',');return {data:(await db.query(`select ${name}(${args}) result`,params)).rows[0].result,error:null};} catch(error){return {data:null,error};}
@@ -43,7 +43,7 @@ async function setup() {
     create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql as $$select null::uuid$$;
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);`);
   await db.exec(migration('202611020001_crm_core'));
-  await db.exec(`create table crm_stores(id uuid primary key,name text);alter table profiles add column store_id uuid references crm_stores;
+  await db.exec(`create table crm_stores(id uuid primary key,name text,features jsonb default '{"customers":true,"sales":true}');alter table profiles add column store_id uuid references crm_stores;
     insert into auth.users values('${actor}'),('${colleague}'),('${other}');insert into crm_stores values('${store}','A'),('${foreign}','B');
     insert into profiles(id,employee_id,name,email,role,store_id) values
       ('${actor}','A','Employee A','a@example.test','employee','${store}'),

@@ -1,5 +1,7 @@
 # VESTANO CRM Engineering & QA Audit
 
+Release addendum: see [Full release — 7 November 2026](FULL_RELEASE_20261107.md) for the explicitly authorized Phase 1–5 deployment, data-preservation evidence, compatibility corrections and remaining hosted/device boundaries. Earlier local-only scope statements below describe their original audit runs. Overall status remains **CONDITIONAL READY**.
+
 Audit date: 7 November 2026 (Asia/Kolkata)  
 Scope: local source review, static build, existing automated tests, and non-destructive configuration inspection. No production database, customer data, device, or deployment was changed.
 

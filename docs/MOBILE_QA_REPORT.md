@@ -1,5 +1,7 @@
 # VESTANO CRM — mobile UI audit
 
+Full release addendum: all 94 mobile browser cases passed across the final run and corrected-popup rerun, including all requested widths and desktop regression. Review uses the published popup with required rejection feedback; password visibility works on click/touch; store navigation has one active item. See [full release evidence and remaining real-device limits](FULL_RELEASE_20261107.md). Status remains **CONDITIONAL READY** for physical-device verification.
+
 Date: 7 November 2026, Asia/Kolkata. Scope: the current local React/Vite application, its existing routes, shared overlays and role-specific screens, followed by the user's separately authorized isolated mobile UI release. No Supabase production configuration change or production business-data mutation was performed. Existing backend calculations, spreadsheet preservation, approval rules and database permissions were retained.
 
 ## Test environment and boundaries

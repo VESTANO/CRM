@@ -1,5 +1,7 @@
 # VESTANO CRM — production release report
 
+Subsequent authorized release: [Full engineering deployment — 7 November 2026](FULL_RELEASE_20261107.md). The historical hold and local-only statements below describe the earlier review, before the user explicitly authorized all pending API/database work. The addendum records the deployed database/API scope, data preservation and remaining verification limits. Overall status remains **CONDITIONAL READY**.
+
 Date: 7 November 2026, Asia/Kolkata. Decision: **CONDITIONALLY READY — local candidate only; production deployment on hold.**
 
 This report reviews Phases 1–5 without treating local tests as hosted verification. No staging Supabase project is available, as previously confirmed by the user. No production database, provider account, employee device, production infrastructure or deployment was changed. Synthetic local tests are identified explicitly. No security certification or production operating capacity is asserted.
