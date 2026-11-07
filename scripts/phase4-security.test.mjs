@@ -128,6 +128,7 @@ test('Phase 4 actual SQL/handler security, legacy credential revocation and priv
     await db.exec(sql('202611070011_phase4_performance'));
     await db.exec(sql('202611070012_optimistic_concurrency'));
     await db.exec(sql('202611070104_native_login_compatibility'));
+    await db.exec(sql('202611070105_current_login_identity'));
 
     await t.test('migration preserves existing passwords; sign-in and metadata timestamps do not prove a password change',async()=>{
       const rows=(await db.query('select auth_user_id,password_hash from crm_legacy_auth order by local_user_id')).rows;
@@ -169,8 +170,12 @@ test('Phase 4 actual SQL/handler security, legacy credential revocation and priv
       const native=await account(db,90),app=handlers(db);
       await db.query('delete from crm_legacy_auth where auth_user_id=$1',[native.id]);
       await db.query("update auth.users set encrypted_password='Current-store-password' where id=$1",[native.id]);
+      // Existing hosted data exposed this collision: historical aliases can
+      // refer to an email now assigned to a native account. Current email wins.
+      await db.query('update crm_legacy_auth set original_email=$1 where auth_user_id in ($2,$3)',[native.email,fresh.id,stale.id]);
       for(const identity of ['EMP90',native.email])assert.equal((await app.login(identity,'Current-store-password')).status,200);
       await assert.rejects(app.login('EMP90','Incorrect-password'),error=>error.status===401);
+      await assert.rejects(app.login(native.email,password),error=>error.status===401);
       assert.equal(app.authWrites.length,0);
       assert.equal((await db.query('select encrypted_password from auth.users where id=$1',[native.id])).rows[0].encrypted_password,'Current-store-password');
     });
