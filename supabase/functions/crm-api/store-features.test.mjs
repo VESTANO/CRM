@@ -6,11 +6,11 @@ import test from "node:test";
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const routeSource = stripTypeScriptTypes(source.slice(source.indexOf("async function routeApi("), source.indexOf("async function profilesWithCounts(")));
 const featureSource = stripTypeScriptTypes(source.slice(source.indexOf("async function storeFeaturesFor("), source.indexOf("function applyProfileScope(")));
-const defaults = { customers: true, sales: true, attendance: true, callbacks: true, reminders: true, reports: true, tasks: true };
+const defaults = { dashboard: true, customers: true, sales: true, attendance: true, callbacks: true, reminders: true, reports: true, tasks: true };
 
 function setup(disabled = []) {
   const checked = [];
-  const features = Object.fromEntries(["customers", "sales", "attendance", "callbacks", "reminders", "reports", "tasks"].map((key) => [key, !disabled.includes(key)]));
+  const features = Object.fromEntries(["dashboard", "customers", "sales", "attendance", "callbacks", "reminders", "reports", "tasks"].map((key) => [key, !disabled.includes(key)]));
   const routeApi = new Function("requireStoreFeature", "storeFeaturesFor", "json", `${routeSource}; return routeApi;`)(
     async (_ctx, feature) => {
       checked.push(feature);
@@ -24,9 +24,9 @@ function setup(disabled = []) {
 }
 
 test("disabled modules reject direct API URLs before their handlers run", async () => {
-  const app = setup(["customers", "sales", "attendance", "callbacks", "reminders", "tasks"]);
+  const app = setup(["dashboard", "reports", "customers", "sales", "attendance", "callbacks", "reminders", "tasks"]);
   for (const [path, expected] of [
-    ["datasets/", "customers"], ["customers/1/", "customers"], ["import/", "customers"],
+    ["dashboard/", "dashboard"], ["reports/summary/", "reports"], ["datasets/", "customers"], ["customers/1/", "customers"], ["import/", "customers"],
     ["admin/users/u/datasets/", "customers"], ["sales/visits/", "sales"],
     ["targets/", "sales"], ["admin/targets/", "sales"],
     ["attendance/", "attendance"], ["overtime/", "attendance"],

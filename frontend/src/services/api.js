@@ -541,7 +541,7 @@ export const adminApi = {
   // A short freshness window prevents a full reload on every back-navigation.
   summary: () => cachedGet("/admin/summary/", {}, 30_000),
   listUsers: (storeId = "", role = "") => cachedGet("/admin/users/", (storeId || role) ? { params: { ...(storeId ? { store: storeId } : {}), ...(role ? { role } : {}) } } : {}),
-  stores: () => cachedGet("/admin/stores/", {}, 30_000),
+  stores: ({ fresh = false } = {}) => cachedGet("/admin/stores/", {}, fresh ? 0 : 30_000),
   createStore: (payload, csrfToken) => apiClient.post("/admin/stores/", payload, csrfHeaders(csrfToken)),
   updateStoreFeatures: (storeId, features, csrfToken) => apiClient.patch(`/admin/stores/${storeId}/features/`, { features }, csrfHeaders(csrfToken)),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),
@@ -569,7 +569,17 @@ export const adminApi = {
 };
 
 export const storeFeaturesApi = {
-  get: ({ fresh = false } = {}) => cachedGet("/store/features/", {}, fresh ? 0 : 30_000),
+  get: ({ fresh = false } = {}) => cachedGet("/store/features/", {}, fresh ? 0 : 30_000).catch((error) => {
+    if (error.response?.status === 404) return { data: { features: {}, legacy: true } };
+    throw error;
+  }),
+};
+
+export const reportsApi = {
+  summary: () => cachedGet("/reports/summary/").catch((error) => {
+    if (error.response?.status === 404) return dashboardApi.summary();
+    throw error;
+  }),
 };
 
 // Warm normal sidebar destinations after the first screen has painted. These

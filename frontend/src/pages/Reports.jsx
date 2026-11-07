@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { dashboardApi, peekCachedResponse, salesApi } from "../services/api.js";
+import { reportsApi, peekCachedResponse, salesApi } from "../services/api.js";
 import { formatCurrency } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel } from "../components/RequestState.jsx";
@@ -31,7 +31,7 @@ export default function Reports() {
 
   const load = useCallback(() => {
     setError("");
-    const customers = !features.customers ? Promise.resolve() : dashboardApi.summary()
+    const customers = !features.customers ? Promise.resolve() : reportsApi.summary()
       .then(({ data }) => setCustomerStats(data))
       .catch(() => setError("Unable to load customer insights."));
     const sales = !features.sales ? Promise.resolve() : salesApi.list()

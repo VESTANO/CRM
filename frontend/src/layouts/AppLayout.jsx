@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router-dom";
+import { Navigate, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router-dom";
 import { Offcanvas } from "bootstrap";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
@@ -11,7 +11,7 @@ import { RouteLoadingIndicator } from "../components/RequestState.jsx";
 import { activeStoreId, clearSelectedStore } from "../services/storeContext.js";
 import { lockDocumentScroll, recoverOrphanedScrollLock } from "../utils/documentScrollLock.js";
 import { useStoreFeatures } from "../hooks/useStoreFeatures.jsx";
-import { featureForPath } from "../services/storeFeatures.js";
+import { featureForPath, storeHomePath } from "../services/storeFeatures.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -159,14 +159,14 @@ export default function AppLayout() {
         >
           <i className="bi bi-list" aria-hidden="true" />
         </button>
-        <NavLink className="mobile-brand" to="/dashboard">
+        <NavLink className="mobile-brand" to={storeHomePath(features)}>
           <span className="brand-mark">V</span>
           <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
         </NavLink>
       </header>
 
       <aside className="app-sidebar d-none d-lg-flex">
-        <NavLink className="app-brand" to="/dashboard">
+        <NavLink className="app-brand" to={storeHomePath(features)}>
           <span className="brand-mark">V</span>
           <span className="brand-copy"><strong>VESTANO</strong><small>Customer CRM</small></span>
         </NavLink>
@@ -206,7 +206,7 @@ export default function AppLayout() {
         </div>
         <div className="content-wrap">
           <Suspense fallback={<RouteLoadingIndicator />}>
-            {featuresLoading ? <RouteLoadingIndicator /> : featuresError ? <div className="alert alert-danger" role="alert">Unable to verify this store's access. Please try again.</div> : featureForPath(location.pathname) && !features[featureForPath(location.pathname)] ? <div className="alert alert-warning" role="alert">This feature is not enabled for your store.</div> : <Outlet />}
+            {featuresLoading ? <RouteLoadingIndicator /> : featuresError ? <div className="alert alert-danger" role="alert">Unable to verify this store's access. Please try again.</div> : featureForPath(location.pathname) === "dashboard" && !features.dashboard ? <Navigate to={storeHomePath(features)} replace /> : featureForPath(location.pathname) && !features[featureForPath(location.pathname)] ? <div className="alert alert-warning" role="alert">This feature is not enabled for your store.</div> : <Outlet />}
           </Suspense>
         </div>
       </main>

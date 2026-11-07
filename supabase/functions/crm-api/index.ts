@@ -15,6 +15,7 @@ const pageSize = 1000;
 
 type Context = { user: any; profile: any; activeStoreId?: string };
 const defaultStoreFeatures = {
+  dashboard: true,
   customers: true, sales: true, attendance: true, callbacks: true,
   reminders: true, reports: true, tasks: true,
 };
@@ -1628,6 +1629,8 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
 
   if (path === "store/features" && method === "GET") return json(200, { features: await storeFeaturesFor(ctx) });
   const requiredFeature: StoreFeature | null =
+    parts[0] === "dashboard" ? "dashboard" :
+    parts[0] === "reports" ? "reports" :
     ["datasets", "customers", "import"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "users" && parts[3] === "datasets") ? "customers" :
     ["sales", "targets"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "targets") ? "sales" :
     ["attendance", "overtime"].includes(parts[0]) ? "attendance" :
@@ -1636,7 +1639,7 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
     ["tasks", "task-notifications"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "tasks") ? "tasks" : null;
   if (requiredFeature) await requireStoreFeature(ctx, requiredFeature);
 
-  if (path === "dashboard/" || path === "dashboard") {
+  if (path === "dashboard/" || path === "dashboard" || path === "reports/summary") {
     if (method === "GET") {
       const summary = await dashboardSummary(ctx);
       const features = await storeFeaturesFor(ctx);
@@ -1980,7 +1983,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       if (!isSuperAdmin(ctx)) query = query.eq("id", ctx.profile.store_id);
       const { data, error } = await query;
       checkDb(error);
-      return json(200, { results: data || [] });
+      return json(200, { results: data || [], capabilities: { store_features: true } });
     }
     if (parts.length === 2 && method === "POST") {
       requireSuperAdmin(ctx);
@@ -1995,18 +1998,18 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const features = validateStoreFeatures(body.features ?? defaultStoreFeatures);
       const errors: Record<string, string[]> = {};
       if (!name || name.length > 120) errors.name = ["Enter a store name up to 120 characters."];
-      if (!contactPerson || contactPerson.length > 120) errors.contact_person = ["Enter a contact person up to 120 characters."];
+      if (contactPerson.length > 120) errors.contact_person = ["Enter a contact person up to 120 characters."];
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail) || contactEmail.length > 254) errors.contact_email = ["Enter a valid contact email."];
       if (!/^\+?[0-9][0-9\s().-]{6,19}$/.test(contactPhone) || contactPhone.length > 20) errors.contact_phone = ["Enter a valid phone number with 7 to 20 characters."];
-      if (!addressLine1 || addressLine1.length > 240) errors.address_line1 = ["Enter a street address up to 240 characters."];
-      if (!city || city.length > 100) errors.city = ["Enter a city up to 100 characters."];
-      if (!state || state.length > 100) errors.state = ["Enter a state or region up to 100 characters."];
-      if (!postalCode || postalCode.length > 20) errors.postal_code = ["Enter a postal code up to 20 characters."];
+      if (addressLine1.length > 240) errors.address_line1 = ["Enter an address up to 240 characters."];
+      if (city.length > 100) errors.city = ["Enter a city up to 100 characters."];
+      if (state.length > 100) errors.state = ["Enter a state or region up to 100 characters."];
+      if (postalCode.length > 20) errors.postal_code = ["Enter a postal code up to 20 characters."];
       if (Object.keys(errors).length) fail(400, "Complete the store details.", { errors });
       const { data, error } = await adminClient.from("crm_stores").insert({
-        name, contact_person: contactPerson, contact_email: contactEmail,
-        contact_phone: contactPhone, address_line1: addressLine1,
-        city, state, postal_code: postalCode, features, created_by: ctx.user.id,
+        name, contact_person: contactPerson || null, contact_email: contactEmail,
+        contact_phone: contactPhone, address_line1: addressLine1 || null,
+        city: city || null, state: state || null, postal_code: postalCode || null, features, created_by: ctx.user.id,
       }).select("*").single();
       checkDb(error);
       return json(201, data);

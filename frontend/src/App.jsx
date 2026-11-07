@@ -67,6 +67,7 @@ export default function App() {
           >
             <Route index element={<Dashboard />} />
             <Route path="dashboard" element={<Dashboard />} />
+            <Route path="store-home" element={<section className="panel"><h1 className="h3">Store workspace</h1><p className="text-secondary mb-0">No sections are enabled for this store. Contact your Super Admin to update store access.</p></section>} />
             <Route path="datasets" element={<DatasetList />} />
             <Route path="datasets/:id" element={<DatasetDetail />} />
             <Route path="datasets/:id/rename" element={<DatasetManagement mode="rename" />} />

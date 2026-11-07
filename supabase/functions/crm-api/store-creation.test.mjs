@@ -61,6 +61,16 @@ test("store creation persists selected access switches", async () => {
   assert.equal(app.writes[0].features.sales, false);
 });
 
+test("name, email and phone are sufficient; optional details are stored as null", async () => {
+  const app = setup();
+  const result = await app.create({ name: "Minimal store", contact_email: "store@example.test", contact_phone: "9876543210" });
+  assert.equal(result.status, 201);
+  assert.equal(app.writes[0].contact_person, null);
+  assert.equal(app.writes[0].address_line1, null);
+  assert.equal(app.writes[0].city, null);
+  assert.equal(app.writes[0].features.dashboard, true);
+});
+
 test("Super Admin can change store access but Admin cannot", async () => {
   const app = setup();
   const features = { ...defaultStoreFeatures, attendance: false };

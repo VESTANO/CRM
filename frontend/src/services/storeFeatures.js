@@ -1,4 +1,5 @@
 export const defaultStoreFeatures = Object.freeze({
+  dashboard: true,
   customers: true,
   sales: true,
   attendance: true,
@@ -9,6 +10,7 @@ export const defaultStoreFeatures = Object.freeze({
 });
 
 export const storeFeatureOptions = [
+  { key: "dashboard", label: "Dashboard" },
   { key: "customers", label: "Customers and Excel import" },
   { key: "sales", label: "Sales visits and targets" },
   { key: "attendance", label: "Attendance, timesheets and overtime" },
@@ -19,6 +21,7 @@ export const storeFeatureOptions = [
 ];
 
 export function featureForPath(path) {
+  if (path === "/" || /^\/dashboard(\/|$)/.test(path)) return "dashboard";
   if (/^\/(datasets|customers|import)(\/|$)/.test(path)) return "customers";
   if (/^\/sales(\/|$)/.test(path)) return "sales";
   if (/^\/(attendance|overtime)(\/|$)/.test(path)) return "attendance";
@@ -29,4 +32,8 @@ export function featureForPath(path) {
   if (/^\/admin-panel\/users\/[^/]+\/datasets(\/|$)/.test(path)) return "customers";
   if (/^\/admin-panel\/users\/[^/]+\/tasks(\/|$)/.test(path)) return "tasks";
   return null;
+}
+
+export function storeHomePath(features) {
+  return [["dashboard", "/dashboard"], ["customers", "/customers"], ["sales", "/sales"], ["attendance", "/attendance"], ["callbacks", "/callbacks"], ["reminders", "/reminders"], ["reports", "/reports"], ["tasks", "/notifications"]].find(([key]) => features[key])?.[1] || "/store-home";
 }

@@ -2,7 +2,7 @@ import { test, expect } from '../../../../frontend/node_modules/@playwright/test
 
 const id = '00000000-0000-4000-8000-000000000001';
 const storeId = '00000000-0000-4000-8000-000000000011';
-const allFeatures = { customers: true, sales: true, attendance: true, callbacks: true, reminders: true, reports: true, tasks: true };
+const allFeatures = { dashboard: true, customers: true, sales: true, attendance: true, callbacks: true, reminders: true, reports: true, tasks: true };
 
 async function fixture(page, role, features = allFeatures, selectedStore = false) {
   const profile = { id, employee_id: 'QAUSER', name: 'Store QA', email: 'qa@example.test', active: true, role, store_id: role === 'super_admin' ? null : storeId };
@@ -25,7 +25,7 @@ async function fixture(page, role, features = allFeatures, selectedStore = false
     else if (path.includes('/auth/v1/user')) payload = session.user;
     else if (path.includes('/auth/v1/')) payload = {};
     else if (path.endsWith('/store/features/')) payload = { features };
-    else if (path.endsWith('/admin/stores/')) payload = { results: [{ id: storeId, name: 'Kochi Store', features }] };
+    else if (path.endsWith('/admin/stores/')) payload = { results: [{ id: storeId, name: 'Kochi Store', features }], capabilities: { store_features: true } };
     else if (path.includes('/admin/stores/') && path.endsWith('/features/')) payload = { id: storeId, name: 'Kochi Store', features: request.postDataJSON().features };
     else if (path.includes('/rest/v1/')) payload = [];
     return route.fulfill({ json: payload, headers });
@@ -41,13 +41,12 @@ for (const width of [390, 1440]) test(`Super Admin creates a store with contact 
   const dialog = page.getByRole('dialog', { name: 'Add store' });
   await expect(dialog).toBeVisible();
   await dialog.getByLabel('Store name').fill('New Store');
-  await dialog.getByLabel('Contact person').fill('Manager');
+  await dialog.getByLabel('Contact person (optional)').fill('Manager');
   await dialog.getByLabel('Email').fill('manager@example.test');
   await dialog.getByLabel('Phone number').fill('+91 9876543210');
-  await dialog.getByLabel('Street address').fill('1 Test Road');
-  await dialog.getByLabel('City').fill('Kochi');
-  await dialog.getByLabel('State or region').fill('Kerala');
-  await dialog.getByLabel('Postal code').fill('682001');
+  await dialog.getByLabel('Address (optional)').fill('1 Test Road');
+  await expect(dialog.locator('input:not([type=checkbox])')).toHaveCount(5);
+  await expect(dialog.getByRole('switch', { name: 'Dashboard', exact: true })).toBeVisible();
   await dialog.getByRole('switch', { name: 'Attendance, timesheets and overtime' }).uncheck();
   await dialog.getByRole('switch', { name: 'Sales visits and targets' }).uncheck();
   await dialog.getByRole('button', { name: 'Create store' }).click();
@@ -97,4 +96,26 @@ test('store access changes update navigation without a page reload', async ({ pa
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(navigation.getByText('Sales', { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => performance.getEntriesByType('navigation').length)).toBe(before);
+});
+
+test('a store with Dashboard disabled opens an allowed section or its empty workspace', async ({ page }) => {
+  await fixture(page, 'admin', Object.fromEntries(Object.keys(allFeatures).map(key => [key, false])));
+  await page.goto('/dashboard');
+  await expect(page).toHaveURL(/\/store-home$/);
+  await expect(page.getByText('No sections are enabled for this store.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByText('Dashboard', { exact: true })).toHaveCount(0);
+});
+
+test('an older server cannot silently create a store without the new details', async ({ page }) => {
+  const writes = await fixture(page, 'super_admin');
+  await page.route('http://127.0.0.1:54321/functions/v1/crm-api/api/admin/stores/', route => route.fulfill({ json: { results: [] }, headers: { 'access-control-allow-origin': '*' } }));
+  await page.goto('/admin-panel/stores');
+  await page.getByRole('button', { name: 'Add store' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add store' });
+  await dialog.getByLabel('Store name').fill('Pending store');
+  await dialog.getByLabel('Email').fill('qa@example.test');
+  await dialog.getByLabel('Phone number').fill('9876543210');
+  await dialog.getByRole('button', { name: 'Create store' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('awaiting the server update');
+  expect(writes).toEqual([]);
 });

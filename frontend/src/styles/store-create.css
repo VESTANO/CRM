@@ -33,3 +33,10 @@
   .store-create-modal .form-control { min-height: 44px; }
   .store-create-modal .form-control { font-size: 16px; }
 }
+
+.store-create-modal { color: #18253d; font-family: "Segoe UI", Inter, sans-serif; }
+.store-create-modal .btn-primary { background: #3563e9; border-color: #3563e9; color: #fff; --bs-btn-bg: #3563e9; --bs-btn-border-color: #3563e9; --bs-btn-color: #fff; --bs-btn-hover-bg: #254ed0; --bs-btn-hover-border-color: #254ed0; }
+.store-create-modal .form-check-input:checked { background-color: #3563e9; border-color: #3563e9; }
+.store-create-modal .modal-title { overflow-wrap: anywhere; }
+
+.store-create-modal .btn-primary:hover { background: #254ed0; border-color: #254ed0; color: #fff; }
