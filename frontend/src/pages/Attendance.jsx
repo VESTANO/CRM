@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
@@ -385,6 +386,7 @@ function LiveApprovals({ profile, employees, refreshKey }) {
   const [error, setError] = useState("");
   const [reviewing, setReviewing] = useState(null);
   const [comment, setComment] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
   const loadedRef = useRef(false);
   const load = useCallback(async () => {
     if (!profile || !admin) { setLoading(false); return; }
@@ -396,17 +398,49 @@ function LiveApprovals({ profile, employees, refreshKey }) {
   }, [admin, profile]);
   useEffect(() => { load(); }, [load, refreshKey]);
   const review = async (status) => {
-    if (!reviewing) return;
+    if (!reviewing || reviewBusy) return;
+    setReviewBusy(true);
     try { await reviewLiveTimesheetEntry(reviewing.id, status, comment); setReviewing(null); setComment(""); await load(); }
     catch (requestError) { setError(requestError.message || "Unable to review the timesheet entry."); }
+    finally { setReviewBusy(false); }
   };
   if (!admin) return <section className="panel"><h2 className="h5">Admin workspace</h2><p className="text-secondary mb-0">Timesheet approvals are available to attendance administrators.</p></section>;
-  return <section className="timesheet-approvals-panel responsive-table">
+  return <><section className="timesheet-approvals-panel responsive-table">
     <div className="table-panel-header d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">ADMIN WORKSPACE</div><h2 className="h5 mb-1">Timesheet Approvals</h2><p className="text-secondary small mb-0">Review submitted work from the live attendance system.</p></div>{refreshing && <span className="text-secondary small">Refreshing…</span>}</div>
     {error && <div className="alert alert-danger m-3">{error}</div>}
-    {reviewing && <div className="p-3 border-bottom bg-light"><strong>{reviewing.employeeName || reviewing.employeeId} · {reviewing.date}</strong><div className="small text-secondary mt-1">{reviewing.project || "—"}: {reviewing.details || "—"} · {Number(reviewing.totalHours || 0).toFixed(2)} hours</div><textarea aria-label="Approval comment" className="form-control mt-3" rows="2" placeholder="Optional approval comment" value={comment} onChange={(event) => setComment(event.target.value)} /><div className="d-flex gap-2 mt-3"><button className="btn btn-success btn-sm" type="button" onClick={() => review("Approved")}>Approve</button><button className="btn btn-danger btn-sm" type="button" onClick={() => review("Rejected")}>Reject</button><button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => setReviewing(null)}>Cancel</button></div></div>}
     <div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Date</th><th>Employee</th><th>Project & work details</th><th>Time</th><th>Hours</th><th>Work status</th><th>Action</th></tr></thead><tbody>{loading ? <tr><td colSpan="7" className="text-center py-5">Loading approvals…</td></tr> : entries.map((entry) => <tr key={entry.id}><td>{entry.date}</td><td><strong>{entry.employeeName || "—"}</strong><div className="small text-secondary">{entry.employeeId || "—"}</div></td><td><strong>{entry.project || "—"}</strong><div className="small text-secondary">{entry.details || entry.category || "—"}</div></td><td>{entry.startTime || "—"} – {entry.endTime || "—"}</td><td className="fw-semibold">{Number(entry.totalHours || 0).toFixed(2)}h</td><td>{entry.workStatus || "—"}</td><td><button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setReviewing(entry)}>Review</button></td></tr>)}{!loading && !entries.length && <tr><td colSpan="7" className="text-center py-5 text-secondary">No submitted timesheets require approval.</td></tr>}</tbody></table></div>
-  </section>;
+  </section>{reviewing && <TimesheetReviewDialog entry={reviewing} comment={comment} onCommentChange={setComment} onReview={review} onCancel={() => setReviewing(null)} busy={reviewBusy} error={error} />}</>;
+}
+
+function TimesheetReviewDialog({ entry, comment, onCommentChange, onReview, onCancel, busy, error }) {
+  const dialogRef = useRef(null);
+  const cancelRef = useRef(null);
+  useDialogFocus({ open: true, dialogRef, initialFocusRef: cancelRef, onCancel, busy });
+  return createPortal(<>
+    <div className="modal d-block timesheet-review-modal" role="dialog" aria-modal="true" aria-labelledby="timesheet-review-title" ref={dialogRef} tabIndex="-1">
+      <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div className="modal-content">
+          <div className="modal-header">
+            <h2 className="modal-title h5 mb-0" id="timesheet-review-title">Review timesheet</h2>
+            <button type="button" className="btn-close" aria-label="Close review" onClick={onCancel} disabled={busy} />
+          </div>
+          <div className="modal-body">
+            <strong className="d-block">{entry.employeeName || entry.employeeId} · {entry.date}</strong>
+            <div className="small text-secondary mt-1">{entry.project || "—"}: {entry.details || "—"} · {Number(entry.totalHours || 0).toFixed(2)} hours</div>
+            <label className="form-label mt-3" htmlFor="timesheet-review-comment">Approval comment</label>
+            <textarea id="timesheet-review-comment" className="form-control" rows="3" placeholder="Optional approval comment" value={comment} onChange={(event) => onCommentChange(event.target.value)} disabled={busy} />
+            {error && <div className="alert alert-danger mt-3 mb-0" role="alert">{error}</div>}
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-outline-secondary" type="button" ref={cancelRef} onClick={onCancel} disabled={busy}>Cancel</button>
+            <button className="btn btn-danger" type="button" onClick={() => onReview("Rejected")} disabled={busy}>Reject</button>
+            <button className="btn btn-success" type="button" onClick={() => onReview("Approved")} disabled={busy}>Approve</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="modal-backdrop show timesheet-review-backdrop" aria-hidden="true" />
+  </>, document.body);
 }
 
 

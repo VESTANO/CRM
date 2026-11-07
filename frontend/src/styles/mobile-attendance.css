@@ -1,3 +1,30 @@
+.timesheet-review-modal { z-index: 1060; padding: 0.75rem; }
+.timesheet-review-backdrop { z-index: 1055; }
+.timesheet-review-modal .modal-dialog {
+  display: flex;
+  align-items: center;
+  width: min(560px, 100%);
+  max-width: 100%;
+  height: calc(100dvh - 1.5rem);
+  min-height: 0;
+  margin: 0.75rem auto;
+}
+.timesheet-review-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow: hidden;
+}
+.timesheet-review-modal .modal-header,
+.timesheet-review-modal .modal-footer { flex: 0 0 auto; }
+.timesheet-review-modal .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-wrap: anywhere; }
+.timesheet-review-modal .modal-footer { gap: 0.5rem; }
+@media (max-width: 767.98px) {
+  .timesheet-review-modal .btn { min-width: 44px; min-height: 44px; }
+  .timesheet-review-modal .btn-close { flex: 0 0 44px; width: 44px; height: 44px; }
+  .timesheet-review-modal .form-control { min-height: 44px; font-size: 16px; }
+}
+
 .attendance-workspace,
 .attendance-workspace :is(.panel, .summary-card),
 .attendance-overtime {
