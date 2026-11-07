@@ -4,6 +4,7 @@ import { dashboardApi, peekCachedResponse, salesApi } from "../services/api.js";
 import { formatCurrency } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel } from "../components/RequestState.jsx";
+import "../styles/mobile-business.css";
 
 const chartPalette = [
   { fill: "#DCE4E8", border: "#405565", text: "#172B3A" },
@@ -78,7 +79,7 @@ export default function Reports() {
   const maxCustomerCount = Math.max(1, ...(customerStats?.responseStats || []).map((item) => item.count));
   const maxVisitCount = Math.max(1, ...(visitStats?.statuses || []).map((item) => item.count));
 
-  return <>
+  return <div className="business-reports">
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active" aria-current="page">Reports</li></ol></nav>
     <div className="page-header mb-4"><div><div className="eyebrow">CRM Overview</div><h1 className="h2 mb-2">Reports</h1><p className="text-secondary mb-0">Customer responses and sales activity at a glance.</p></div></div>
     {error && <div className="alert alert-warning" role="alert">{error} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={load}>Retry</button></div>}
@@ -104,7 +105,7 @@ export default function Reports() {
         <div className="col-lg-6"><h3 className="h6 mb-3">Visits over the last 6 months</h3>{visitStats.recentMonths.every((item) => item.count === 0) ? <p className="text-secondary mb-0">No visits recorded in this period.</p> : <MonthlyTrend months={visitStats.recentMonths} />}</div>
       </div>
     </section> : !error && <LoadingPanel label="Loading sales insights" />}
-  </>;
+  </div>;
 }
 
 function Summary({ label, value, icon }) {
@@ -121,6 +122,7 @@ function MonthlyTrend({ months }) {
   const [activeIndex, setActiveIndex] = useState(null);
   const [ref, isVisible] = useRevealOnView();
   const max = Math.max(1, ...months.map((month) => month.count));
+  const needsLegend = months.some((month) => month.count > 999);
   const points = months.map((month, index) => {
     const x = 8 + (index * 84) / (months.length - 1);
     const y = 70 - (month.count / max) * 42;
@@ -129,13 +131,13 @@ function MonthlyTrend({ months }) {
   const path = points.map(({ x, y }, index) => `${index ? "L" : "M"} ${x} ${y}`).join(" ");
   const scatterOffsets = [[-18, -18], [8, -25], [19, 12], [-12, 20], [20, -16], [-17, 10]];
 
-  return <div ref={ref} className={`reports-trend reports-chart-reveal ${isVisible ? "is-visible" : ""}`} role="img" aria-label={`Visit counts over the last six months: ${months.map(({ label, count }) => `${label} ${count}`).join(", ")}`} onMouseLeave={() => setActiveIndex(null)}>
+  return <><div ref={ref} className={`reports-trend reports-chart-reveal ${isVisible ? "is-visible" : ""} ${needsLegend ? "reports-trend--large-counts" : ""}`} role="img" aria-label={`Visit counts over the last six months: ${months.map(({ label, count }) => `${label} ${count}`).join(", ")}`} onMouseLeave={() => setActiveIndex(null)}>
     <svg className="reports-trend-line" viewBox="0 0 100 80" preserveAspectRatio="none" aria-hidden="true">
       <path d={path} pathLength="100" />
     </svg>
     <div className="reports-trend-markers" aria-hidden="true">{points.map((point, index) => <span className={`reports-trend-marker ${point.count ? "has-visits" : "no-visits"} ${activeIndex === index ? "is-active" : ""}`} key={point.key} style={{ left: `${point.x}%`, top: `${(point.y / 80) * 100}%`, "--scatter-x": `${scatterOffsets[index % scatterOffsets.length][0]}px`, "--scatter-y": `${scatterOffsets[index % scatterOffsets.length][1]}px` }} onMouseEnter={() => setActiveIndex(index)}><AnimatedNumber value={point.count} active={isVisible} /></span>)}</div>
     <div className="reports-trend-months" aria-hidden="true">{points.map((point, index) => <span className={activeIndex === index ? "is-active" : ""} key={point.key} onMouseEnter={() => setActiveIndex(index)}>{point.label}</span>)}</div>
-  </div>;
+  </div>{needsLegend && <dl className="reports-trend-values" aria-label="Monthly visit totals">{months.map((month) => <div key={month.key}><dt>{month.label}</dt><dd><AnimatedNumber value={month.count} active={isVisible} /></dd></div>)}</dl>}</>;
 }
 
 function useRevealOnView() {

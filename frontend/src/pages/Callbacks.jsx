@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { callbacksApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
+import { useDialogFocus } from "../hooks/useDialogFocus.js";
+import "../styles/mobile-business.css";
 
 
 const defaultFilters = { preset: "today", date: "", sort: "asc" };
@@ -141,7 +143,7 @@ export default function Callbacks() {
       {!data && !error ? (
         <div className="panel">Loading callbacks...</div>
       ) : results.length > 0 ? (
-        <div className="table-responsive panel p-0 responsive-table" id="callback-results" tabIndex="-1">
+        <div className="table-responsive panel p-0 responsive-table business-table" id="callback-results" tabIndex="-1">
           <table className="table table-hover align-middle mb-0">
             <thead className="table-light">
               <tr><th>Customer</th><th>Dataset</th><th>Phone</th><th>{showingCalledBack ? "Called Back At" : "Callback Date"}</th>{showingCalledBack && <th>Called Back By</th>}<th>Status</th><th>Note</th><th>Actions</th></tr>
@@ -218,10 +220,13 @@ function FilterButton({ active, children, onClick }) {
 
 
 function CallbackOutcomeDialog({ customerName, choices, value, busy, onChange, onCancel, onConfirm }) {
+  const dialogRef = useRef(null);
+  const statusRef = useRef(null);
+  useDialogFocus({ open: true, dialogRef, initialFocusRef: statusRef, onCancel, busy });
   return (
     <>
-      <div className="modal d-block" tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="callback-outcome-title">
-        <div className="modal-dialog modal-dialog-centered">
+      <div className="modal d-block business-dialog" ref={dialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="callback-outcome-title">
+        <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
           <div className="modal-content">
             <div className="modal-header">
               <h2 className="modal-title fs-5" id="callback-outcome-title">Complete Callback</h2>
@@ -233,6 +238,7 @@ function CallbackOutcomeDialog({ customerName, choices, value, busy, onChange, o
               <select
                 className="form-select"
                 id="callback-outcome-status"
+                ref={statusRef}
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 autoFocus

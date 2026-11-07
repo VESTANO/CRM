@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { customersApi, peekCachedResponse } from "../services/api.js";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
 import TimedAlert from "../components/TimedAlert.jsx";
+import "../styles/mobile-business.css";
 
 export default function CustomerDetail() {
   const { datasetId, recordId, id } = useParams();
@@ -119,7 +120,7 @@ export function CustomerChangeHistory({ entries, className = "mb-4" }) {
       {rows.length === 0 ? (
         <p className="text-secondary mb-0">No CRM changes have been recorded yet.</p>
       ) : (
-        <div className="table-responsive customer-change-history">
+        <div className="table-responsive customer-change-history business-table">
           <table className="table table-hover align-middle mb-0 customer-change-table">
             <thead className="table-light">
               <tr>

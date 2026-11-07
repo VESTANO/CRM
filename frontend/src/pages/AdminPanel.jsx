@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
@@ -7,6 +7,8 @@ import { useAuth } from "../hooks/useAuth.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 import TaskImagePicker from "../components/TaskImagePicker.jsx";
 import { appendPhotoUploads } from "../utils/photoCompression.js";
+import { useDialogFocus } from "../hooks/useDialogFocus.js";
+import "../styles/mobile-business.css";
 
 function getTargetsForUser(targets, userId) {
   return targets?.filter((target) => target.userId === userId) || [];
@@ -49,6 +51,10 @@ export default function AdminPanel() {
   const [taskImages, setTaskImages] = useState([]);
   const [taskImagePreparing, setTaskImagePreparing] = useState(false);
   const { csrfToken, user } = useAuth();
+  const targetDialogRef = useRef(null), targetMonthRef = useRef(null);
+  const taskDialogRef = useRef(null), taskTitleRef = useRef(null);
+  useDialogFocus({ open: Boolean(targetUser), dialogRef: targetDialogRef, initialFocusRef: targetMonthRef, onCancel: () => closeTargetModal(), busy: targetSaving });
+  useDialogFocus({ open: Boolean(taskUser), dialogRef: taskDialogRef, initialFocusRef: taskTitleRef, onCancel: () => closeTaskModal(), busy: taskSaving || taskImagePreparing });
 
   const loadTargets = async () => {
     setTargetsLoading(true);
@@ -296,7 +302,7 @@ export default function AdminPanel() {
           <p className="text-secondary small mb-0">CRM account access and dataset target progress overview.</p>
         </div>
         <p className="table-scroll-hint">Scroll horizontally to see all user details and actions.</p>
-        <div className="table-responsive" tabIndex={0} role="region" aria-label="CRM users table, scroll horizontally to see all columns">
+        <div className="table-responsive business-table" tabIndex={0} role="region" aria-label="CRM users table, scroll horizontally to see all columns">
           <table className="table table-hover align-middle mb-0 admin-users-table">
             <thead className="table-light">
               <tr>
@@ -439,30 +445,31 @@ export default function AdminPanel() {
       </div>
 
       {targetUser && (
-        <div className="modal d-block" tabIndex="-1" style={{ background: "rgba(0,0,0,0.5)" }}>
+        <div className="modal d-block business-dialog" ref={targetDialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="target-dialog-title" style={{ background: "rgba(0,0,0,0.5)" }}>
           <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header">
                 <div>
-                  <h5 className="modal-title">
+                  <h5 className="modal-title" id="target-dialog-title">
                     {targetBeingEdited ? "Edit Dataset Target" : "Assign Dataset Target"}
                   </h5>
                   <div className="text-secondary small">{targetUser.username}</div>
                 </div>
-                <button type="button" className="btn-close" onClick={closeTargetModal} />
+                <button type="button" className="btn-close" aria-label="Close target assignment" onClick={closeTargetModal} disabled={targetSaving} />
               </div>
               <div className="modal-body">
                 {targetMessage && (
                   <div className={`alert alert-${targetMessageType}`}>{targetMessage}</div>
                 )}
                 <div className="mb-3">
-                  <label className="form-label">Sales User</label>
-                  <input className="form-control" value={targetUser.username} disabled />
+                  <label className="form-label" htmlFor="target-sales-user">Sales User</label>
+                  <input className="form-control" id="target-sales-user" value={targetUser.username} disabled />
                 </div>
                 <div className="mb-3">
                   <label className="form-label" htmlFor="target-month">Target Month</label>
                   <input
                     id="target-month"
+                    ref={targetMonthRef}
                     className="form-control"
                     type="month"
                     value={targetMonth}
@@ -471,8 +478,9 @@ export default function AdminPanel() {
                   <div className="form-text">Converted sales visits in this month will count toward the target.</div>
                 </div>
                 <div>
-                  <label className="form-label">Target - Converted Clients</label>
+                  <label className="form-label" htmlFor="target-converted-clients">Target - Converted Clients</label>
                   <input
+                    id="target-converted-clients"
                     className="form-control"
                     type="number"
                     min="1"
@@ -501,12 +509,12 @@ export default function AdminPanel() {
       )}
 
       {taskUser && (
-        <div className="modal d-block" tabIndex="-1" style={{ background: "rgba(0,0,0,0.5)" }}>
+        <div className="modal d-block business-dialog" ref={taskDialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="task-assignment-dialog-title" style={{ background: "rgba(0,0,0,0.5)" }}>
           <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header">
                 <div>
-                  <h5 className="modal-title">Assign Task</h5>
+                  <h5 className="modal-title" id="task-assignment-dialog-title">Assign Task</h5>
                   <div className="text-secondary small">{taskUser.username}</div>
                 </div>
                 <button type="button" className="btn-close" aria-label="Close task assignment" onClick={closeTaskModal} disabled={taskSaving} />
@@ -519,6 +527,7 @@ export default function AdminPanel() {
                   <label className="form-label" htmlFor="task-title">Task</label>
                   <input
                     id="task-title"
+                    ref={taskTitleRef}
                     className="form-control"
                     maxLength={255}
                     value={taskValues.title}

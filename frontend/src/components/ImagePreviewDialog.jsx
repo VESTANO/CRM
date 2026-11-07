@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { lockDocumentScroll } from "../utils/documentScrollLock.js";
 
 export default function ImagePreviewDialog({ images, initialIndex = 0, onClose }) {
   const dialog = useRef(null);
@@ -9,13 +10,12 @@ export default function ImagePreviewDialog({ images, initialIndex = 0, onClose }
   const photo = images[index];
   useEffect(() => {
     const previouslyFocused = document.activeElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseScroll = lockDocumentScroll();
     const modal = dialog.current;
     modal.showModal();
     return () => {
       modal.close();
-      document.body.style.overflow = previousOverflow;
+      releaseScroll();
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
   }, []);

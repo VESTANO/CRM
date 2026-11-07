@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import { datasetsApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import TimedAlert from "../components/TimedAlert.jsx";
+import "../styles/mobile-business.css";
 
 export default function DatasetDetail() {
   const { id } = useParams();
@@ -253,7 +254,7 @@ function SheetTable({ dataset, sheet }) {
           <p className="text-secondary small mb-0">Original Excel columns first, CRM fields last.</p>
         </div>
       </div>
-      <div className="table-responsive customer-table-wrapper">
+      <div className="table-responsive customer-table-wrapper business-table">
         <table className="table table-sm table-hover align-middle crm-table mb-0">
           <thead className="table-light">
             <tr>

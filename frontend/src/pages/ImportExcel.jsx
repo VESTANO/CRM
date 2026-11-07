@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { importApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import TimedAlert from "../components/TimedAlert.jsx";
+import "../styles/mobile-business.css";
 
 export default function ImportExcel() {
   const { csrfToken } = useAuth();
@@ -187,7 +188,7 @@ function InspectionSummary({ result, onConfirm, isConfirming }) {
 
           <h4 className="h6 mt-4">Masked Preview</h4>
           {sheet.preview_rows.length ? (
-            <div className="table-responsive">
+            <div className="table-responsive business-table">
               <table className="table table-sm table-hover align-middle crm-table">
                 <thead className="table-light">
                   <tr>

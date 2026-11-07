@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CustomerChangeHistory, FieldRows } from "./CustomerDetail.jsx";
 import { customersApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { formatDate, formatDateTime } from "../utils/formatters.js";
+import { useDialogFocus } from "../hooks/useDialogFocus.js";
 
 export default function CustomerEdit() {
   const { datasetId, recordId } = useParams();
@@ -226,10 +227,13 @@ export default function CustomerEdit() {
 }
 
 function CallbackDateDialog({ value, error, onChange, onCancel, onConfirm }) {
+  const dialogRef = useRef(null);
+  const dateRef = useRef(null);
+  useDialogFocus({ open: true, dialogRef, initialFocusRef: dateRef, onCancel });
   return (
     <>
-      <div className="modal d-block" tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="callback-date-dialog-title">
-        <div className="modal-dialog modal-dialog-centered">
+      <div className="modal d-block business-dialog" ref={dialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="callback-date-dialog-title">
+        <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
           <div className="modal-content">
             <div className="modal-header">
               <h2 className="modal-title fs-5" id="callback-date-dialog-title">Set Callback Date</h2>
@@ -240,6 +244,7 @@ function CallbackDateDialog({ value, error, onChange, onCancel, onConfirm }) {
               <input
                 className={`form-control ${error ? "is-invalid" : ""}`}
                 id="callback-date-dialog-input"
+                ref={dateRef}
                 type="date"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}

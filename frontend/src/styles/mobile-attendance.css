@@ -1,0 +1,105 @@
+.attendance-workspace,
+.attendance-workspace :is(.panel, .summary-card),
+.attendance-overtime {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.attendance-workspace :is(h1, h2, h3, p, strong, .alert),
+.attendance-overtime :is(strong, .alert) {
+  overflow-wrap: anywhere;
+}
+
+.attendance-workspace .row > *,
+.attendance-workspace .table-panel-header > * {
+  min-width: 0;
+}
+
+.attendance-workspace .table-responsive,
+.attendance-overtime .table-responsive {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+@media (max-width: 991.98px) {
+  .workspace-shell .attendance-workspace :is(.btn, .form-control, .form-select),
+  .workspace-shell .attendance-overtime :is(.btn, .form-control, .form-select) {
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 1rem;
+    line-height: 1.4;
+  }
+
+  .attendance-workspace .btn,
+  .attendance-overtime .btn {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .content-wrap .attendance-workspace .responsive-table:not(:has(td[data-label])) td,
+  .attendance-workspace .table td,
+  .attendance-overtime .table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .attendance-workspace .table td :is(strong, div),
+  .attendance-overtime .table td :is(strong, div) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .attendance-overtime .table-responsive > table {
+    min-width: 780px;
+  }
+
+  .attendance-workspace .timesheet-approvals-panel .bg-light .d-flex {
+    flex-wrap: wrap;
+  }
+
+  .attendance-workspace .timesheet-entry-modal .modal-header {
+    gap: 0.75rem;
+  }
+
+  .attendance-workspace .timesheet-entry-modal .btn-close {
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0;
+    background-size: 1rem;
+  }
+
+  .attendance-workspace .timesheet-entry-modal .modal-body.row {
+    margin-inline: 0;
+  }
+
+  .attendance-workspace .timesheet-entry-modal .modal-footer .btn {
+    flex: 1 1 120px;
+  }
+
+  .attendance-workspace .timesheet-entry-modal .form-check {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 44px;
+    margin-inline: 0 !important;
+    padding-left: 0;
+  }
+
+  .attendance-workspace .timesheet-entry-modal .form-check-input {
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    float: none;
+    margin: 0;
+  }
+
+  .attendance-workspace .timesheet-entry-modal .form-check-label {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}

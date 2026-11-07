@@ -1,5 +1,5 @@
-import { Suspense, useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from "react-router-dom";
 import { Offcanvas } from "bootstrap";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
@@ -9,6 +9,7 @@ import { callbacksApi, warmNavigationData } from "../services/api.js";
 import { prefetchNavigation } from "../services/navigationPrefetch.js";
 import { RouteLoadingIndicator } from "../components/RequestState.jsx";
 import { activeStoreId, clearSelectedStore } from "../services/storeContext.js";
+import { lockDocumentScroll, recoverOrphanedScrollLock } from "../utils/documentScrollLock.js";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: "bi-grid-1x2" },
@@ -51,12 +52,56 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const { profile: attendanceProfile, isLoading: attendanceAuthLoading } = useAttendanceAuth();
   const location = useLocation();
+  const navigationType = useNavigationType();
+  const previousPath = useRef(null);
   const { unreadCount: notificationCount } = useTaskNotifications();
   const [todayCallbackCount, setTodayCallbackCount] = useState(0);
   const initial = user?.username?.charAt(0)?.toUpperCase() || "U";
   const roleLabel = user?.is_superuser ? "Super Admin" : user?.is_admin ? "Admin" : "User";
   const isDashboard = location.pathname === "/dashboard" || location.pathname === "/";
   const selectedSuperAdminStore = Boolean(user?.is_superuser && activeStoreId());
+
+  useLayoutEffect(() => {
+    // Native POP restoration owns Back/Forward; filters retain their position.
+    if (navigationType !== "POP" && previousPath.current !== location.pathname) {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
+    previousPath.current = location.pathname;
+  }, [location.key, location.pathname, navigationType]);
+
+  useEffect(() => {
+    const menu = document.getElementById("mobileNav");
+    let releaseScroll;
+    const lock = () => { releaseScroll ||= lockDocumentScroll(); };
+    const unlock = () => { releaseScroll?.(); releaseScroll = undefined; };
+    const desktop = window.matchMedia("(min-width: 992px)");
+    const closeOnDesktop = () => { if (desktop.matches) Offcanvas.getInstance(menu)?.hide(); };
+    recoverOrphanedScrollLock();
+    menu.addEventListener("show.bs.offcanvas", lock);
+    menu.addEventListener("hidden.bs.offcanvas", unlock);
+    window.addEventListener("pageshow", recoverOrphanedScrollLock);
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => {
+      menu.removeEventListener("show.bs.offcanvas", lock);
+      menu.removeEventListener("hidden.bs.offcanvas", unlock);
+      window.removeEventListener("pageshow", recoverOrphanedScrollLock);
+      desktop.removeEventListener("change", closeOnDesktop);
+      const instance = Offcanvas.getInstance(menu);
+      if (instance) {
+        if (menu.matches(".show,.showing")) {
+          menu.addEventListener("hidden.bs.offcanvas", () => instance.dispose(), { once: true });
+          instance.hide();
+        } else instance.dispose();
+      }
+      unlock();
+    };
+  }, []);
+
+  useEffect(() => {
+    const menu = document.getElementById("mobileNav");
+    if (menu.matches(".show,.showing")) Offcanvas.getInstance(menu)?.hide();
+    recoverOrphanedScrollLock();
+  }, [location.key]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -127,7 +172,7 @@ export default function AppLayout() {
         <UserPanel user={user} initial={initial} roleLabel={roleLabel} logout={logout} />
       </aside>
 
-      <div className="offcanvas offcanvas-start" tabIndex="-1" id="mobileNav" aria-labelledby="mobileNavLabel">
+      <div className="offcanvas offcanvas-start" tabIndex="-1" id="mobileNav" data-bs-scroll="true" aria-labelledby="mobileNavLabel">
         <div className="offcanvas-header">
           <h2 className="h5 offcanvas-title" id="mobileNavLabel">VESTANO CRM</h2>
           <button type="button" className="btn-close" data-bs-dismiss="offcanvas" aria-label="Close" />
@@ -186,8 +231,6 @@ function Navigation({ user, mobile = false, attendanceProfile, attendanceAuthLoa
     event.preventDefault();
     const menu = document.getElementById("mobileNav");
     menu.addEventListener("hidden.bs.offcanvas", () => {
-      document.querySelectorAll(".offcanvas-backdrop").forEach((backdrop) => backdrop.remove());
-      document.body.classList.remove("modal-open");
       navigate(path);
     }, { once: true });
     Offcanvas.getOrCreateInstance(menu).hide();

@@ -1,5 +1,74 @@
 @import "../../../backend/static/css/styles.css";
 
+/* Let the document remain the one vertical scroll container. Bootstrap owns
+   its offcanvas lifecycle; CRM-owned dialogs use this balanced class instead. */
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100dvh;
+}
+
+body.crm-dialog-open {
+  overflow: hidden;
+}
+
+.workspace-shell,
+.app-main {
+  min-height: 100dvh;
+}
+
+.offcanvas {
+  -webkit-overflow-scrolling: touch;
+}
+
+.crm-confirmation-dialog {
+  z-index: 1060;
+}
+
+.crm-confirmation-backdrop {
+  z-index: 1055;
+}
+
+.crm-confirmation-dialog .modal-dialog {
+  margin: 1rem auto;
+}
+
+.crm-confirmation-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+}
+
+.crm-confirmation-icon.tone-primary {
+  color: #137255;
+  background: #e9f7f0;
+}
+
+.crm-confirmation-icon.tone-danger {
+  color: #b13d53;
+  background: #fceef1;
+}
+
+.crm-confirmation-details {
+  padding: 0.85rem 1rem;
+  border: 1px solid #e5eaf2;
+  border-radius: 0.6rem;
+  background: #f7f9fc;
+}
+
+@media (max-width: 575.98px) {
+  .crm-confirmation-dialog .modal-dialog {
+    min-height: calc(100dvh - 2rem);
+  }
+}
+
 .crm-status-page {
   min-height: 100dvh;
   display: flex;

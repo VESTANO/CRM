@@ -6,6 +6,7 @@ import { formatDateTime } from "../utils/formatters.js";
 import { filterDatasets } from "../utils/datasets.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
+import "../styles/mobile-business.css";
 
 export default function DatasetList() {
   const { user } = useAuth();
@@ -165,7 +166,7 @@ export default function DatasetList() {
         <LoadingPanel label="Loading customer lists" />
       ) : filteredDatasets.length ? (
         <>
-          <div className="table-responsive panel p-0 responsive-table">
+          <div className="table-responsive panel p-0 responsive-table business-table">
             <table className="table table-hover align-middle mb-0">
               <thead className="table-light">
                 <tr>

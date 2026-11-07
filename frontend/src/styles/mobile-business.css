@@ -1,0 +1,61 @@
+/* Long imported values remain readable inside the existing scrolling tables. */
+.content-wrap .table-responsive.business-table .table > :not(caption) > * > * {
+  min-width: 9rem;
+  max-width: min(24rem, 80vw);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: normal;
+}
+.content-wrap .table-responsive.business-table td:is([data-label="Actions"], .actions-cell) {
+  min-width: 17.5rem;
+  max-width: none;
+  white-space: nowrap;
+}
+.content-wrap .table-responsive.business-table td:is([data-label="Visit Date"], [data-label="Callback Date"], [data-label="Expense"], [data-label="Meeting Time"]) {
+  white-space: nowrap;
+}
+.content-wrap .business-table .sales-note-value {
+  inline-size: 20rem;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.content-wrap .business-table td[data-label="Targets"] .badge {
+  max-width: 24rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* Large trend values need a readable legend rather than overlapping circles. */
+.business-reports .reports-trend--large-counts .reports-trend-marker {
+  width: 14px;
+  height: 14px;
+  font-size: 0;
+}
+.business-reports .reports-trend-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .65rem;
+  margin: .75rem 0 0;
+  font-size: .82rem;
+  font-variant-numeric: tabular-nums;
+}
+.business-reports .reports-trend-values > div { min-width: 0; }
+.business-reports .reports-trend-values dt { color: #6c7b91; font-weight: 500; }
+.business-reports .reports-trend-values dd { margin: .15rem 0 0; overflow-wrap: anywhere; font-weight: 650; }
+.business-dialog .modal-body { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.business-dialog .modal-content { max-height: calc(100dvh - 1rem); }
+.business-dialog .modal-header > div { min-width: 0; overflow-wrap: anywhere; }
+
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  .metric-grid:has(> .sales-expense-card) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .metric-grid > .sales-expense-card { grid-column: 1 / -1; }
+}
+
+@media (max-width: 767.98px) {
+  .business-reports .reports-breakdown-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: .35rem; }
+  .business-reports .reports-breakdown-track { grid-column: 1 / -1; grid-row: 2; }
+  .business-reports .reports-breakdown-count { white-space: nowrap; }
+  .business-reports .reports-summary-currency .reports-summary-value { font-size: clamp(1rem, 4.2vw, 1.6rem); white-space: normal; }
+  .business-reports .reports-trend-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

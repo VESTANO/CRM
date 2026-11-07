@@ -1,0 +1,55 @@
+.tasks-workspace,
+.task-notifications-workspace,
+.reminders-workspace {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tasks-workspace .admin-tasks-table :is(td[data-label="Task"], td[data-label="Details"]) {
+  max-width: 22rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.tasks-workspace .admin-tasks-table :is(td[data-label="User"], td[data-label="Assigned By"]) {
+  max-width: 14rem;
+  overflow-wrap: anywhere;
+}
+
+.reminders-workspace .reminder-content {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.reminders-workspace .reminder-actions {
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .task-review-form .btn,
+  .tasks-workspace .btn,
+  .task-notifications-workspace .btn,
+  .reminders-workspace .btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .task-notifications-workspace .task-notification-item :is(a, button) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .task-notifications-workspace .task-submission-history > summary,
+  .tasks-workspace .task-submission-history > summary {
+    min-height: 44px;
+    padding-block: .65rem;
+  }
+
+  .task-notifications-workspace .form-control,
+  .task-review-form .form-control,
+  .reminders-workspace .form-control {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+}

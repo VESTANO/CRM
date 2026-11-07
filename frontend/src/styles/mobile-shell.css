@@ -1,0 +1,51 @@
+/* Phone/tablet controls only; desktop dimensions and page-specific table
+   layouts stay with their existing components. */
+@media (max-width: 991.98px) {
+  .workspace-shell .btn,
+  .workspace-shell .btn.btn-sm,
+  .workspace-shell .mobile-menu-button,
+  .workspace-shell .sidebar-sublink,
+  .workspace-shell .sidebar-attendance-toggle,
+  .luxe-login .btn,
+  .crm-status-page .btn,
+  .crm-confirmation-dialog .btn,
+  .task-image-modal .btn { min-height: 44px; }
+
+  .workspace-shell .mobile-menu-button,
+  .workspace-shell .sidebar-attendance-toggle,
+  .workspace-shell .btn-close,
+  .crm-confirmation-dialog .btn-close,
+  .task-image-modal .btn-close {
+    box-sizing: border-box;
+    flex: 0 0 44px;
+    min-width: 44px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0.75rem;
+  }
+
+  .workspace-shell :is(.form-control,.form-select),
+  .luxe-login :is(.form-control,.form-select),
+  .crm-status-page :is(.form-control,.form-select),
+  .crm-confirmation-dialog :is(.form-control,.form-select) {
+    min-width: 0;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .crm-confirmation-dialog .modal-header > .d-flex { min-width: 0; }
+  .crm-confirmation-dialog .modal-header .modal-title { overflow-wrap: anywhere; }
+  .workspace-shell #mobileNav .offcanvas-header .btn-close { margin: -0.25rem -0.25rem -0.25rem auto; }
+  .luxe-login .btn-link.btn-sm { min-width: 44px; padding: 0.5rem 0 !important; }
+
+  .task-image-modal-content { max-height: 94dvh; overflow: hidden; }
+  .task-image-modal-header,
+  .task-image-modal-footer { flex-shrink: 0; }
+  .task-image-modal-header > div {
+    min-width: 0;
+    max-height: 25dvh;
+    overflow-y: auto;
+  }
+  .task-image-modal .task-image-full { flex: 1 1 auto; min-height: 0; object-fit: contain; }
+}
