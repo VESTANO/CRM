@@ -51,7 +51,7 @@ function cacheKey(url, params = {}) {
     .sort(([first], [second]) => first.localeCompare(second))
     .map(([key, value]) => `${key}=${String(value)}`)
     .join("&");
-  return `${cacheScope}|${url}?${query}`;
+  return `${cacheScope}|store:${activeStoreId() || "all"}|${url}?${query}`;
 }
 
 export function setApiCacheScope(userId) {
@@ -71,7 +71,7 @@ export function invalidateApiCache(...urlPrefixes) {
     clearApiCache();
     return;
   }
-  const scopedPrefix = `${cacheScope}|`;
+  const scopedPrefix = `${cacheScope}|store:${activeStoreId() || "all"}|`;
   for (const key of getCache.keys()) {
     if (!key.startsWith(scopedPrefix)) continue;
     const url = key.slice(scopedPrefix.length).split("?")[0];

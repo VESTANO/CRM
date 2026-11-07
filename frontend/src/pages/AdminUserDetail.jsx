@@ -67,7 +67,7 @@ export default function AdminUserDetail() {
             <h2 className="h5 mb-3">Account information</h2>
             <Info label="Username" value={user.username} />
             <Info label="Email" value={user.email || "No email"} />
-            <Info label="Role" value={user.is_admin ? "Admin" : "User"} />
+            <Info label="Role" value={user.is_superuser ? "Super Admin" : user.is_admin ? "Admin" : "User"} />
             <Info label="Account status" value={user.is_active ? "Active" : "Inactive"} />
             <Info label="Date joined" value={formatDateTime(user.date_joined)} />
           </section>

@@ -4,6 +4,7 @@ import { adminApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { useAuth } from "../hooks/useAuth.jsx";
+import { activeStoreId } from "../services/storeContext.js";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 import TaskImagePicker from "../components/TaskImagePicker.jsx";
 import { appendPhotoUploads } from "../utils/photoCompression.js";
@@ -228,9 +229,9 @@ export default function AdminPanel() {
         </div>
         <div className="d-flex gap-2">
           {user?.is_superuser && <Link className="btn btn-outline-secondary" to="/admin-panel/stores"><i className="bi bi-arrow-left me-1" />Back to Stores</Link>}
-          <Link className="btn btn-primary" to="/admin-panel/users/add">
+          <Link className="btn btn-primary" to={user?.is_superuser ? activeStoreId() ? `/admin-panel/users/add?store=${activeStoreId()}` : "/admin-panel/stores" : "/admin-panel/users/add"}>
             <i className="bi bi-person-plus me-1" />
-            Add User
+            {user?.is_superuser && !activeStoreId() ? "Choose store to add user" : "Add User"}
           </Link>
         </div>
       </div>
@@ -333,7 +334,7 @@ export default function AdminPanel() {
                     </td>
                     <td data-label="Email">{user.email || "No email"}</td>
                     <td data-label="Role">
-                      <span className="badge text-bg-primary">{user.is_admin ? "Admin" : "User"}</span>
+                      <span className="badge text-bg-primary">{user.is_superuser ? "Super Admin" : user.is_admin ? "Admin" : "User"}</span>
                     </td>
                     <td data-label="Status">
                       <span className={`badge text-bg-${user.is_active ? "success" : "secondary"}`}>
