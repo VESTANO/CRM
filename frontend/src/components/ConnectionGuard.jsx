@@ -10,6 +10,7 @@ export default function ConnectionGuard({ children }) {
   const [reconnected, setReconnected] = useState(false);
   const previousOnline = useRef(navigator.onLine);
   const dismissTimer = useRef();
+  const failedProbes = useRef(0);
 
   const updateStatus = useCallback((connected) => {
     if (connected && !previousOnline.current) {
@@ -26,6 +27,7 @@ export default function ConnectionGuard({ children }) {
 
   const checkConnection = useCallback(async () => {
     if (!navigator.onLine) {
+      failedProbes.current = 0;
       updateStatus(false);
       return false;
     }
@@ -39,10 +41,11 @@ export default function ConnectionGuard({ children }) {
         signal: controller.signal,
       });
       const connected = response.ok;
-      updateStatus(connected);
+      if (connected) { failedProbes.current = 0; updateStatus(true); }
+      else if (++failedProbes.current >= 3) updateStatus(false);
       return connected;
     } catch {
-      updateStatus(false);
+      if (++failedProbes.current >= 3) updateStatus(false);
       return false;
     } finally {
       window.clearTimeout(timeout);
@@ -50,7 +53,7 @@ export default function ConnectionGuard({ children }) {
   }, [updateStatus]);
 
   useEffect(() => {
-    const onOffline = () => updateStatus(false);
+    const onOffline = () => { failedProbes.current = 0; updateStatus(false); };
     const onOnline = () => { checkConnection(); };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);

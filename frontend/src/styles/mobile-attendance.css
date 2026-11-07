@@ -49,6 +49,30 @@
   overscroll-behavior-x: contain;
 }
 
+.attendance-workspace td[data-label="Admin feedback"] {
+  min-width: 11rem;
+  max-width: 22rem;
+}
+
+.attendance-workspace .timesheet-feedback {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.65rem;
+  background: #eef4fb;
+  color: #243b53;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.attendance-workspace .timesheet-feedback .bi {
+  flex: none;
+  color: #3a67ac;
+}
+
 @media (max-width: 991.98px) {
   .workspace-shell .attendance-workspace :is(.btn, .form-control, .form-select),
   .workspace-shell .attendance-overtime :is(.btn, .form-control, .form-select) {

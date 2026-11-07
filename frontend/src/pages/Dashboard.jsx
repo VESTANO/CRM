@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { activeStoreId } from "../services/storeContext.js";
@@ -43,6 +43,7 @@ function StoreDashboard() {
   const [targets, setTargets] = useState(() => (
     location.state?.preloadedTargets || peekCachedResponse("/targets/")?.data?.results || null
   ));
+  const loadingRef = useRef(false);
   const datasetsExpanded = allDatasets !== null;
   const datasets = datasetsExpanded ? allDatasets : dashboard?.recentDatasets || [];
   const pageCount = Math.ceil(datasets.length / 5);
@@ -51,6 +52,8 @@ function StoreDashboard() {
     : datasets;
 
   const load = useCallback(() => {
+    if (loadingRef.current) return Promise.resolve();
+    loadingRef.current = true;
     setError("");
     setTargetsError("");
     const summary = dashboardApi.summary()
@@ -59,10 +62,17 @@ function StoreDashboard() {
     const monthlyTargets = targetsApi.list()
       .then(({ data }) => setTargets(data.results))
       .catch(() => setTargetsError("Unable to load monthly targets."));
-    return Promise.allSettled([summary, monthlyTargets]);
+    return Promise.allSettled([summary, monthlyTargets]).finally(() => { loadingRef.current = false; });
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+    const refreshWhenVisible = () => { if (!document.hidden) void load(); };
+    const timer = window.setInterval(refreshWhenVisible, 30000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", refreshWhenVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refreshWhenVisible); window.removeEventListener("focus", refreshWhenVisible); };
+  }, [load]);
 
   const showAllDatasets = async () => {
     setLoadingDatasets(true);
