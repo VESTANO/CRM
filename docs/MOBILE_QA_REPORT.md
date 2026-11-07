@@ -141,3 +141,11 @@ The user reported that the page appeared to refresh while updating and that an a
 The timesheet now gives approval status and **Admin feedback** separate table columns. The full administrator comment wraps inside its own readable message area; an em dash denotes no comment. Existing approval status, comment data, edit/delete permissions and export data remain unchanged.
 
 The isolated Pages production build passed. Synthetic timesheet checks passed at **320, 390, 768 and 1440 px** for feedback placement, long-text wrapping, no page overflow and no visible Refresh control (**4/4**). Existing attendance, timesheet, approval and deletion browser flows passed at **320 and 390 px** (**2/2**). These tests use local synthetic records and make no production writes. Authenticated hosted behavior and physical-device scrolling remain **CONDITIONAL READY** until checked on a real session/device.
+
+Follow-up commit **`f1fa7b3c21c83c255bb30166c6ff64a3809605a8`** was pushed. The [Pages build and deployment](https://github.com/VESTANO/CRM/actions/runs/42353295942) completed successfully. Anonymous live browser smoke checks passed **8/8 widths** with data-changing requests blocked; the authenticated timesheet still requires a real-session check.
+
+### Store Admin account control follow-up
+
+The hosted Stores page showed **Add Super Admin** to a regular store Admin. The page rendered that link unconditionally although the existing API already limits Super Admin account creation to Super Admins. The heading now identifies a store Admin's view as **Administration**, and only a Super Admin sees the creation link. Directly opening the Super Admin creation form as a store Admin returns to the Stores page. Existing backend authorization and all accounts remain unchanged.
+
+Synthetic browser checks passed for both roles: the store Admin cannot see the link or open the direct form URL; the Super Admin still sees the link and can open its form (**2/2**). The isolated production Pages build passed. Hosted role verification is still **CONDITIONAL READY** pending a live authenticated check; no production user was created during QA.
