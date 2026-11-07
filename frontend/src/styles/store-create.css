@@ -1,0 +1,30 @@
+.store-card,
+.store-card > div > div { min-width: 0; }
+.store-card :is(h3, p) { overflow-wrap: anywhere; }
+
+.store-create-modal { z-index: 1060; padding: 0.75rem; }
+.store-create-backdrop { z-index: 1055; }
+.store-create-modal .modal-dialog {
+  display: flex;
+  align-items: center;
+  width: min(640px, 100%);
+  max-width: 100%;
+  height: calc(100dvh - 1.5rem);
+  margin: 0.75rem auto;
+}
+.store-create-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow: hidden;
+}
+.store-create-modal .modal-header,
+.store-create-modal .modal-footer { flex: none; }
+.store-create-modal .modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.store-create-modal .modal-footer { gap: 0.5rem; }
+@media (max-width: 767.98px) {
+  .store-create-modal .btn,
+  .store-create-modal .btn-close,
+  .store-create-modal .form-control { min-height: 44px; }
+  .store-create-modal .form-control { font-size: 16px; }
+}

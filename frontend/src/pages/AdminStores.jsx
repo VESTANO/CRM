@@ -1,18 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { adminApi, invalidateApiCache } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 import { selectStore } from "../services/storeContext.js";
+import { useDialogFocus } from "../hooks/useDialogFocus.js";
+import "../styles/store-create.css";
+
+const emptyStore = () => ({ name: "", contact_person: "", contact_email: "", contact_phone: "", address_line1: "", city: "", state: "", postal_code: "" });
 
 export default function AdminStores() {
   const { user, csrfToken } = useAuth();
   const navigate = useNavigate();
   const [stores, setStores] = useState(null);
-  const [name, setName] = useState("");
+  const [draft, setDraft] = useState(emptyStore);
+  const [creating, setCreating] = useState(false);
+  const [createErrors, setCreateErrors] = useState({});
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const dialogRef = useRef(null);
+  const nameRef = useRef(null);
   const isSuperAdmin = Boolean(user?.is_superuser);
+  useDialogFocus({ open: creating, dialogRef, initialFocusRef: nameRef, onCancel: () => setCreating(false), busy: saving });
 
   const load = async () => {
     setError("");
@@ -23,13 +33,13 @@ export default function AdminStores() {
 
   const create = async (event) => {
     event.preventDefault();
-    if (!name.trim()) return;
-    setSaving(true); setError("");
+    if (!isSuperAdmin || saving) return;
+    setSaving(true); setCreateErrors({});
     try {
-      await adminApi.createStore({ name: name.trim() }, csrfToken);
-      setName(""); invalidateApiCache("/admin/stores/"); await load();
+      await adminApi.createStore(Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, value.trim()])), csrfToken);
+      setCreating(false); setDraft(emptyStore()); invalidateApiCache("/admin/stores/"); await load();
     } catch (requestError) {
-      setError(requestError.response?.data?.errors?.name?.[0] || "Unable to create the store.");
+      setCreateErrors(requestError.response?.data?.errors || { general: [requestError.response?.data?.detail || "Unable to create the store."] });
     } finally { setSaving(false); }
   };
   const openStore = (storeId) => { selectStore(storeId); invalidateApiCache(); navigate("/dashboard"); };
@@ -39,7 +49,13 @@ export default function AdminStores() {
   return <>
     <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4"><div><div className="text-secondary small mb-1">{isSuperAdmin ? "Super Administration" : "Administration"}</div><h1 className="h2 mb-2">Stores</h1><p className="text-secondary mb-0">Accounts and business data are separated by store.</p></div>{isSuperAdmin && <Link className="btn btn-primary" to="/admin-panel/users/add?role=super_admin">Add Super Admin</Link>}</div>
     {error && <div className="alert alert-danger" role="alert">{error}</div>}
-    {isSuperAdmin && <form className="panel mb-4" onSubmit={create}><label className="form-label" htmlFor="store-name">New store name</label><div className="d-flex gap-2"><input id="store-name" className="form-control" value={name} onChange={(event) => setName(event.target.value)} maxLength="120" placeholder="Example: Store B" required /><button className="btn btn-primary text-nowrap" disabled={saving}>{saving ? "Creating…" : "Add store"}</button></div></form>}
-    <section className="panel"><h2 className="h5">{isSuperAdmin ? "All stores" : "Your store"}</h2><div className="d-grid gap-3">{stores.map((store) => <article key={store.id} className="border rounded p-3"><div className="d-flex flex-wrap justify-content-between gap-2 align-items-center"><div><h3 className="h6 mb-1">{store.name}</h3><p className="text-secondary small mb-0">Manage the Admins and Users for this store.</p></div><div className="d-flex gap-2"><Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users?store=${store.id}`}>Manage users</Link><button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => openStore(store.id)}>Open store</button>{isSuperAdmin && <Link className="btn btn-primary btn-sm" to={`/admin-panel/users/add?store=${store.id}&role=admin`}>Add Admin</Link>}</div></div></article>)}</div></section>
+    {isSuperAdmin && <div className="mb-4"><button className="btn btn-primary" type="button" onClick={() => { setDraft(emptyStore()); setCreateErrors({}); setCreating(true); }}><i className="bi bi-plus-lg me-2" aria-hidden="true" />Add store</button></div>}
+    <section className="panel"><h2 className="h5">{isSuperAdmin ? "All stores" : "Your store"}</h2><div className="d-grid gap-3">{stores.map((store) => <article key={store.id} className="store-card border rounded p-3"><div className="d-flex flex-wrap justify-content-between gap-2 align-items-center"><div><h3 className="h6 mb-1">{store.name}</h3><p className="text-secondary small mb-0">{store.contact_person || store.contact_email || store.contact_phone ? [store.contact_person, store.contact_email, store.contact_phone].filter(Boolean).join(" · ") : "Manage the Admins and Users for this store."}</p>{store.address_line1 && <p className="text-secondary small mb-0">{[store.address_line1, store.city, store.state, store.postal_code].filter(Boolean).join(", ")}</p>}</div><div className="d-flex flex-wrap gap-2"><Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users?store=${store.id}`}>Manage users</Link><button className="btn btn-outline-secondary btn-sm" type="button" onClick={() => openStore(store.id)}>Open store</button>{isSuperAdmin && <Link className="btn btn-primary btn-sm" to={`/admin-panel/users/add?store=${store.id}&role=admin`}>Add Admin</Link>}</div></div></article>)}</div></section>
+    {creating && createPortal(<><div className="modal d-block store-create-modal" ref={dialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="store-create-title"><div className="modal-dialog modal-dialog-centered"><form className="modal-content" onSubmit={create}><div className="modal-header"><div><h2 className="modal-title h5 mb-0" id="store-create-title">Add store</h2><p className="text-secondary small mb-0">Enter the store's contact and address details.</p></div><button className="btn-close" type="button" aria-label="Close store form" onClick={() => setCreating(false)} disabled={saving} /></div><div className="modal-body"><div className="row g-3">{[
+      ["name", "Store name", "text", 120], ["contact_person", "Contact person", "text", 120],
+      ["contact_email", "Email", "email", 254], ["contact_phone", "Phone number", "tel", 20],
+      ["address_line1", "Street address", "text", 240], ["city", "City", "text", 100],
+      ["state", "State or region", "text", 100], ["postal_code", "Postal code", "text", 20],
+    ].map(([key, label, type, maxLength]) => <div className={`col-12 ${["city", "state", "postal_code"].includes(key) ? "col-sm-6" : ""}`} key={key}><label className="form-label" htmlFor={`store-${key}`}>{label}</label><input className={`form-control ${createErrors[key] ? "is-invalid" : ""}`} id={`store-${key}`} ref={key === "name" ? nameRef : undefined} type={type} maxLength={maxLength} required value={draft[key]} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} autoComplete={key === "contact_email" ? "email" : key === "contact_phone" ? "tel" : key === "postal_code" ? "postal-code" : "off"} />{createErrors[key] && <div className="invalid-feedback">{createErrors[key].join(" ")}</div>}</div>)}</div>{createErrors.general && <div className="alert alert-danger mt-3 mb-0" role="alert">{createErrors.general.join(" ")}</div>}</div><div className="modal-footer"><button className="btn btn-outline-secondary" type="button" onClick={() => setCreating(false)} disabled={saving}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? "Creating…" : "Create store"}</button></div></form></div></div><div className="modal-backdrop show store-create-backdrop" aria-hidden="true" /></>, document.body)}
   </>;
 }

@@ -1926,8 +1926,28 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
     if (parts.length === 2 && method === "POST") {
       requireSuperAdmin(ctx);
       const name = valueString(body.name);
-      if (!name || name.length > 120) fail(400, "Enter a store name up to 120 characters.", { errors: { name: ["Enter a store name up to 120 characters."] } });
-      const { data, error } = await adminClient.from("crm_stores").insert({ name, created_by: ctx.user.id }).select("*").single();
+      const contactPerson = valueString(body.contact_person);
+      const contactEmail = valueString(body.contact_email).toLowerCase();
+      const contactPhone = valueString(body.contact_phone);
+      const addressLine1 = valueString(body.address_line1);
+      const city = valueString(body.city);
+      const state = valueString(body.state);
+      const postalCode = valueString(body.postal_code);
+      const errors: Record<string, string[]> = {};
+      if (!name || name.length > 120) errors.name = ["Enter a store name up to 120 characters."];
+      if (!contactPerson || contactPerson.length > 120) errors.contact_person = ["Enter a contact person up to 120 characters."];
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail) || contactEmail.length > 254) errors.contact_email = ["Enter a valid contact email."];
+      if (!/^\+?[0-9][0-9\s().-]{6,19}$/.test(contactPhone) || contactPhone.length > 20) errors.contact_phone = ["Enter a valid phone number with 7 to 20 characters."];
+      if (!addressLine1 || addressLine1.length > 240) errors.address_line1 = ["Enter a street address up to 240 characters."];
+      if (!city || city.length > 100) errors.city = ["Enter a city up to 100 characters."];
+      if (!state || state.length > 100) errors.state = ["Enter a state or region up to 100 characters."];
+      if (!postalCode || postalCode.length > 20) errors.postal_code = ["Enter a postal code up to 20 characters."];
+      if (Object.keys(errors).length) fail(400, "Complete the store details.", { errors });
+      const { data, error } = await adminClient.from("crm_stores").insert({
+        name, contact_person: contactPerson, contact_email: contactEmail,
+        contact_phone: contactPhone, address_line1: addressLine1,
+        city, state, postal_code: postalCode, created_by: ctx.user.id,
+      }).select("*").single();
       checkDb(error);
       return json(201, data);
     }
