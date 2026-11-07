@@ -171,3 +171,9 @@ Local synthetic browser checks passed **4/4** for store Admin restrictions, Supe
 The user clarified that the Super Admin's **Admin Panel** belongs inside a selected store, not in the global sidebar. The global Super Admin menu now contains Stores and Super Admins. Opening a store adds Admin Panel alongside that store's CRM modules on desktop and mobile. Direct navigation to `/admin-panel` without a selected store redirects to Stores before any Admin Panel data request. Store Admin access is unchanged.
 
 Synthetic checks used two distinct stores and confirmed separate Admin Panel counts and Add User destinations, no global Admin Panel request, and the mobile menu changing after a store is opened. Both focused browser scenarios passed. The production Pages build passed. No live store, user, attendance or customer data was changed; authenticated hosted and physical-device checks remain **CONDITIONAL READY**.
+
+### Login workspace theme follow-up
+
+The sign-in screen previously used an orange and ivory editorial theme while the signed-in dashboard uses a navy sidebar, blue actions, white cards and sans-serif typography. The login and password-recovery view now share the dashboard palette and sizing. On small screens, the brand area becomes a compact navy header so the form is reached without a large hero panel. Authentication requests, password visibility, recovery behavior and role routing were left unchanged.
+
+Local browser checks passed at **320, 360, 390, 414, 768 and 1440 px** for the new colors, layout width, sign-in fields and recovery navigation (**6/6**). Existing password visibility/setup checks passed **9/9**, and synthetic employee, Admin and Super Admin sessions retained their existing post-login routes (**3/3**). The Pages production build passed. These checks used no real credentials or production data; physical-device and authenticated hosted appearance remain **CONDITIONAL READY**.

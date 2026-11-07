@@ -1,0 +1,127 @@
+/* The public sign-in surface shares the signed-in dashboard palette and scale. */
+.workspace-login {
+  --luxe-ink: #18253d;
+  --luxe-wine: #3563e9;
+  --luxe-sand: #e5eaf2;
+  --luxe-ivory: #f5f7fb;
+  --bs-primary: #3563e9;
+  --bs-primary-rgb: 53, 99, 233;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  background: #f5f7fb;
+  color: #18253d;
+  font-family: "Segoe UI", Inter, "Aptos", sans-serif;
+  font-size: 0.875rem;
+}
+
+.workspace-login .login-brand-panel {
+  min-width: 0;
+  background: radial-gradient(circle at 12% 85%, #3563e929, transparent 36%), #111d32;
+  color: #f5f7fb;
+}
+.workspace-login .login-brand-top strong { color: #fff; font-size: 0.86rem; letter-spacing: 0.16em; }
+.workspace-login .login-brand-top small { color: #94a3be; letter-spacing: 0.055em; }
+.workspace-login .login-brand-top .brand-mark {
+  color: #fff;
+  background: #3563e9;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px #07112625;
+}
+.workspace-login .login-brand-story { max-width: 530px; }
+.workspace-login .login-eyebrow,
+.workspace-login .login-brand-caption,
+.workspace-login .login-brand-footer { color: #94a3be; }
+.workspace-login .login-brand-story h2 {
+  color: #fff;
+  font-family: inherit;
+  font-size: clamp(2.5rem, 4.4vw, 4.4rem);
+  font-weight: 700;
+  line-height: 1.07;
+  letter-spacing: -0.055em;
+}
+.workspace-login .login-brand-story h2 em { color: #a9bcff; font-style: normal; font-weight: inherit; }
+.workspace-login .login-brand-story p { color: #b8c3d8; line-height: 1.65; }
+.workspace-login .login-brand-rule { background: #ffffff20; }
+.workspace-login .login-brand-caption span:first-child { color: #a9bcff; }
+.workspace-login .login-access-panel { min-width: 0; background: #f5f7fb; }
+.workspace-login .login-access-top,
+.workspace-login .login-access-footer { color: #78869d; letter-spacing: 0.12em; }
+.workspace-login .login-card {
+  width: min(100%, 520px);
+  border: 1px solid #e5eaf2;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px #19305b0b;
+}
+.workspace-login .login-card-mark {
+  width: 43px;
+  height: 43px;
+  margin-bottom: 1.5rem;
+  color: #fff;
+  background: #3563e9;
+  border-radius: 12px;
+}
+.workspace-login .login-card .eyebrow { color: #64748b; letter-spacing: 0.12em; }
+.workspace-login .login-card h1 {
+  color: #18253d;
+  font-family: inherit;
+  font-size: clamp(2rem, 3vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.045em;
+}
+.workspace-login .login-intro { color: #64748b; font-size: 0.875rem; }
+.workspace-login .form-label { color: #253652; font-weight: 650; }
+.workspace-login .form-control {
+  border-color: #dce3ee;
+  border-radius: 8px;
+  color: #253652;
+  background: #fff;
+}
+.workspace-login .form-control:focus {
+  border-color: #7c9aee;
+  box-shadow: 0 0 0 3px #3563e91a;
+}
+.workspace-login .btn-primary {
+  --bs-btn-color: #fff;
+  --bs-btn-bg: #3563e9;
+  --bs-btn-border-color: #3563e9;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #274fc4;
+  --bs-btn-hover-border-color: #274fc4;
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: #274fc4;
+  --bs-btn-active-border-color: #274fc4;
+  --bs-btn-disabled-bg: #7292ef;
+  --bs-btn-disabled-border-color: #7292ef;
+  box-shadow: none;
+}
+.workspace-login .btn:not(:disabled):hover { transform: none; box-shadow: none; }
+.workspace-login .btn-outline-secondary { color: #52627e; border-color: #dce3ee; background: #fff; }
+.workspace-login .btn-link { color: #3563e9; }
+.workspace-login .login-submit { min-height: 48px; border-radius: 8px; font-weight: 650; }
+.workspace-login .login-security-note { color: #64748b; border-color: #edf0f5; }
+.workspace-login .login-security-note i { color: #3563e9; }
+.workspace-login :is(.btn, .form-control):focus-visible { outline: 3px solid #91acf5; outline-offset: 2px; }
+
+@media (max-width: 767.98px) {
+  .workspace-login { display: flex; flex-direction: column; min-height: 100dvh; }
+  .workspace-login .login-brand-panel {
+    min-height: 0;
+    padding: 1rem 1.25rem;
+    flex: none;
+  }
+  .workspace-login .login-brand-story,
+  .workspace-login .login-brand-footer { display: none; }
+  .workspace-login .login-access-panel {
+    flex: 1;
+    min-height: 0;
+    padding: 3.6rem 1rem 4rem;
+  }
+  .workspace-login .login-access-top { top: 1.15rem; }
+  .workspace-login .login-card { padding: 1.5rem; }
+}
+
+@media (max-width: 360px) {
+  .workspace-login .login-access-panel { padding-inline: 0.75rem; }
+  .workspace-login .login-card { padding: 1.25rem; }
+  .workspace-login .login-access-top,
+  .workspace-login .login-access-footer { right: 0.75rem; left: 0.75rem; }
+}
