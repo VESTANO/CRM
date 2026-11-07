@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useAttendanceAuth } from "../hooks/useAttendanceAuth.jsx";
@@ -119,6 +120,18 @@ export default function Attendance({ view = "attendance" }) {
     return () => window.clearInterval(id);
   }, [attendanceProfile, load, mode, view]);
   useEffect(() => {
+    if (mode !== "live" || livePunches || view === "profile" || !attendanceProfile || !permission?.allowed) return undefined;
+    const update = () => {
+      if (document.hidden) return;
+      clearAttendanceReadCache();
+      setRefreshKey((value) => value + 1);
+      void load();
+    };
+    const id = window.setInterval(update, 30000);
+    window.addEventListener("focus", update);
+    return () => { window.clearInterval(id); window.removeEventListener("focus", update); };
+  }, [attendanceProfile, livePunches, load, mode, permission?.allowed, view]);
+  useEffect(() => {
     if (view !== "overview" || !attendanceProfile) return undefined;
     let active = true;
     const refresh = async () => { try { const next = await fetchAttendanceDashboardTotals(attendanceProfile); if (active) setDashboardTotals(next); } catch { /* Overview attendance remains available if totals RPC is unavailable. */ } };
@@ -165,7 +178,7 @@ export default function Attendance({ view = "attendance" }) {
   const saveLiveMapping = async (event) => { event.preventDefault(); try { const matched = await saveLiveAttendanceMapping(mapping.punchCode, mapping.userId); setMessage(`${matched || 0} punches linked successfully.`); setMapping({ punchCode: "", userId: "" }); refresh(); } catch (requestError) { setError(requestError.message || "Unable to link the attendance punch code."); } };
   if (loginRequired) return <AttendanceAccessCard />;
   return <div className={`attendance-workspace attendance-view-${view}`}>
-    <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4"><div><div className="eyebrow">{view === "attendance" ? "ESSL PUNCH RECORDS" : "Vestano International"}</div><h1 className="h2 mb-2">{title}</h1><p className="text-secondary mb-0">{description}</p></div><div className="d-flex align-items-center gap-2">{mode !== "live" || !attendanceProfile ? <span className="badge text-bg-secondary">Attendance unavailable</span> : null}{refreshing && <span className="text-secondary small">Refreshing…</span>}{!loginRequired && <button className="btn btn-outline-secondary" onClick={refresh} disabled={loading}><i className="bi bi-arrow-clockwise me-1" />{refreshing ? "Refreshing" : "Refresh"}</button>}</div></div>
+    <div className="page-header d-flex flex-wrap justify-content-between gap-3 mb-4"><div><div className="eyebrow">{view === "attendance" ? "ESSL PUNCH RECORDS" : "Vestano International"}</div><h1 className="h2 mb-2">{title}</h1><p className="text-secondary mb-0">{description}</p></div><div className="d-flex align-items-center gap-2">{mode !== "live" || !attendanceProfile ? <span className="badge text-bg-secondary">Attendance unavailable</span> : null}</div></div>
     {error && <div className="alert alert-danger">{error}</div>}{message && <div className="alert alert-success">{message}</div>}
     {exportError && <div className="alert alert-danger" role="alert">{exportError}</div>}
     {livePunches && !loading && <p className="text-secondary small" role="status">Punches update automatically.{data.historyLoading ? " Loading earlier attendance…" : ""}</p>}
@@ -360,7 +373,7 @@ function TimesheetView({ profile, employees, refreshKey }) {
       </form></div></div>
     </div><div className="modal-backdrop show timesheet-entry-backdrop" /></>}
     <div className="timesheet-filters p-3 border-bottom"><div className="row g-2 align-items-end"><div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetFrom">From</label><input id="timesheetFrom" className="form-control" type="date" value={filterForm.from} onChange={(event) => setFilterForm({ ...filterForm, from: event.target.value })} /></div><div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetTo">To</label><input id="timesheetTo" className="form-control" type="date" value={filterForm.to} onChange={(event) => setFilterForm({ ...filterForm, to: event.target.value })} /></div><div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetStatus">Approval</label><select id="timesheetStatus" className="form-select" value={filterForm.status} onChange={(event) => setFilterForm({ ...filterForm, status: event.target.value })}><option value="">All statuses</option><option value="Submitted">Submitted</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option></select></div>{admin && <div className="col-6 col-sm-4 col-md-3"><label className="form-label" htmlFor="timesheetEmployee">Employee</label><select id="timesheetEmployee" className="form-select" value={filterForm.employeeId} onChange={(event) => setFilterForm({ ...filterForm, employeeId: event.target.value })}><option value="">All employees</option>{employees.map((employee) => <option key={employee.id} value={employee.employeeId}>{employee.name} ({employee.employeeId})</option>)}</select></div>}<div className="col-6 col-sm-auto"><button className="btn btn-primary w-100" type="button" onClick={applyTimesheetFilters}>Apply</button></div><div className="col-6 col-sm-auto"><button className="btn btn-outline-secondary w-100" type="button" onClick={clearTimesheetFilters}>Clear</button></div></div></div>
-    <div className="table-responsive" id="timesheet-results" tabIndex="-1"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Date</th>{admin && <th>Employee</th>}<th>Project & work details</th><th>Time</th><th>Hours</th><th>Work status</th><th>Approval</th><th>Actions</th></tr></thead><tbody>{loading ? <tr><td colSpan={admin ? 8 : 7} className="text-center py-5">Loading timesheet…</td></tr> : entries.map((entry) => <tr key={entry.id}><td>{entry.date}</td>{admin && <td><strong>{entry.employeeName || "—"}</strong><div className="small text-secondary">{entry.employeeId || "—"}</div></td>}<td><strong>{entry.project || "—"}</strong><div className="small text-secondary">{entry.details || entry.category || "—"}</div>{entry.comments && <div className="small text-secondary">{entry.comments}</div>}</td><td>{entry.startTime || "—"} – {entry.endTime || "—"}</td><td className="fw-semibold">{Number(entry.totalHours || 0).toFixed(2)}h{entry.overtime ? <div className="small text-secondary">{Number(entry.overtime).toFixed(2)} OT</div> : null}</td><td>{entry.workStatus || "—"}</td><td><span className={`badge ${entry.approvalStatus === "Approved" ? "text-bg-success" : entry.approvalStatus === "Rejected" ? "text-bg-danger" : "text-bg-primary"}`}>{entry.approvalStatus || "Submitted"}</span>{entry.approvalComment && <div className="small text-secondary">{entry.approvalComment}</div>}</td><td>{!admin && entry.approvalStatus !== "Approved" && <button className="btn btn-sm btn-outline-secondary me-1" type="button" onClick={() => openEntry(entry)}>Edit</button>}{canDelete && <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => removeEntry(entry.id)}>Delete</button>}</td></tr>)}{!loading && !entries.length && <tr><td colSpan={admin ? 8 : 7} className="text-center py-5 text-secondary">No entries match this view.</td></tr>}</tbody></table></div>
+    <div className="table-responsive" id="timesheet-results" tabIndex="-1"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Date</th>{admin && <th>Employee</th>}<th>Project & work details</th><th>Time</th><th>Hours</th><th>Work status</th><th>Approval</th><th>Admin feedback</th><th>Actions</th></tr></thead><tbody>{loading ? <tr><td colSpan={admin ? 9 : 8} className="text-center py-5">Loading timesheet…</td></tr> : entries.map((entry) => <tr key={entry.id}><td>{entry.date}</td>{admin && <td><strong>{entry.employeeName || "—"}</strong><div className="small text-secondary">{entry.employeeId || "—"}</div></td>}<td><strong>{entry.project || "—"}</strong><div className="small text-secondary">{entry.details || entry.category || "—"}</div>{entry.comments && <div className="small text-secondary">{entry.comments}</div>}</td><td>{entry.startTime || "—"} – {entry.endTime || "—"}</td><td className="fw-semibold">{Number(entry.totalHours || 0).toFixed(2)}h{entry.overtime ? <div className="small text-secondary">{Number(entry.overtime).toFixed(2)} OT</div> : null}</td><td>{entry.workStatus || "—"}</td><td><span className={`badge ${entry.approvalStatus === "Approved" ? "text-bg-success" : entry.approvalStatus === "Rejected" ? "text-bg-danger" : "text-bg-primary"}`}>{entry.approvalStatus || "Submitted"}</span></td><td data-label="Admin feedback">{entry.approvalComment ? <span className="timesheet-feedback"><i className="bi bi-chat-left-text" aria-hidden="true" />{entry.approvalComment}</span> : <span className="text-secondary">—</span>}</td><td>{!admin && entry.approvalStatus !== "Approved" && <button className="btn btn-sm btn-outline-secondary me-1" type="button" onClick={() => openEntry(entry)}>Edit</button>}{canDelete && <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => removeEntry(entry.id)}>Delete</button>}</td></tr>)}{!loading && !entries.length && <tr><td colSpan={admin ? 9 : 8} className="text-center py-5 text-secondary">No entries match this view.</td></tr>}</tbody></table></div>
   </section>
   <ConfirmationDialog
     open={Boolean(deletingEntry)}
@@ -411,7 +424,7 @@ function LiveApprovals({ profile, employees, refreshKey }) {
   const [error, setError] = useState("");
   const [reviewing, setReviewing] = useState(null);
   const [comment, setComment] = useState("");
-  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const loadedRef = useRef(false);
   const load = useCallback(async () => {
     if (!profile || !admin) { setLoading(false); return; }
@@ -422,39 +435,52 @@ function LiveApprovals({ profile, employees, refreshKey }) {
     finally { loadedRef.current = true; setLoading(false); setRefreshing(false); }
   }, [admin, profile]);
   useEffect(() => { load(); }, [load, refreshKey]);
-  const review = async () => {
-    if (!reviewing) return;
-    if (reviewing.action === "Rejected" && !comment.trim()) return;
-    setReviewSaving(true);
-    setError("");
-    try { await reviewLiveTimesheetEntry(reviewing.entry.id, reviewing.action, comment.trim()); setReviewing(null); setComment(""); await load(); }
+  const review = async (status) => {
+    if (!reviewing || reviewBusy) return;
+    if (status === "Rejected" && !comment.trim()) { setError("Enter feedback before rejecting this entry."); return; }
+    setReviewBusy(true);
+    try { await reviewLiveTimesheetEntry(reviewing.id, status, comment.trim()); setReviewing(null); setComment(""); await load(); }
     catch (requestError) { setError(requestError.message || "Unable to review the timesheet entry."); }
-    finally { setReviewSaving(false); }
+    finally { setReviewBusy(false); }
   };
-  const closeReview = () => { if (!reviewSaving) { setReviewing(null); setComment(""); } };
   if (!admin) return <section className="panel"><h2 className="h5">Admin workspace</h2><p className="text-secondary mb-0">Timesheet approvals are available to attendance administrators.</p></section>;
-  return <section className="timesheet-approvals-panel responsive-table">
-    <div className="table-panel-header d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">ADMIN WORKSPACE</div><h2 className="h5 mb-1">Timesheet Approvals</h2><p className="text-secondary small mb-0">Review submitted work from the live attendance system.</p></div>{refreshing && <span className="text-secondary small">Refreshing…</span>}</div>
+  return <><section className="timesheet-approvals-panel responsive-table">
+    <div className="table-panel-header d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div className="eyebrow">ADMIN WORKSPACE</div><h2 className="h5 mb-1">Timesheet Approvals</h2><p className="text-secondary small mb-0">Review submitted work from the live attendance system.</p></div></div>
     {error && <div className="alert alert-danger m-3">{error}</div>}
-    <div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Date</th><th>Employee</th><th>Project & work details</th><th>Time</th><th>Hours</th><th>Work status</th><th>Action</th></tr></thead><tbody>{loading ? <tr><td colSpan="7" className="text-center py-5">Loading approvals…</td></tr> : entries.map((entry) => <tr key={entry.id}><td>{entry.date}</td><td><strong>{entry.employeeName || "—"}</strong><div className="small text-secondary">{entry.employeeId || "—"}</div></td><td><strong>{entry.project || "—"}</strong><div className="small text-secondary">{entry.details || entry.category || "—"}</div></td><td>{entry.startTime || "—"} – {entry.endTime || "—"}</td><td className="fw-semibold">{Number(entry.totalHours || 0).toFixed(2)}h</td><td>{entry.workStatus || "—"}</td><td><div className="d-flex gap-1"><button className="btn btn-sm btn-success" type="button" disabled={reviewSaving} onClick={() => { setComment(""); setError(""); setReviewing({ entry, action: "Approved" }); }}>Approve</button><button className="btn btn-sm btn-outline-danger" type="button" disabled={reviewSaving} onClick={() => { setComment(""); setError(""); setReviewing({ entry, action: "Rejected" }); }}>Reject</button></div></td></tr>)}{!loading && !entries.length && <tr><td colSpan="7" className="text-center py-5 text-secondary">No submitted timesheets require approval.</td></tr>}</tbody></table></div>
-    <ConfirmationDialog
-      open={Boolean(reviewing)}
-      title={reviewing?.action === "Rejected" ? "Reject timesheet entry?" : "Approve timesheet entry?"}
-      description={reviewing?.action === "Rejected" ? "The employee will receive your feedback and can correct the submitted entry." : "The entry will be marked approved and reflected in the employee's timesheet."}
-      details={reviewing && <><strong>{reviewing.entry.employeeName || reviewing.entry.employeeId} · {reviewing.entry.date}</strong><div className="small text-secondary mt-1">{reviewing.entry.project || "—"}: {reviewing.entry.details || "—"} · {Number(reviewing.entry.totalHours || 0).toFixed(2)} hours</div></>}
-      actionLabel={reviewing?.action === "Rejected" ? "Confirm rejection" : "Confirm approval"}
-      tone={reviewing?.action === "Rejected" ? "danger" : "primary"}
-      requiresReason={reviewing?.action === "Rejected"}
-      reason={comment}
-      reasonLabel="Rejection feedback"
-      reasonPlaceholder="Explain what needs to be corrected before this timesheet can be approved."
-      onReasonChange={(value) => { setComment(value); setError(""); }}
-      onConfirm={review}
-      onCancel={closeReview}
-      busy={reviewSaving}
-      error={error}
-    />
-  </section>;
+    <div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Date</th><th>Employee</th><th>Project & work details</th><th>Time</th><th>Hours</th><th>Work status</th><th>Action</th></tr></thead><tbody>{loading ? <tr><td colSpan="7" className="text-center py-5">Loading approvals…</td></tr> : entries.map((entry) => <tr key={entry.id}><td>{entry.date}</td><td><strong>{entry.employeeName || "—"}</strong><div className="small text-secondary">{entry.employeeId || "—"}</div></td><td><strong>{entry.project || "—"}</strong><div className="small text-secondary">{entry.details || entry.category || "—"}</div></td><td>{entry.startTime || "—"} – {entry.endTime || "—"}</td><td className="fw-semibold">{Number(entry.totalHours || 0).toFixed(2)}h</td><td>{entry.workStatus || "—"}</td><td><button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setReviewing(entry)}>Review</button></td></tr>)}{!loading && !entries.length && <tr><td colSpan="7" className="text-center py-5 text-secondary">No submitted timesheets require approval.</td></tr>}</tbody></table></div>
+  </section>{reviewing && <TimesheetReviewDialog entry={reviewing} comment={comment} onCommentChange={setComment} onReview={review} onCancel={() => setReviewing(null)} busy={reviewBusy} error={error} />}</>;
+}
+
+function TimesheetReviewDialog({ entry, comment, onCommentChange, onReview, onCancel, busy, error }) {
+  const dialogRef = useRef(null);
+  const cancelRef = useRef(null);
+  useDialogFocus({ open: true, dialogRef, initialFocusRef: cancelRef, onCancel, busy });
+  return createPortal(<>
+    <div className="modal d-block timesheet-review-modal" role="dialog" aria-modal="true" aria-labelledby="timesheet-review-title" ref={dialogRef} tabIndex="-1">
+      <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div className="modal-content">
+          <div className="modal-header">
+            <h2 className="modal-title h5 mb-0" id="timesheet-review-title">Review timesheet</h2>
+            <button type="button" className="btn-close" aria-label="Close review" onClick={onCancel} disabled={busy} />
+          </div>
+          <div className="modal-body">
+            <strong className="d-block">{entry.employeeName || entry.employeeId} · {entry.date}</strong>
+            <div className="small text-secondary mt-1">{entry.project || "—"}: {entry.details || "—"} · {Number(entry.totalHours || 0).toFixed(2)} hours</div>
+            <label className="form-label mt-3" htmlFor="timesheet-review-comment">Approval comment</label>
+            <textarea id="timesheet-review-comment" className="form-control" rows="3" maxLength="4000" placeholder="Required for rejection; optional for approval" value={comment} onChange={(event) => onCommentChange(event.target.value)} disabled={busy} />
+            <div className="form-text">Feedback is required when rejecting an entry.</div>
+            {error && <div className="alert alert-danger mt-3 mb-0" role="alert">{error}</div>}
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-outline-secondary" type="button" ref={cancelRef} onClick={onCancel} disabled={busy}>Cancel</button>
+            <button className="btn btn-danger" type="button" onClick={() => onReview("Rejected")} disabled={busy}>Reject</button>
+            <button className="btn btn-success" type="button" onClick={() => onReview("Approved")} disabled={busy}>Approve</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="modal-backdrop show timesheet-review-backdrop" aria-hidden="true" />
+  </>, document.body);
 }
 
 

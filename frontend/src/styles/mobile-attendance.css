@@ -1,3 +1,30 @@
+.timesheet-review-modal { z-index: 1060; padding: 0.75rem; }
+.timesheet-review-backdrop { z-index: 1055; }
+.timesheet-review-modal .modal-dialog {
+  display: flex;
+  align-items: center;
+  width: min(560px, 100%);
+  max-width: 100%;
+  height: calc(100dvh - 1.5rem);
+  min-height: 0;
+  margin: 0.75rem auto;
+}
+.timesheet-review-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow: hidden;
+}
+.timesheet-review-modal .modal-header,
+.timesheet-review-modal .modal-footer { flex: 0 0 auto; }
+.timesheet-review-modal .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-wrap: anywhere; }
+.timesheet-review-modal .modal-footer { gap: 0.5rem; }
+@media (max-width: 767.98px) {
+  .timesheet-review-modal .btn { min-width: 44px; min-height: 44px; }
+  .timesheet-review-modal .btn-close { flex: 0 0 44px; width: 44px; height: 44px; }
+  .timesheet-review-modal .form-control { min-height: 44px; font-size: 16px; }
+}
+
 .attendance-workspace,
 .attendance-workspace :is(.panel, .summary-card),
 .attendance-overtime {
@@ -20,6 +47,30 @@
   max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-x: contain;
+}
+
+.attendance-workspace td[data-label="Admin feedback"] {
+  min-width: 11rem;
+  max-width: 22rem;
+}
+
+.attendance-workspace .timesheet-feedback {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.65rem;
+  background: #eef4fb;
+  color: #243b53;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.attendance-workspace .timesheet-feedback .bi {
+  flex: none;
+  color: #3a67ac;
 }
 
 @media (max-width: 991.98px) {
@@ -53,6 +104,10 @@
 
   .attendance-overtime .table-responsive > table {
     min-width: 780px;
+  }
+
+  .attendance-workspace .timesheet-approvals-panel .bg-light .d-flex {
+    flex-wrap: wrap;
   }
 
   .attendance-workspace .timesheet-entry-modal .modal-header {

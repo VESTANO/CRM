@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
+import { activeStoreId } from "../services/storeContext.js";
 import PasswordInput from "../components/PasswordInput.jsx";
 
 export default function AdminUserForm() {
@@ -11,7 +12,7 @@ export default function AdminUserForm() {
   const navigate = useNavigate();
   const { csrfToken, user: signedInUser } = useAuth();
   const cachedUser = edit ? peekCachedResponse(`/admin/users/${userId}/`)?.data : null;
-  const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: searchParams.get("role") === "super_admin" ? "super_admin" : searchParams.get("role") === "admin" ? "admin" : "employee", store_id: searchParams.get("store") || "", is_active: true, password1: "", password2: "" });
+  const [values, setValues] = useState(() => cachedUser ? { ...cachedUser, role: cachedUser.role || (cachedUser.is_superuser ? "super_admin" : cachedUser.is_admin ? "admin" : "employee"), password1: "", password2: "" } : { username: "", email: "", role: searchParams.get("role") === "super_admin" ? "super_admin" : searchParams.get("role") === "admin" ? "admin" : "employee", store_id: searchParams.get("store") || (searchParams.get("role") === "super_admin" ? "" : activeStoreId()), is_active: true, password1: "", password2: "" });
   const [errors, setErrors] = useState({});
   const [originalRole, setOriginalRole] = useState(cachedUser?.role || "");
   const [stores, setStores] = useState([]);
@@ -79,6 +80,9 @@ export default function AdminUserForm() {
       setSaving(false);
     }
   };
+
+  if (!edit && values.role === "super_admin" && !signedInUser?.is_superuser) return <Navigate to="/admin-panel/stores" replace />;
+  if (!edit && signedInUser?.is_superuser && values.role !== "super_admin" && !values.store_id) return <Navigate to="/admin-panel/stores" replace />;
 
   return <>
     <div className="page-header mb-4"><h1 className="h2">{edit ? "Edit User" : values.role === "super_admin" ? "Add Super Admin" : values.role === "admin" ? "Add Admin" : "Add User"}</h1><p className="text-secondary">{edit ? "Update account details, access role, and active status." : values.role === "super_admin" ? "This is a global account, independent of every store. Its email is used for password recovery." : "This account will be created in the store you selected."}</p></div>
