@@ -4,6 +4,7 @@ import { adminApi, peekCachedResponse } from "../services/api.js";
 import { formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { useAuth } from "../hooks/useAuth.jsx";
+import { useStoreFeatures } from "../hooks/useStoreFeatures.jsx";
 import { activeStoreId } from "../services/storeContext.js";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
 import TaskImagePicker from "../components/TaskImagePicker.jsx";
@@ -38,6 +39,7 @@ export default function AdminPanel() {
 }
 
 function StoreAdminPanel() {
+  const { features } = useStoreFeatures();
   const cachedSummary = peekCachedResponse("/admin/summary/")?.data;
   const cachedTargets = peekCachedResponse("/admin/targets/")?.data;
   const [data, setData] = useState(() => cachedSummary || null);
@@ -84,7 +86,7 @@ function StoreAdminPanel() {
         if (requestError.response?.status === 403) setData(null);
         setError(requestError.response?.status === 403 ? "Administrator access required." : "Unable to load admin panel.");
       });
-    return Promise.allSettled([summary, loadTargets()]);
+    return Promise.allSettled([summary, ...(features.sales ? [loadTargets()] : [])]);
   };
 
   useEffect(() => {
@@ -243,13 +245,13 @@ function StoreAdminPanel() {
       </div>
 
       {error && <div className="alert alert-warning" role="alert">{error} Showing the last loaded admin overview.</div>}
-      {targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={loadTargets}>Retry targets</button></div>}
+      {features.sales && targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={loadTargets}>Retry targets</button></div>}
 
       {targetMessage && !targetUser && !taskUser && (
         <div className={`alert alert-${targetMessageType}`}>{targetMessage}</div>
       )}
 
-      {warningTargets.length > 0 && (
+      {features.sales && warningTargets.length > 0 && (
         <section className="alert alert-warning">
           <h2 className="h6 mb-2">Target performance warnings</h2>
           <div className="d-grid gap-2">
@@ -266,8 +268,7 @@ function StoreAdminPanel() {
         {[
           ["Total Users", data.metrics.totalUsers, "bi-people"],
           ["Active Users", data.metrics.activeUsers, "bi-person-check"],
-          ["Total Datasets", data.metrics.totalDatasets, "bi-collection"],
-          ["Total Customers", data.metrics.totalCustomers, "bi-person-lines-fill"],
+          ...(features.customers ? [["Total Datasets", data.metrics.totalDatasets, "bi-collection"], ["Total Customers", data.metrics.totalCustomers, "bi-person-lines-fill"]] : []),
         ].map(([label, value, icon]) => (
           <div className="summary-card" key={label}>
             <span className="metric-icon"><i className={`bi ${icon}`} /></span>
@@ -290,7 +291,7 @@ function StoreAdminPanel() {
         </div>
       </section>
 
-      <section className="panel mb-4">
+      {features.tasks && <section className="panel mb-4">
         <div className="d-flex flex-wrap justify-content-between align-items-center gap-3">
           <div>
             <h2 className="h5 mb-1">Assigned Tasks</h2>
@@ -301,7 +302,7 @@ function StoreAdminPanel() {
             View All Tasks
           </Link>
         </div>
-      </section>
+      </section>}
 
       <section className="panel p-0 mb-4 responsive-table">
         <div className="table-panel-header">
@@ -314,12 +315,12 @@ function StoreAdminPanel() {
             <thead className="table-light">
               <tr>
                 <th>Username</th>
-                <th>Lists</th>
+                {features.customers && <th>Lists</th>}
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                <th>Targets</th>
-                <th>Tasks</th>
+                {features.sales && <th>Targets</th>}
+                {features.tasks && <th>Tasks</th>}
                 <th>Date joined</th>
                 <th>Actions</th>
               </tr>
@@ -332,12 +333,12 @@ function StoreAdminPanel() {
                     <td data-label="Username">
                       <div className="fw-semibold">{user.username}</div>
                     </td>
-                    <td data-label="Lists">
+                    {features.customers && <td data-label="Lists">
                       <span className="text-secondary small">
                         <AnimatedNumber value={user.dataset_count} /> datasets ·{" "}
                         <AnimatedNumber value={user.customer_count} /> customers
                       </span>
-                    </td>
+                    </td>}
                     <td data-label="Email">{user.email || "No email"}</td>
                     <td data-label="Role">
                       <span className="badge text-bg-primary">{user.is_superuser ? "Super Admin" : user.is_admin ? "Admin" : "User"}</span>
@@ -347,7 +348,7 @@ function StoreAdminPanel() {
                         {user.is_active ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td data-label="Targets">
+                    {features.sales && <td data-label="Targets">
                       {user.is_admin ? (
                         <span className="text-secondary small">Admin user</span>
                       ) : targetsLoading && !targetPerformance ? (
@@ -370,8 +371,8 @@ function StoreAdminPanel() {
                       ) : (
                         <span className="badge text-bg-secondary">No target</span>
                       )}
-                    </td>
-                    <td data-label="Tasks">
+                    </td>}
+                    {features.tasks && <td data-label="Tasks">
                       {user.is_admin ? (
                         <span className="text-secondary small">Admin user</span>
                       ) : (
@@ -379,32 +380,32 @@ function StoreAdminPanel() {
                           View Tasks
                         </Link>
                       )}
-                    </td>
+                    </td>}
                     <td data-label="Date joined">{formatDateTime(user.date_joined)}</td>
                     <td data-label="Actions">
                       <div className="admin-user-actions" role="group" aria-label={`Actions for ${user.username}`}>
                         <div className="admin-user-actions-primary">
                           <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}`}>View</Link>
                           <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
-                          <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>
+                          {features.customers && <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>}
                         </div>
                         {!user.is_admin && (
                           <div className="admin-user-actions-secondary">
-                            <button
+                            {features.sales && <button
                               className="btn btn-outline-secondary btn-sm"
                               type="button"
                               onClick={() => openTargetModal(user)}
                               disabled={targetsLoading || Boolean(targetsError)}
                             >
                               Manage Targets
-                            </button>
-                            <button
+                            </button>}
+                            {features.tasks && <button
                               className="btn btn-outline-secondary btn-sm"
                               type="button"
                               onClick={() => openTaskModal(user)}
                             >
                               Assign Task
-                            </button>
+                            </button>}
                           </div>
                         )}
                       </div>
@@ -427,7 +428,7 @@ function StoreAdminPanel() {
       </section>
 
       <div className="row g-4">
-        <div className="col-lg-6">
+        {features.customers && <div className="col-lg-6">
           <section className="panel">
             <h2 className="h5 mb-3">Recent datasets</h2>
             {data.recentDatasets.map((dataset) => (
@@ -437,7 +438,7 @@ function StoreAdminPanel() {
               </Link>
             ))}
           </section>
-        </div>
+        </div>}
         <div className="col-lg-6">
           <section className="panel">
             <h2 className="h5 mb-3">Recently created users</h2>

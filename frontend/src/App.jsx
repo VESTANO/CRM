@@ -5,6 +5,7 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import AdminRoute from "./components/AdminRoute.jsx";
 import { AuthProvider } from "./hooks/useAuth.jsx";
 import { AttendanceAuthProvider } from "./hooks/useAttendanceAuth.jsx";
+import { StoreFeaturesProvider } from "./hooks/useStoreFeatures.jsx";
 import { AppBootLoader } from "./components/RequestState.jsx";
 import ConnectionGuard from "./components/ConnectionGuard.jsx";
 import PasswordRecoveryGate from "./components/PasswordRecoveryGate.jsx";
@@ -56,9 +57,11 @@ export default function App() {
             path="/"
             element={
               <ProtectedRoute>
+                <StoreFeaturesProvider>
                 <AttendanceAuthProvider>
                   <AppLayout />
                 </AttendanceAuthProvider>
+                </StoreFeaturesProvider>
               </ProtectedRoute>
             }
           >

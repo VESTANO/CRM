@@ -14,6 +14,21 @@ const adminClient = createClient(supabaseUrl, serviceRoleKey, {
 const pageSize = 1000;
 
 type Context = { user: any; profile: any; activeStoreId?: string };
+const defaultStoreFeatures = {
+  customers: true, sales: true, attendance: true, callbacks: true,
+  reminders: true, reports: true, tasks: true,
+};
+type StoreFeature = keyof typeof defaultStoreFeatures;
+
+function validateStoreFeatures(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(400, "Choose store features.", { errors: { features: ["Choose store features."] } });
+  const features = { ...defaultStoreFeatures };
+  for (const [key, enabled] of Object.entries(value)) {
+    if (!(key in features) || typeof enabled !== "boolean") fail(400, "Choose valid store features.", { errors: { features: ["Use the available feature switches."] } });
+    (features as any)[key] = enabled;
+  }
+  return features;
+}
 
 class ApiError extends Error {
   status: number;
@@ -376,6 +391,19 @@ function requireSuperAdmin(ctx: Context) {
 
 function profileScope(ctx: Context) {
   return ctx.activeStoreId || (isSuperAdmin(ctx) ? null : String(ctx.profile.store_id || ""));
+}
+
+async function storeFeaturesFor(ctx: Context) {
+  const storeId = profileScope(ctx);
+  if (!storeId) return { ...defaultStoreFeatures };
+  const { data, error } = await adminClient.from("crm_stores").select("features").eq("id", storeId).maybeSingle();
+  checkDb(error);
+  if (!data) fail(404, "Store not found.");
+  return { ...defaultStoreFeatures, ...(data.features || {}) };
+}
+
+async function requireStoreFeature(ctx: Context, feature: StoreFeature) {
+  if (!(await storeFeaturesFor(ctx))[feature]) fail(403, "This feature is not enabled for your store.");
 }
 
 function applyProfileScope(query: any, ctx: Context) {
@@ -1598,8 +1626,31 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   const path = apiPath.replace(/^\/+|\/+$/g, "");
   const parts = path ? path.split("/").map(decodeURIComponent) : [];
 
+  if (path === "store/features" && method === "GET") return json(200, { features: await storeFeaturesFor(ctx) });
+  const requiredFeature: StoreFeature | null =
+    ["datasets", "customers", "import"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "users" && parts[3] === "datasets") ? "customers" :
+    ["sales", "targets"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "targets") ? "sales" :
+    ["attendance", "overtime"].includes(parts[0]) ? "attendance" :
+    parts[0] === "callbacks" ? "callbacks" :
+    ["reminders", "push"].includes(parts[0]) ? "reminders" :
+    ["tasks", "task-notifications"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "tasks") ? "tasks" : null;
+  if (requiredFeature) await requireStoreFeature(ctx, requiredFeature);
+
   if (path === "dashboard/" || path === "dashboard") {
-    if (method === "GET") return json(200, await dashboardSummary(ctx));
+    if (method === "GET") {
+      const summary = await dashboardSummary(ctx);
+      const features = await storeFeaturesFor(ctx);
+      if (!features.sales) {
+        summary.sales = { totalVisits: 0, todaysVisits: 0, monthVisits: 0, totalVisitExpenses: 0 };
+        summary.payments = { totalAmount: 0, paidAmount: 0, pendingAmount: 0, paidCount: 0, pendingCount: 0, oneTimeCount: 0, completedCount: 0 };
+      }
+      if (!features.customers) {
+        summary.totalDatasets = 0; summary.totalCustomers = 0;
+        summary.recentDatasets = [];
+        summary.responseStats = summary.responseStats.map((item: any) => ({ ...item, count: 0 }));
+      }
+      return json(200, summary);
+    }
   }
 
   if (parts[0] === "datasets") {
@@ -1879,11 +1930,11 @@ async function profileWithCounts(profile: any) {
   });
 }
 
-async function profilesWithCounts(profiles: any[]) {
+async function profilesWithCounts(profiles: any[], includeCustomerCounts = true) {
   if (!profiles.length) return [];
   const profileIds = profiles.map((profile: any) => profile.id);
   const [datasets, stores] = await Promise.all([
-    fetchAll(() => adminClient.from("crm_datasets").select("id,owner_id").in("owner_id", profileIds)),
+    includeCustomerCounts ? fetchAll(() => adminClient.from("crm_datasets").select("id,owner_id").in("owner_id", profileIds)) : Promise.resolve([]),
     fetchAll(() => adminClient.from("crm_stores").select("id,name")),
   ]);
   const datasetIds = datasets.map((dataset: any) => Number(dataset.id));
@@ -1916,6 +1967,14 @@ async function adminUserById(ctx: Context, id: string) {
 async function handleAdmin(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any, files: File[] = [], thumbnails: File[] = []) {
   requireAdmin(ctx);
   if (parts[1] === "stores") {
+    if (parts.length === 4 && parts[3] === "features" && method === "PATCH") {
+      requireSuperAdmin(ctx);
+      const features = validateStoreFeatures(body.features);
+      const { data, error } = await adminClient.from("crm_stores").update({ features }).eq("id", parts[2]).select("*").maybeSingle();
+      checkDb(error);
+      if (!data) fail(404, "Store not found.");
+      return json(200, data);
+    }
     if (parts.length === 2 && method === "GET") {
       let query = adminClient.from("crm_stores").select("*").order("name");
       if (!isSuperAdmin(ctx)) query = query.eq("id", ctx.profile.store_id);
@@ -1933,6 +1992,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const city = valueString(body.city);
       const state = valueString(body.state);
       const postalCode = valueString(body.postal_code);
+      const features = validateStoreFeatures(body.features ?? defaultStoreFeatures);
       const errors: Record<string, string[]> = {};
       if (!name || name.length > 120) errors.name = ["Enter a store name up to 120 characters."];
       if (!contactPerson || contactPerson.length > 120) errors.contact_person = ["Enter a contact person up to 120 characters."];
@@ -1946,16 +2006,17 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const { data, error } = await adminClient.from("crm_stores").insert({
         name, contact_person: contactPerson, contact_email: contactEmail,
         contact_phone: contactPhone, address_line1: addressLine1,
-        city, state, postal_code: postalCode, created_by: ctx.user.id,
+        city, state, postal_code: postalCode, features, created_by: ctx.user.id,
       }).select("*").single();
       checkDb(error);
       return json(201, data);
     }
   }
   if (parts[1] === "summary" && method === "GET") {
+    const features = await storeFeaturesFor(ctx);
     const [profiles, datasets, authUsers] = await Promise.all([
       fetchAll(() => applyProfileScope(adminClient.from("profiles").select("*").order("employee_id"), ctx)),
-      accessibleDatasets(ctx),
+      features.customers ? accessibleDatasets(ctx) : Promise.resolve([]),
       allAuthUsers(),
     ]);
     const customers = datasets.length
@@ -2015,7 +2076,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         const scoped = isSuperAdmin(ctx) && requestedStoreId ? query.eq("store_id", requestedStoreId) : applyProfileScope(query, ctx);
         return requestedRole ? scoped.eq("role", requestedRole) : scoped;
       });
-      return json(200, { results: await profilesWithCounts(profiles) });
+      return json(200, { results: await profilesWithCounts(profiles, (await storeFeaturesFor(ctx)).customers) });
     }
     if (parts.length === 2 && method === "POST") {
       const username = valueString(body.username).toUpperCase();
@@ -2434,6 +2495,7 @@ Deno.serve(async (request: Request) => {
     if (request.method === "POST" && apiPath.replace(/^\/+|\/+$/g, "") === "auth/attendance-session") {
       // authenticate() supplies the trusted CRM identity; never accept an
       // employee ID from the request when opening another project's session.
+      await requireStoreFeature(ctx, "attendance");
       return await startAttendanceSession(ctx);
     }
     const { values, files, thumbnails } = await requestBody(request);

@@ -11,10 +11,10 @@ const emptySubscribe = () => noop;
 const getEmpty = () => empty;
 const emptyAction = () => Promise.resolve(false);
 
-export function useTaskNotifications() {
+export function useTaskNotifications(enabled = true) {
   const { user } = useAuth();
   const feed = useMemo(() => {
-    if (!user?.id) return null;
+    if (!user?.id || !enabled) return null;
     const key = `${user.id}|${Boolean(user.is_admin)}`;
     if (!feeds.has(key)) {
       const created = createTaskNotificationFeed({
@@ -38,7 +38,7 @@ export function useTaskNotifications() {
       feeds.set(key, created);
     }
     return feeds.get(key);
-  }, [user?.id, user?.is_admin]);
+  }, [user?.id, user?.is_admin, enabled]);
   const snapshot = useSyncExternalStore(feed?.subscribe || emptySubscribe, feed?.getSnapshot || getEmpty, getEmpty);
   return { ...snapshot, refresh: feed?.refresh || emptyAction, markRead: feed?.markRead || emptyAction,
     markAllRead: feed?.markAllRead || emptyAction, dismissAlert: feed?.dismissAlert || noop };

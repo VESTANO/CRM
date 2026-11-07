@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { activeStoreId } from "../services/storeContext.js";
+import { useStoreFeatures } from "../hooks/useStoreFeatures.jsx";
 import { dashboardApi, datasetsApi, peekCachedResponse, targetsApi } from "../services/api.js";
 import { formatCurrency, formatDate } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
@@ -30,6 +31,7 @@ export default function Dashboard() {
 }
 
 function StoreDashboard() {
+  const { features } = useStoreFeatures();
   const location = useLocation();
   const [dashboard, setDashboard] = useState(() => (
     location.state?.preloadedDashboard || peekCachedResponse("/dashboard/")?.data || null
@@ -59,11 +61,11 @@ function StoreDashboard() {
     const summary = dashboardApi.summary()
       .then(({ data }) => setDashboard(data))
       .catch(() => setError("Unable to load dashboard data."));
-    const monthlyTargets = targetsApi.list()
+    const monthlyTargets = !features.sales ? Promise.resolve() : targetsApi.list()
       .then(({ data }) => setTargets(data.results))
       .catch(() => setTargetsError("Unable to load monthly targets."));
     return Promise.allSettled([summary, monthlyTargets]).finally(() => { loadingRef.current = false; });
-  }, []);
+  }, [features.sales]);
 
   useEffect(() => {
     void load();
@@ -118,7 +120,7 @@ function StoreDashboard() {
         <div className="dashboard-date"><i className="bi bi-calendar3" aria-hidden="true" /><span>{today}</span></div>
       </div>
 
-      <section className="dashboard-welcome" aria-label="Customer management shortcuts">
+      {features.customers && <section className="dashboard-welcome" aria-label="Customer management shortcuts">
         <div className="welcome-copy">
           <span className="welcome-icon"><i className="bi bi-grid-1x2" aria-hidden="true" /></span>
           <div><h2>Good relationships. Better business.</h2><p>Keep every customer conversation moving forward.</p></div>
@@ -127,19 +129,19 @@ function StoreDashboard() {
           <Link className="btn btn-outline-secondary" to="/datasets"><i className="bi bi-list-ul" aria-hidden="true" />Customer Lists</Link>
           <Link className="btn btn-primary" to="/import"><i className="bi bi-plus-lg" aria-hidden="true" />Import Excel</Link>
         </div>
-      </section>
+      </section>}
 
       {error && <div className="alert alert-warning" role="status">{error} Showing the most recent available dashboard.</div>}
 
-      <div className="dashboard-kpis">
+      {features.customers && <div className="dashboard-kpis">
         <MetricCard icon="bi-people" label="Total customers" value={dashboard.totalCustomers} tone="blue" caption="Across your customer lists" />
         <MetricCard icon="bi-folder2-open" label="Datasets" value={dashboard.totalDatasets} tone="violet" caption="Imported customer lists" />
         <MetricCard icon="bi-hand-thumbs-up" label="Interested" value={countFor("interested")} tone="amber" caption="Customers showing interest" />
         <MetricCard icon="bi-check2-circle" label="Converted" value={countFor("converted")} tone="green" caption={`${conversionRate}% of total customers`} />
-      </div>
+      </div>}
 
-      <div className="dashboard-insights">
-        <section className="panel dashboard-pipeline" aria-labelledby="pipeline-heading">
+      {(features.customers || features.sales) && <div className="dashboard-insights">
+        {features.customers && <section className="panel dashboard-pipeline" aria-labelledby="pipeline-heading">
           <div className="dashboard-section-heading">
             <div><h2 id="pipeline-heading">Customer responses</h2><p>A clear picture of where every conversation stands.</p></div>
             <span className="section-chip">{dashboard.totalCustomers} customers</span>
@@ -156,13 +158,13 @@ function StoreDashboard() {
             })}
           </div>
           <div className="pipeline-footer"><i className="bi bi-people" aria-hidden="true" /><span>Every conversation is an opportunity.</span><Link to="/customers">View customers<i className="bi bi-arrow-right" aria-hidden="true" /></Link></div>
-        </section>
-        <PaymentSummarySection payments={dashboard.payments} />
-      </div>
+        </section>}
+        {features.sales && <PaymentSummarySection payments={dashboard.payments} />}
+      </div>}
 
-      {targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={load}>Retry</button></div>}
+      {features.sales && targetsError && <div className="alert alert-warning" role="alert">{targetsError} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={load}>Retry</button></div>}
 
-      {targets?.length > 0 && (
+      {features.sales && targets?.length > 0 && (
         <section className="panel dashboard-targets">
           <h2 className="h4 mb-1">Monthly Targets</h2>
           <p className="text-secondary small mb-3">Targets assigned by admin for previous, current, and upcoming months.</p>
@@ -188,7 +190,7 @@ function StoreDashboard() {
       )}
 
       <div className="dashboard-lower-grid">
-      <section className="panel dashboard-datasets">
+      {features.customers && <section className="panel dashboard-datasets">
         <div className="dashboard-section-heading">
           <div><h2>Recent datasets</h2><p>Your latest imported customer lists.</p></div>
           {datasetsExpanded ? (
@@ -230,9 +232,9 @@ function StoreDashboard() {
             </div>
           </div>
         )}
-      </section>
+      </section>}
 
-      <section className="panel dashboard-sales">
+      {features.sales && <section className="panel dashboard-sales">
         <div className="dashboard-section-heading">
           <div>
             <h2>Sales activity</h2>
@@ -247,7 +249,7 @@ function StoreDashboard() {
           <SmallMetric label="Total Expenses" value={formatCurrency(dashboard.sales.totalVisitExpenses)} />
         </div>
         <Link className="dashboard-sales-link" to="/sales">View sales activity<i className="bi bi-arrow-right" aria-hidden="true" /></Link>
-      </section>
+      </section>}
       </div>
       <div className="dashboard-footnote"><span>VESTANO CRM</span><span>Built around better customer relationships.</span></div>
     </div>

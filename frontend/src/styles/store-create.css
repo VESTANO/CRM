@@ -22,6 +22,11 @@
 .store-create-modal .modal-footer { flex: none; }
 .store-create-modal .modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .store-create-modal .modal-footer { gap: 0.5rem; }
+.store-feature-list { border: 0; border-top: 1px solid var(--bs-border-color); padding: 1rem 0 0; margin: 1rem 0 0; min-width: 0; }
+.store-feature-list legend { float: none; width: auto; padding: 0; margin: 0 0 0.25rem; }
+.store-feature-switch { min-height: 44px; display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.75rem 0.5rem 2.75rem; border: 1px solid var(--bs-border-color); border-radius: 0.5rem; }
+.store-feature-switch .form-check-input { width: 2rem; height: 1.1rem; flex: none; margin-top: 0; margin-left: -2rem; }
+.store-feature-switch .form-check-label { overflow-wrap: anywhere; }
 @media (max-width: 767.98px) {
   .store-create-modal .btn,
   .store-create-modal .btn-close,

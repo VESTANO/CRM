@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import PasswordInput from "../components/PasswordInput.jsx";
-import { authApi, dashboardApi, targetsApi } from "../services/api.js";
+import { authApi, dashboardApi } from "../services/api.js";
 import "../styles/login-workspace.css";
 
 export default function Login() {
@@ -23,10 +23,8 @@ export default function Login() {
     setIsSubmitting(true);
     try {
       await login(form);
-      // Start the dashboard reads immediately; targets must not delay opening
-      // the workspace after authentication has already succeeded.
+      // Start the dashboard read immediately after authentication succeeds.
       void dashboardApi.summary().catch(() => {});
-      void targetsApi.list().catch(() => {});
       // A CRM sign-in always begins at the CRM dashboard. Attendance is an
       // optional workspace reached from the sidebar after sign-in.
       navigate("/dashboard", {

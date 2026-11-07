@@ -543,6 +543,7 @@ export const adminApi = {
   listUsers: (storeId = "", role = "") => cachedGet("/admin/users/", (storeId || role) ? { params: { ...(storeId ? { store: storeId } : {}), ...(role ? { role } : {}) } } : {}),
   stores: () => cachedGet("/admin/stores/", {}, 30_000),
   createStore: (payload, csrfToken) => apiClient.post("/admin/stores/", payload, csrfHeaders(csrfToken)),
+  updateStoreFeatures: (storeId, features, csrfToken) => apiClient.patch(`/admin/stores/${storeId}/features/`, { features }, csrfHeaders(csrfToken)),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),
   detail: (userId) => cachedGet(`/admin/users/${userId}/`),
   update: (userId, payload, csrfToken) => apiClient.patch(`/admin/users/${userId}/`, payload, csrfHeaders(csrfToken)),
@@ -567,26 +568,27 @@ export const adminApi = {
     ),
 };
 
+export const storeFeaturesApi = {
+  get: ({ fresh = false } = {}) => cachedGet("/store/features/", {}, fresh ? 0 : 30_000),
+};
+
 // Warm normal sidebar destinations after the first screen has painted. These
 // requests share the same cache as the pages, so the next navigation renders
 // from already-available data rather than showing another loading panel.
-export async function warmNavigationData(isAdmin = false, { signal } = {}) {
+export async function warmNavigationData(isAdmin = false, { signal, features = {} } = {}) {
   const requestFactories = [
     () => dashboardApi.summary(),
-    () => targetsApi.list(),
-    () => datasetsApi.list(),
-    () => customersApi.list({ page: 1 }),
-    () => salesApi.list(),
-    () => salesApi.summary(),
-    () => callbacksApi.list({ preset: "today", date: "", sort: "asc" }),
-    () => remindersApi.list(),
-    () => tasksApi.list(),
+    ...(features.sales ? [() => targetsApi.list(), () => salesApi.list(), () => salesApi.summary()] : []),
+    ...(features.customers ? [() => datasetsApi.list(), () => customersApi.list({ page: 1 })] : []),
+    ...(features.callbacks ? [() => callbacksApi.list({ preset: "today", date: "", sort: "asc" })] : []),
+    ...(features.reminders ? [() => remindersApi.list()] : []),
+    ...(features.tasks ? [() => tasksApi.list()] : []),
   ];
   if (isAdmin) requestFactories.push(
     () => adminApi.summary(),
     () => adminApi.listUsers(),
-    () => adminApi.targets(),
-    () => adminApi.tasks(),
+    ...(features.sales ? [() => adminApi.targets()] : []),
+    ...(features.tasks ? [() => adminApi.tasks()] : []),
   );
 
   // Keep background traffic bounded without letting one slow endpoint hold
