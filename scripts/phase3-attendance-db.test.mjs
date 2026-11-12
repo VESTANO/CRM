@@ -23,7 +23,7 @@ async function setup(){
       ('${employee}','EMP-A','Employee A','emp-a@example.test','employee','${storeA}',true),
       ('${foreign}','ADMIN-B','Admin B','admin-b@example.test','admin','${storeB}',true),
       ('${inactive}','INACTIVE','Inactive','inactive@example.test','employee','${storeA}',false);`);
-  for(const name of ['202611040001_unified_attendance','202611060004_isolate_attendance_by_store','202611060007_scope_attendance_operations'])await db.exec(migration(name));
+  for(const name of ['202611040001_unified_attendance','202611060004_isolate_attendance_by_store','202611060007_scope_attendance_operations','202611100001_validate_timesheet_work_period'])await db.exec(migration(name));
   return db;
 }
 const identity=(db,id)=>db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);
@@ -41,6 +41,11 @@ test('timesheet submission, rejection, resubmission and final approval preserve 
       assert.equal((await db.query('select approval_comment from timesheet_entries where id=$1',[historical.id])).rows[0].approval_comment,'');
       await review(db,historical.id,'Approved','Overwrites rejection');
       assert.equal((await db.query('select approval_status from timesheet_entries where id=$1',[historical.id])).rows[0].approval_status,'Approved');
+    });
+    await t.test('invalid work periods are rejected instead of being stored as zero-hour entries',async()=>{
+      await identity(db,employee);
+      await assert.rejects(db.query("select * from create_timesheet_entry(current_date,'Invalid','End precedes start','Project Work','11:00','05:30',0,false,'Completed','')"),/End time must be later than start time/);
+      await assert.rejects(db.query("select * from create_timesheet_entry(current_date,'Invalid','Break consumes period','Project Work','10:00','10:42',1,false,'Completed','')"),/Break hours must be shorter than the work period/);
     });
     await db.exec('reset role');await db.exec(migration('202611070004_timesheet_decision_integrity'));await db.exec('set role authenticated');
     await identity(db,employee);const entry=await create(db);

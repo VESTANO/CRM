@@ -26,7 +26,9 @@ const ImportExcel = lazy(() => import("./pages/ImportExcel.jsx"));
 const Notifications = lazy(() => import("./pages/Notifications.jsx"));
 const Reminders = lazy(() => import("./pages/Reminders.jsx"));
 const Reports = lazy(() => import("./pages/Reports.jsx"));
+const Payroll = lazy(() => import("./pages/Payroll.jsx"));
 const Attendance = lazy(() => import("./pages/Attendance.jsx"));
+const ManualAttendance = lazy(() => import("./pages/ManualAttendance.jsx"));
 const Login = lazy(() => import("./pages/Login.jsx"));
 const Sales = lazy(() => import("./pages/Sales.jsx"));
 const Overtime = lazy(() => import("./pages/Overtime.jsx"));
@@ -82,6 +84,8 @@ export default function App() {
             <Route path="reminders" element={<Reminders />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="payroll" element={<Payroll />} />
+            <Route path="payroll/:section" element={<Payroll />} />
             <Route path="attendance" element={<Attendance view="attendance" />} />
             <Route path="attendance/overview" element={<Attendance view="overview" />} />
             <Route path="attendance/timesheet" element={<Attendance view="timesheet" />} />
@@ -89,6 +93,8 @@ export default function App() {
             <Route path="attendance/approvals" element={<Attendance view="approvals" />} />
             <Route path="attendance/overtime" element={<Attendance view="overtime" />} />
             <Route path="attendance/employees" element={<Attendance view="employees" />} />
+            <Route path="attendance/manual" element={<AdminRoute><ManualAttendance /></AdminRoute>} />
+            <Route path="attendance/manual/records" element={<AdminRoute><ManualAttendance view="records" /></AdminRoute>} />
             <Route path="sales" element={<Sales />} />
             <Route path="overtime" element={<Overtime />} />
             <Route path="sales/visits/add" element={<VisitForm />} />

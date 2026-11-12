@@ -61,12 +61,17 @@ async function setup(){
   const photos=migration('202611030013_photo_optimization');
   await db.exec(photos.slice(photos.indexOf('alter table public.crm_visit_images'),photos.indexOf('-- Keep')));
   await db.exec(`create table crm_stores(id uuid primary key,name text);alter table profiles add column store_id uuid references crm_stores;
-    insert into auth.users values('${actor}'),('${employee}'),('${foreign}');insert into crm_stores values('${store}','A'),('${otherStore}','B');
-    insert into profiles(id,employee_id,name,email,role,store_id) values('${actor}','ADMINA','Admin A','a@example.test','admin','${store}'),('${employee}','EMPA','Employee A','e@example.test','employee','${store}'),('${foreign}','EMPB','Employee B','b@example.test','employee','${otherStore}');`);
+    insert into crm_stores values('${store}','A'),('${otherStore}','B');`);
+  await db.exec(migration('202611100003_user_designations'));
+  await db.exec(`insert into auth.users values('${actor}'),('${employee}'),('${foreign}');
+    insert into profiles(id,employee_id,name,email,role,designation,store_id) values('${actor}','ADMINA','Admin A','a@example.test','admin','','${store}'),('${employee}','EMPA','Employee A','e@example.test','employee','Sales','${store}'),('${foreign}','EMPB','Employee B','b@example.test','employee','Sales','${otherStore}');`);
   await db.exec(migration('202611060006_persist_business_store'));
   await db.exec(`alter table crm_stores add column features jsonb not null default '${JSON.stringify(defaultStoreFeatures)}'::jsonb;`);
   await db.exec(migration('202611070003_dashboard_callbacks'));
   await db.exec(migration('202611070007_atomic_sales_visit'));
+  // The production handlers select and persist the target metric. Include
+  // the corresponding migration so this isolated schema matches production.
+  await db.exec(migration('202611100004_sales_target_metrics'));
   await db.exec(`insert into crm_datasets(id,owner_id,store_id,name,original_filename) values(1,'${employee}','${store}','Leads','source.xlsx'),(2,'${foreign}','${otherStore}','Other','source.xlsx');
     insert into crm_dataset_columns(dataset_id,sheet_name,original_name,field_key,column_order) values(1,'Sheet1','Client','client',1);
     insert into crm_customer_records(id,dataset_id,sheet_name,row_number,original_data) values(11,1,'Sheet1',2,'{"client":"Original client","phone":"0012345678"}'),(22,2,'Sheet1',2,'{"name":"Other store"}');`);

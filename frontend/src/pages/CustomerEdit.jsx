@@ -66,7 +66,7 @@ export default function CustomerEdit() {
       await customersApi.update(datasetId, recordId, { ...form, expected_revision: detail.record.revision ?? 0 }, csrfToken);
       window.dispatchEvent(new Event("crm:callbacks-updated"));
       navigate(`/datasets/${datasetId}/customers/${recordId}`, {
-        state: { message: "Customer CRM information updated successfully." },
+        state: { message: "VestaTrack CRM information updated successfully." },
       });
     } catch (err) {
       if (err.response?.data?.errors) {

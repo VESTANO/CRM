@@ -101,8 +101,8 @@ function PasswordRecovery({ onComplete, onCancel }) {
   };
 
   return <main className="crm-status-page">
-    <div className="crm-status-brand" aria-label="Vestano CRM">
-      <span className="brand-mark">V</span><span><strong>VESTANO</strong><small>Customer CRM</small></span>
+    <div className="crm-status-brand" aria-label="VestaTrack CRM">
+      <span className="brand-mark">V</span><span><strong>VESTATRACK</strong><small>CRM</small></span>
     </div>
     <section className="login-card" aria-labelledby="password-setup-heading">
       <div className="eyebrow">ACCOUNT ACCESS</div>

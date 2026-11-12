@@ -237,7 +237,7 @@ class Command(BaseCommand):
     def payload_for(self, reminder):
         reminder_time = timezone.localtime(reminder.reminder_at).strftime("%d %b %Y, %H:%M")
         return json.dumps({
-            "title": "Customer CRM | Reminder",
+            "title": "VestaTrack | Reminder",
             "body": f"{reminder.text} ({reminder_time})",
             "url": f"/reminders/?reminder={reminder.pk}#reminder-{reminder.pk}",
             "tag": f"crm-reminder-{reminder.pk}",

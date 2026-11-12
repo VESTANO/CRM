@@ -173,6 +173,10 @@ function invalidateForMutation(url = "") {
     invalidateApiCache("/targets/", "/dashboard/", "/datasets/", "/admin/targets/", "/admin/summary/");
     return;
   }
+  if (path.startsWith("/admin/designations/")) {
+    invalidateApiCache("/admin/designations/");
+    return;
+  }
   if (path.startsWith("/admin/users/")) {
     invalidateApiCache("/admin/", "/datasets/", "/dashboard/", "/targets/");
     return;
@@ -182,6 +186,7 @@ function invalidateForMutation(url = "") {
     return;
   }
   if (path.startsWith("/attendance/")) { invalidateApiCache("/attendance/"); return; }
+  if (path.startsWith("/payroll/")) { invalidateApiCache("/payroll/"); return; }
   clearApiCache();
 }
 
@@ -235,6 +240,7 @@ async function currentCrmUser() {
       is_admin: isAdmin,
       is_active: Boolean(profile.active),
       date_joined: profile.created_at,
+      store_id: profile.store_id || "",
     };
     currentUserCache = { id: session.user.id, user, createdAt: Date.now() };
     return user;
@@ -269,7 +275,7 @@ export const authApi = {
       if (!user) throw apiError("This account is inactive or has no CRM profile.", 403);
       return { data: { user, csrfToken: "" } };
     } catch (error) {
-      if (![401, 404].includes(error.response?.status)) throw error;
+      if (error.response?.status !== 404) throw error;
     }
     let email = identity;
     if (!identity.includes("@")) {
@@ -336,6 +342,16 @@ export const overtimeApi = {
 
 export const attendanceApi = {
   list: (params = {}) => cachedGet("/attendance/", { params }, 15_000),
+  leaves: (params = {}) => cachedGet("/attendance/leaves/", { params }, 15_000),
+  createLeave: (payload, csrfToken) => apiClient.post("/attendance/leaves/", payload, csrfHeaders(csrfToken)),
+  removeLeave: (leaveId, csrfToken) => apiClient.delete("/attendance/leaves/" + leaveId + "/", csrfHeaders(csrfToken)),
+  manualEmployees: (date) => cachedGet("/attendance/manual/employees/", { params: { date } }, 5_000),
+  manualRecords: (date) => cachedGet("/attendance/manual/records/", { params: { date } }, 5_000),
+  createManual: async (payload) => {
+    const response = await apiClient.post("/attendance/manual/", payload);
+    invalidateApiCache("/attendance/manual/");
+    return response;
+  },
 };
 
 export const dashboardApi = {
@@ -401,11 +417,7 @@ apiClient.interceptors.response.use(
     } else if (!error.response) {
       error.response = { status: 0, data: { detail: "The CRM service is unreachable. Check your connection and retry." } };
     }
-    // A rejected credential probe is not an expired authenticated session.
-    // Signing out here races the ordinary-password fallback and invalidates
-    // AuthProvider's pending login even when the next authentication succeeds.
-    const credentialProbe = /\/auth\/legacy-login\/?$/.test(String(error.config?.url || ""));
-    if (error.response?.status === 401 && !credentialProbe && typeof window !== "undefined") {
+    if (error.response?.status === 401 && typeof window !== "undefined") {
       // Do not delay every failed API request on a secondary sign-out call.
       void crmSupabase.auth.signOut().catch(() => {});
       window.dispatchEvent(new Event("crm:session-expired"));
@@ -534,13 +546,17 @@ export const adminApi = {
   listUsers: (storeId = "", role = "") => cachedGet("/admin/users/", (storeId || role) ? { params: { ...(storeId ? { store: storeId } : {}), ...(role ? { role } : {}) } } : {}),
   stores: ({ fresh = false } = {}) => cachedGet("/admin/stores/", {}, fresh ? 0 : 30_000),
   createStore: (payload, csrfToken) => apiClient.post("/admin/stores/", payload, csrfHeaders(csrfToken)),
-  updateStoreFeatures: (storeId, features, csrfToken) => apiClient.patch(`/admin/stores/${storeId}/features/`, { features }, csrfHeaders(csrfToken)),
+  updateStoreFeatures: (storeId, features, limits, csrfToken) => apiClient.patch(`/admin/stores/${storeId}/features/`, { features, ...limits }, csrfHeaders(csrfToken)),
+  designations: (storeId = "") => cachedGet("/admin/designations/", storeId ? { params: { store: storeId } } : {}),
+  createDesignation: (name, storeId, csrfToken) => apiClient.post("/admin/designations/", { name }, { ...csrfHeaders(csrfToken), params: storeId ? { store: storeId } : {} }),
   createUser: (payload, csrfToken) => apiClient.post("/admin/users/", payload, csrfHeaders(csrfToken)),
   detail: (userId) => cachedGet(`/admin/users/${userId}/`),
   update: (userId, payload, csrfToken) => apiClient.patch(`/admin/users/${userId}/`, payload, csrfHeaders(csrfToken)),
   action: (userId, action, payload, csrfToken) => apiClient.post(`/admin/users/${userId}/${action}/`, payload, csrfHeaders(csrfToken)),
   datasets: (userId) => cachedGet(`/admin/users/${userId}/datasets/`),
   tasks: (params = {}, { fresh = false } = {}) => cachedGet("/admin/tasks/", { params }, fresh ? 0 : GET_CACHE_TTL),
+  salesPerformance: (month = "") => cachedGet("/admin/sales-performance/", month ? { params: { month } } : {}, 30_000),
+  userPerformance: (month = "") => cachedGet("/admin/user-performance/", month ? { params: { month } } : {}, 30_000),
   createTask: (payload, csrfToken) => apiClient.post("/admin/tasks/", payload, payload instanceof FormData ? multipartHeaders() : csrfHeaders(csrfToken)),
   updateTask: (taskId, payload, csrfToken) => apiClient.patch(`/admin/tasks/${taskId}/`, payload, payload instanceof FormData ? multipartHeaders() : csrfHeaders(csrfToken)),
   targets: (params = {}) => cachedGet("/admin/targets/", { params }, 30_000),
@@ -564,6 +580,29 @@ export const storeFeaturesApi = {
     if (error.response?.status === 404) return { data: { features: {}, legacy: true } };
     throw error;
   }),
+};
+
+export const payrollApi = {
+  list: () => cachedGet("/payroll/payments/", {}, 0),
+  employees: () => cachedGet("/payroll/employees/", {}, 0),
+  settings: () => cachedGet("/payroll/settings/", {}, 0),
+  updateSettings: (payload, csrfToken) => apiClient.patch("/payroll/settings/", payload, csrfHeaders(csrfToken)),
+  salaryStructures: () => cachedGet("/payroll/salary-structures/", {}, 0),
+  createSalaryStructure: (payload, csrfToken) => apiClient.post("/payroll/salary-structures/", payload, csrfHeaders(csrfToken)),
+  expensePreview: (employeeId, payrollMonth) => cachedGet("/payroll/expense-preview/", { params: { employee_id: employeeId, month: payrollMonth } }, 0),
+  expenses: () => cachedGet("/payroll/expenses/", {}, 0),
+  createExpense: (payload, csrfToken) => apiClient.post("/payroll/expenses/", payload, csrfHeaders(csrfToken)),
+  reviewExpense: (id, payload, csrfToken) => apiClient.post(`/payroll/expenses/${id}/review/`, payload, csrfHeaders(csrfToken)),
+  advances: () => cachedGet("/payroll/advances/", {}, 0),
+  createAdvance: (payload, csrfToken) => apiClient.post("/payroll/advances/", payload, csrfHeaders(csrfToken)),
+  reviewAdvance: (id, payload, csrfToken) => apiClient.post(`/payroll/advances/${id}/review/`, payload, csrfHeaders(csrfToken)),
+  calculate: (payload, csrfToken) => apiClient.post("/payroll/calculate/", payload, csrfHeaders(csrfToken)),
+  create: (payload, csrfToken) => apiClient.post("/payroll/payments/", payload, csrfHeaders(csrfToken)),
+  update: (paymentId, payload, csrfToken) => apiClient.patch(`/payroll/payments/${paymentId}/`, payload, csrfHeaders(csrfToken)),
+  approve: (paymentId, csrfToken) => apiClient.post(`/payroll/payments/${paymentId}/approve/`, {}, csrfHeaders(csrfToken)),
+  reject: (paymentId, payload, csrfToken) => apiClient.post(`/payroll/payments/${paymentId}/reject/`, payload, csrfHeaders(csrfToken)),
+  payslip: (paymentId) => cachedGet(`/payroll/payments/${paymentId}/payslip/`, {}, 0),
+  reports: (month = "") => cachedGet("/payroll/reports/", month ? { params: { month } } : {}, 0),
 };
 
 export const reportsApi = {

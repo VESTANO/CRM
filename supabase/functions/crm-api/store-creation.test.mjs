@@ -50,7 +50,10 @@ test("Super Admin store creation saves all contact and address fields", async ()
   assert.deepEqual(app.writes, [{
     name: "Kochi Store", contact_person: "Store Manager", contact_email: "manager@example.test",
     contact_phone: "+91 9876543210", address_line1: "1 Test Road",
-    city: "Kochi", state: "Kerala", postal_code: "682001", features: defaultStoreFeatures, created_by: "creator",
+    city: "Kochi", state: "Kerala", postal_code: "682001", features: defaultStoreFeatures,
+    // An omitted account limit is intentionally persisted as an unlimited
+    // (null) limit, matching the store-creation API contract.
+    admin_limit: null, user_limit: null, created_by: "creator",
   }]);
 });
 

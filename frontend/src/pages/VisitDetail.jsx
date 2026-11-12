@@ -39,6 +39,7 @@ export default function VisitDetail() {
           <section className="panel visit-detail-card h-100">
             <h2 className="h5 mb-3">Visit Information</h2>
             <Info label="Client" value={visit.client_name} />
+            <Info label="Employee" value={visit.employee_name || "—"} />
             <Info label="Dataset" value={visit.dataset_name || "Manual Client"} />
             <Info label="Visit Date" value={formatDate(visit.visit_date)} />
             <Info label="Meeting Time" value={visit.meeting_time?.slice(0, 5)} />

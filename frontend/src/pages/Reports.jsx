@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { reportsApi, peekCachedResponse, salesApi } from "../services/api.js";
+import { adminApi, reportsApi, peekCachedResponse, salesApi } from "../services/api.js";
 import { formatCurrency } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel } from "../components/RequestState.jsx";
 import "../styles/mobile-business.css";
 
 import { useStoreFeatures } from "../hooks/useStoreFeatures.jsx";
+import { useAuth } from "../hooks/useAuth.jsx";
 
 const chartPalette = [
   { fill: "#DCE4E8", border: "#405565", text: "#172B3A" },
@@ -18,11 +19,29 @@ const chartPalette = [
 ];
 const customerColors = chartPalette.slice(0, 5);
 const visitColors = [chartPalette[0], chartPalette[3], chartPalette[1], chartPalette[2], chartPalette[5]];
+function currentReportMonth() {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type)?.value || "";
+  return value("year") + "-" + value("month");
+}
+
 export default function Reports() {
   const { features } = useStoreFeatures();
+  const { user } = useAuth();
   const [customerStats, setCustomerStats] = useState(() => peekCachedResponse("/dashboard/")?.data || null);
   const [visitStats, setVisitStats] = useState(() => peekCachedResponse("/sales/report/")?.data || null);
+  const [employeePerformance, setEmployeePerformance] = useState(() => peekCachedResponse("/admin/user-performance/")?.data?.results || null);
+  const [salesPerformance, setSalesPerformance] = useState(() => peekCachedResponse("/admin/sales-performance/")?.data?.results || null);
+  const [reportMonth, setReportMonth] = useState(currentReportMonth);
   const [error, setError] = useState("");
+
+  const changeReportMonth = (value) => {
+    const nextMonth = value || currentReportMonth();
+    if (nextMonth === reportMonth) return;
+    setEmployeePerformance(null);
+    setSalesPerformance(null);
+    setReportMonth(nextMonth);
+  };
 
   const load = useCallback(() => {
     setError("");
@@ -32,8 +51,14 @@ export default function Reports() {
     const sales = !features.sales ? Promise.resolve() : salesApi.report()
       .then(({ data }) => setVisitStats(data))
       .catch(() => setError("Unable to load sales insights."));
-    return Promise.allSettled([customers, sales]);
-  }, [features.customers, features.sales]);
+    const performance = !features.sales || !user?.is_admin ? Promise.resolve() : adminApi.salesPerformance(reportMonth)
+      .then(({ data }) => setSalesPerformance(data.results || []))
+      .catch(() => setError("Unable to load the sales team report."));
+    const employeeReport = !user?.is_admin ? Promise.resolve() : adminApi.userPerformance(reportMonth)
+      .then(({ data }) => setEmployeePerformance(data.results || []))
+      .catch(() => setError("Unable to load the employee performance report."));
+    return Promise.allSettled([customers, sales, performance, employeeReport]);
+  }, [features.customers, features.sales, reportMonth, user?.is_admin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -44,6 +69,13 @@ export default function Reports() {
     <nav aria-label="breadcrumb" className="mb-3"><ol className="breadcrumb mb-0"><li className="breadcrumb-item"><Link to="/dashboard">Dashboard</Link></li><li className="breadcrumb-item active" aria-current="page">Reports</li></ol></nav>
     <div className="page-header mb-4"><div><div className="eyebrow">CRM Overview</div><h1 className="h2 mb-2">Reports</h1><p className="text-secondary mb-0">Customer responses and sales activity at a glance.</p></div></div>
     {error && <div className="alert alert-warning" role="alert">{error} <button className="btn btn-outline-secondary btn-sm ms-2" type="button" onClick={load}>Retry</button></div>}
+    {user?.is_admin && <div className="panel d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4"><div><h2 className="h6 mb-1">Performance reporting period</h2><p className="text-secondary small mb-0">Choose a month to view employee tasks, short hours, and Sales targets.</p></div><div><label className="form-label small mb-1" htmlFor="performance-report-month">Month</label><input id="performance-report-month" className="form-control" type="month" value={reportMonth} onChange={(event) => changeReportMonth(event.target.value)} /></div></div>}
+
+    {user?.is_admin && employeePerformance === null && <LoadingPanel label={"Loading filtered performance for " + reportMonth} />}
+    {user?.is_admin && employeePerformance && <section className="panel mb-4" aria-labelledby="employee-performance-heading">
+      <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3"><div><h2 className="h4 mb-1" id="employee-performance-heading">Employee Performance</h2><p className="text-secondary mb-0">Task completion and short hours for every active employee in the selected month.</p></div><Link className="btn btn-outline-primary btn-sm" to="/admin-panel/users">All Users</Link></div>
+      {employeePerformance.length ? <><EmployeePerformanceGraph people={employeePerformance} /><div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Employee</th><th>Designation</th><th>Assigned tasks</th><th>Completed</th><th>Pending</th><th>Short-hour days</th><th>Completion</th></tr></thead><tbody>{employeePerformance.map((person) => <tr key={person.userId}><td className="fw-semibold">{person.username}</td><td>{person.designation || <span className="text-secondary">—</span>}</td><td>{person.assignedTasks}</td><td>{person.completedTasks}</td><td>{person.pendingTasks}</td><td>{person.shortDays || <span className="text-secondary">—</span>}</td><td>{person.percentage === null ? <span className="text-secondary">No tasks</span> : person.percentage + "%"}</td></tr>)}</tbody></table></div></> : <p className="text-secondary mb-0">No active employees in this store yet.</p>}
+    </section>}
 
     {features.customers && (customerStats ? <section className="panel mb-4" aria-labelledby="customer-insights-heading">
       <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3"><div><h2 className="h4 mb-1" id="customer-insights-heading">Customer Insights</h2><p className="text-secondary mb-0">Customer response across your accessible datasets.</p></div><Link className="btn btn-outline-primary btn-sm" to="/datasets">Customer Lists</Link></div>
@@ -66,6 +98,11 @@ export default function Reports() {
         <div className="col-lg-6"><h3 className="h6 mb-3">Visits over the last 6 months</h3>{visitStats.recentMonths.every((item) => item.count === 0) ? <p className="text-secondary mb-0">No visits recorded in this period.</p> : <MonthlyTrend months={visitStats.recentMonths} />}</div>
       </div>
     </section> : !error && <LoadingPanel label="Loading sales insights" />)}
+    {features.sales && user?.is_admin && salesPerformance && <section className="panel mt-4" aria-labelledby="sales-performance-heading">
+      <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3"><div><h2 className="h4 mb-1" id="sales-performance-heading">Sales Performance</h2><p className="text-secondary mb-0">Selected-month performance for active Sales-designated users.</p></div><Link className="btn btn-outline-primary btn-sm" to="/admin-panel/users">All Users</Link></div>
+      {salesPerformance.length ? <UserPerformanceGraph people={salesPerformance} /> : null}
+      {salesPerformance.length ? <div className="table-responsive"><table className="table table-hover align-middle mb-0"><thead className="table-light"><tr><th>Salesperson</th><th>Converted customers</th><th>Converted amount</th><th>Target</th><th>Progress</th><th>Remaining</th></tr></thead><tbody>{salesPerformance.map((person) => <tr key={person.userId}><td className="fw-semibold">{person.username}</td><td>{person.convertedCount}</td><td>{formatCurrency(person.convertedAmount)}</td><td>{person.target === null ? <span className="text-secondary">No target</span> : person.metric === "amount" ? formatCurrency(person.target) : `${person.target} customers`}</td><td>{person.percentage === null ? "—" : `${person.percentage}%`}</td><td>{person.remaining === null ? "—" : person.metric === "amount" ? formatCurrency(person.remaining) : person.remaining}</td></tr>)}</tbody></table></div> : <p className="text-secondary mb-0">No active Sales users in this store yet.</p>}
+    </section>}
     {!features.customers && !features.sales && <p className="text-secondary">No report sections are enabled for this store.</p>}
   </div>;
 }
@@ -78,6 +115,48 @@ function Summary({ label, value, icon }) {
 function Breakdown({ title, items, max, empty = "No customer data recorded yet." }) {
   const [ref, isVisible] = useRevealOnView();
   return <div ref={ref} className={`reports-chart-reveal ${isVisible ? "is-visible" : ""}`}><h3 className="h6 mb-3">{title}</h3>{items.length ? <div className="reports-breakdown">{items.map((item) => <div className="reports-breakdown-row" key={item.value}><div className="reports-breakdown-label">{item.label}</div><div className="reports-breakdown-track"><div className="reports-breakdown-bar" style={{ width: `${(item.count / max) * 100}%`, "--bar-fill": item.color.fill, "--bar-border": item.color.border }} /></div><div className="reports-breakdown-count" style={{ color: item.color.text }}><AnimatedNumber value={item.count} active={isVisible} /></div></div>)}</div> : <p className="text-secondary mb-0">{empty}</p>}</div>;
+}
+
+function EmployeePerformanceGraph({ people }) {
+  const [ref, isVisible] = useRevealOnView();
+  return <div ref={ref} className={"user-performance-graph reports-chart-reveal mb-4 " + (isVisible ? "is-visible" : "")} aria-label="Current-month employee task completion">
+    <div className="d-flex flex-wrap justify-content-between gap-2 mb-3"><h3 className="h6 mb-0">Task completion by employee</h3><span className="text-secondary small">Selected month</span></div>
+    <div className="user-performance-list">
+      {people.map((person, index) => {
+        const progress = person.percentage === null ? null : Math.max(0, Number(person.percentage) || 0);
+        return <div className="user-performance-row" key={person.userId}>
+          <div className="user-performance-meta"><strong>{person.username}</strong><span>{progress === null ? "No tasks assigned" : person.completedTasks + " of " + person.assignedTasks + " tasks completed"}{person.shortDays ? " · " + person.shortDays + " short-hour day" + (person.shortDays === 1 ? "" : "s") : ""}</span></div>
+          <div className="user-performance-track" role="progressbar" aria-label={person.username + " task completion"} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress || 0)}>
+            <div className="user-performance-bar" style={{ width: Math.min(progress || 0, 100) + "%", "--performance-color": chartPalette[index % chartPalette.length].border }} />
+          </div>
+          <strong className="user-performance-value">{progress === null ? "—" : Math.round(progress) + "%"}</strong>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function UserPerformanceGraph({ people }) {
+  const [ref, isVisible] = useRevealOnView();
+  return <div ref={ref} className={"user-performance-graph reports-chart-reveal mb-4 " + (isVisible ? "is-visible" : "")} aria-label="Current-month sales target progress by user">
+    <div className="d-flex flex-wrap justify-content-between gap-2 mb-3"><h3 className="h6 mb-0">User target progress</h3><span className="text-secondary small">Selected month</span></div>
+    <div className="user-performance-list">
+      {people.map((person, index) => {
+        const progress = person.percentage === null ? null : Math.max(0, Number(person.percentage) || 0);
+        const visualProgress = Math.min(progress || 0, 100);
+        const achievement = person.metric === "amount"
+          ? formatCurrency(person.convertedAmount) + " / " + formatCurrency(person.target || 0)
+          : person.convertedCount + " / " + (person.target || 0) + " customers";
+        return <div className="user-performance-row" key={person.userId}>
+          <div className="user-performance-meta"><strong>{person.username}</strong><span>{progress === null ? "No target assigned" : achievement}</span></div>
+          <div className="user-performance-track" role="progressbar" aria-label={person.username + " target progress"} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress || 0)}>
+            <div className="user-performance-bar" style={{ width: visualProgress + "%", "--performance-color": chartPalette[index % chartPalette.length].border }} />
+          </div>
+          <strong className="user-performance-value">{progress === null ? "—" : Math.round(progress) + "%"}</strong>
+        </div>;
+      })}
+    </div>
+  </div>;
 }
 
 function MonthlyTrend({ months }) {

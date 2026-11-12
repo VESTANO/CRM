@@ -539,7 +539,7 @@ class AuthenticationTests(TestCase):
         response = self.client.get(reverse("login"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Customer CRM")
+        self.assertContains(response, "VestaTrack")
         self.assertContains(response, "Username")
         self.assertContains(response, "Password")
 

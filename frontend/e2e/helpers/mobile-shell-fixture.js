@@ -20,9 +20,10 @@ export async function shellFixture(page,{role='admin',signedIn=true}={}) {
     else if(path.includes('/rest/v1/profiles'))json=[profile];
     else if(path.includes('/rest/v1/'))json=[];
     else if(path.endsWith('/auth/legacy-login/'))json=session;
+    else if(path.endsWith('/store/features/'))json={features:{dashboard:true,customers:true,sales:true,attendance:true,callbacks:true,reminders:true,reports:true,tasks:true}};
     else if(path.endsWith('/task-notifications/'))json={results:[],unreadCount:0};
     else if(path.endsWith('/callbacks/'))json={results:[],counts:{today:9999},pagination:{page:1,numPages:1,count:0}};
-    else if(path.endsWith('/dashboard/'))json={totalCustomers:999999999,totalDatasets:999999,responseStats:['no_response','interested','not_interested','callback','converted'].map(value=>({value,label:value.replaceAll('_',' '),count:99999999})),recentDatasets:Array.from({length:5},(_,i)=>({...dataset,id:i+1})),payments:{totalAmount:9999999999.99,paidAmount:9999999999.99,pendingAmount:9999999999.99},sales:{totalVisits:99999999,todaysVisits:99999999,monthVisits:99999999,totalVisitExpenses:999999999.99}};
+    else if(path.endsWith('/dashboard/')||path.endsWith('/reports/summary/'))json={totalCustomers:999999999,totalDatasets:999999,responseStats:['no_response','interested','not_interested','callback','converted'].map(value=>({value,label:value.replaceAll('_',' '),count:99999999})),recentDatasets:Array.from({length:5},(_,i)=>({...dataset,id:i+1})),payments:{totalAmount:9999999999.99,paidAmount:9999999999.99,pendingAmount:9999999999.99},sales:{totalVisits:99999999,todaysVisits:99999999,monthVisits:99999999,totalVisitExpenses:999999999.99}};
     else if(path.endsWith('/targets/'))json={results:[{id:1,monthLabel:'November 2026',converted:999999,target:999999,percentage:100,statusColor:'success'}]};
     else if(path.endsWith('/datasets/'))json={results:[dataset]};
     else if(path.endsWith('/admin/summary/'))json={users:[target],datasets:[dataset],metrics:{totalUsers:9999,totalCustomers:999999,totalDatasets:9999}};

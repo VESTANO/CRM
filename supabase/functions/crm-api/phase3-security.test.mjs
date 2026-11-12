@@ -9,7 +9,9 @@ const source=stripTypeScriptTypes(readFileSync(new URL('./index.ts',import.meta.
 const a='00000000-0000-4000-8000-000000000011',b='00000000-0000-4000-8000-000000000012';
 function fixture({profileWriteError=false,syncFailure=false}={}) {
   const writes=[],authWrites=[],deleted=[];
-  const target={id:'employee',employee_id:'EMP',email:'old@example.test',role:'employee',active:true,store_id:a};
+  // Employees require a designation. Keeping this fixture valid lets these
+  // tests reach the Auth rollback paths they are intended to exercise.
+  const target={id:'employee',employee_id:'EMP',email:'old@example.test',role:'employee',active:true,designation:'Sales',store_id:a};
   const tables={profiles:[target],crm_stores:[{id:a},{id:b}],crm_datasets:[{id:1,owner_id:'employee',store_id:a},{id:2,owner_id:'employee',store_id:a}],crm_reminders:[{id:1,owner_id:'employee',store_id:a,text:'A',reminder_at:'2099-01-01T00:00:00Z'},{id:2,owner_id:'other',store_id:b,text:'B',reminder_at:'2099-01-01T00:00:00Z'}]};
   const client={auth:{getUser:async()=>({data:{user:{id:'employee'}}}),admin:{createUser:async()=>({data:{user:{id:'new-account'}}}),deleteUser:async id=>{deleted.push(id);return {};},updateUserById:async(id,body)=>{authWrites.push({id,body});return {data:{}};}}},from:table=>{
     const filters=[];let payload,operation='select',duplicate=false;
@@ -21,7 +23,7 @@ function fixture({profileWriteError=false,syncFailure=false}={}) {
       if(operation==='delete'){tables[table]=(tables[table]||[]).filter(row=>!data.includes(row));writes.push({table,payload});}
       return {data:structuredClone(data),count:data.length,error:null};
     };
-    const q={select:()=>q,eq:(key,value)=>{filters.push(row=>row[key]===value);return q;},neq:(key,value)=>{filters.push(row=>row[key]!==value);return q;},or:()=>{duplicate=true;return q;},order:()=>q,range:()=>q,insert:value=>{payload=value;operation='insert';return q;},update:value=>{payload=value;operation='update';return q;},delete:()=>{operation='delete';return q;},maybeSingle:async()=>{const r=execute();return {...r,data:r.data?.[0]||null};},single:async()=>{const r=execute();return {...r,data:r.data?.[0]||null};},then:(yes,no)=>Promise.resolve(execute()).then(yes,no)};
+    const q={select:()=>q,eq:(key,value)=>{filters.push(row=>row[key]===value);return q;},neq:(key,value)=>{filters.push(row=>row[key]!==value);return q;},or:()=>{duplicate=true;return q;},order:()=>q,range:()=>q,limit:()=>q,insert:value=>{payload=value;operation='insert';return q;},update:value=>{payload=value;operation='update';return q;},delete:()=>{operation='delete';return q;},maybeSingle:async()=>{const r=execute();return {...r,data:r.data?.[0]||null};},single:async()=>{const r=execute();return {...r,data:r.data?.[0]||null};},then:(yes,no)=>Promise.resolve(execute()).then(yes,no)};
     return q;
   }};
   const api=new Function('createClient','Deno','corsHeaders','syncFailure',`${source};
@@ -46,7 +48,7 @@ test('invalid store reassignment is rejected before changing authentication emai
 });
 test('profile creation failure removes only the new authentication account',async()=>{
   const app=fixture({profileWriteError:true});
-  await assert.rejects(app.admin('admin/users','POST',{username:'NEW',email:'new@example.test',password1:'password123',password2:'password123',store_id:a}));
+  await assert.rejects(app.admin('admin/users','POST',{username:'NEW',email:'new@example.test',password1:'password123',password2:'password123',designation:'Sales',store_id:a}));
   assert.deepEqual(app.deleted,['new-account']);
 });
 test('profile edit failure restores an already changed authentication email',async()=>{

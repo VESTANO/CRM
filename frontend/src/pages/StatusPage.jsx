@@ -5,8 +5,8 @@ import { Link, useNavigate } from "react-router-dom";
 export function ServerErrorPage() {
   const base = import.meta.env.MODE === "pages" || import.meta.env.VITE_PAGES_BUILD === "true" ? "/CRM" : "";
   return <main className="crm-status-page">
-    <a href={`${base}/dashboard`} className="crm-status-brand" aria-label="Vestano CRM home">
-      <span className="brand-mark">V</span><span><strong>VESTANO</strong><small>Customer CRM</small></span>
+    <a href={`${base}/dashboard`} className="crm-status-brand" aria-label="VestaTrack CRM home">
+      <span className="brand-mark">V</span><span><strong>VESTATRACK</strong><small>CRM</small></span>
     </a>
     <section className="crm-status-card" aria-labelledby="crm-server-error-title">
       <span className="crm-status-icon" aria-hidden="true"><i className="bi bi-hdd-network" /></span>
@@ -22,7 +22,7 @@ export function ServerErrorPage() {
       </div>
       <p className="crm-status-hint">If the problem continues, contact your administrator.</p>
     </section>
-    <p className="crm-status-footer">VESTANO · CUSTOMER CRM</p>
+    <p className="crm-status-footer">VESTATRACK · CUSTOMER CRM</p>
   </main>;
 }
 
@@ -40,8 +40,8 @@ export default function StatusPage({ kind = "not-found", onRetry }) {
   };
 
   return <main className="crm-status-page">
-    <Link to="/dashboard" className="crm-status-brand" aria-label="Vestano CRM home">
-      <span className="brand-mark">V</span><span><strong>VESTANO</strong><small>Customer CRM</small></span>
+    <Link to="/dashboard" className="crm-status-brand" aria-label="VestaTrack CRM home">
+      <span className="brand-mark">V</span><span><strong>VESTATRACK</strong><small>CRM</small></span>
     </Link>
     <section className="crm-status-card" aria-labelledby="crm-status-title">
       <span className="crm-status-icon" aria-hidden="true"><i className={`bi ${offline ? "bi-wifi-off" : "bi-signpost-split"}`} /></span>
@@ -60,6 +60,6 @@ export default function StatusPage({ kind = "not-found", onRetry }) {
         }}>Go back</button>
       </div>}
     </section>
-    <p className="crm-status-footer">VESTANO · CUSTOMER CRM</p>
+    <p className="crm-status-footer">VESTATRACK · CUSTOMER CRM</p>
   </main>;
 }

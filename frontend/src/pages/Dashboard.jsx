@@ -24,6 +24,14 @@ const responseTones = {
   converted: "green",
 };
 
+function targetMeasureLabel(target) {
+  return target.metric === "amount" ? "Converted amount" : "Converted";
+}
+
+function formatTargetMeasure(target, value) {
+  return target.metric === "amount" ? formatCurrency(value) : value;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   if (user?.is_superuser && !activeStoreId()) return <Navigate to="/admin-panel/stores" replace />;
@@ -172,14 +180,14 @@ function StoreDashboard() {
               <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 border-top pt-3" key={target.id}>
                 <div>
                   <div className="fw-semibold">{target.monthLabel}</div>
-                  <div className="text-secondary small">{target.converted} of {target.target} converted ({target.percentage}%)</div>
+                  <div className="text-secondary small">{formatTargetMeasure(target, target.converted)} of {formatTargetMeasure(target, target.target)} {target.metric === "amount" ? "in converted sales" : "converted"} ({target.percentage}%)</div>
                   <div className="target-track" aria-hidden="true"><span style={{ width: `${Math.min(Math.max(Number(target.percentage) || 0, 0), 100)}%` }} /></div>
                 </div>
                 <div className="d-flex flex-wrap gap-2">
-                  <span className={`badge text-bg-${target.statusColor}`}>Target: <AnimatedNumber value={target.target} /></span>
-                  <span className="badge text-bg-success">Converted: <AnimatedNumber value={target.converted} /></span>
+                  <span className={`badge text-bg-${target.statusColor}`}>Target: {target.metric === "amount" ? formatCurrency(target.target) : <AnimatedNumber value={target.target} />}</span>
+                  <span className="badge text-bg-success">{targetMeasureLabel(target)}: {target.metric === "amount" ? formatCurrency(target.converted) : <AnimatedNumber value={target.converted} />}</span>
                   <span className={`badge text-bg-${target.target - target.converted > 0 ? "warning" : "success"}`}>
-                    Remaining: <AnimatedNumber value={Math.max(target.target - target.converted, 0)} />
+                    Remaining: {target.metric === "amount" ? formatCurrency(Math.max(target.target - target.converted, 0)) : <AnimatedNumber value={Math.max(target.target - target.converted, 0)} />}
                   </span>
                 </div>
               </div>
@@ -250,7 +258,7 @@ function StoreDashboard() {
         <Link className="dashboard-sales-link" to="/sales">View sales activity<i className="bi bi-arrow-right" aria-hidden="true" /></Link>
       </section>}
       </div>
-      <div className="dashboard-footnote"><span>VESTANO CRM</span><span>Built around better customer relationships.</span></div>
+      <div className="dashboard-footnote"><span>VESTATRACK CRM</span><span>Built around better customer relationships.</span></div>
     </div>
   );
 }

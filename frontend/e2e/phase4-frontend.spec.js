@@ -103,6 +103,7 @@ async function appFixture(page, { role = 'admin', selectedStore = false } = {}) 
     else if (path.includes('/rest/v1/profiles')) payload = role === 'super_admin' && selectedStore && !new URL(route.request().url()).searchParams.has('id') ? [] : [profile];
     else if (path.includes('/auth/v1/user')) payload = session.user;
     else if (path.includes('/auth/v1/')) payload = {};
+    else if (path.endsWith('/store/features/')) payload = { features: { dashboard: true, customers: true, sales: true, attendance: true, callbacks: true, reminders: true, reports: true, tasks: true } };
     else if (path.endsWith('/dashboard/') || path.endsWith('/reports/summary/')) payload = { totalDatasets: 0, totalCustomers: 0, responseStats: [], recentDatasets: [], payments: {}, sales: {} };
     else if (path.endsWith('/task-notifications/')) payload = { results: [], unreadCount: 0 };
     else if (path.endsWith('/customers/')) payload = { results: [], statusOptions: [], totalCount: 0, pagination: { page: 1, numPages: 1, count: 0 } };

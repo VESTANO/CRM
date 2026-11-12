@@ -3,6 +3,11 @@ const widths = [320, 360, 375, 390, 414, 430, 768, 1440];
 const longName = 'Alexandria Demonstration Employee With A Very Long Display Name';
 const longToken = 'ExtremelyLongUnbrokenValueForMobileOverflowVerification'.repeat(3);
 const uid = number => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
+const indiaToday = () => {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts();
+  const part = type => parts.find(item => item.type === type)?.value || '00';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+};
 
 async function fixture(page, role = 'admin', options = {}) {
   const profile = { id: uid(1), employee_id: 'MOBILEQA', name: longName, email: `${longToken}@example.test`, department: longToken, manager: longName, active: true, role, store_id: role === 'super_admin' ? null : uid(11), created_at: '2026-11-01', shift_start_time: '09:00', shift_end_time: '18:00', profile_image: options.profileImage || null };
@@ -12,7 +17,8 @@ async function fixture(page, role = 'admin', options = {}) {
   const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const session = { access_token: `${encode({ alg: 'HS256' })}.${encode({ sub: uid(1), role: 'authenticated', exp: 4070908800 })}.local-only`, refresh_token: 'local-refresh', token_type: 'bearer', expires_at: 4070908800, user: { id: uid(1), email: profile.email, aud: 'authenticated', role: 'authenticated', user_metadata: {} } };
   const entry = { id: uid(44), user_id: role === 'employee' ? profile.id : employee.id, employee_id: role === 'employee' ? profile.employee_id : employee.employee_id, employee_name: employee.name, work_date: '2026-11-07', project: longToken, details: longToken, comments: longToken, category: 'Project Work', start_time: '09:00', end_time: '18:00', total_hours: 8, approval_status: 'Submitted', work_status: 'Completed' };
-  const punches = ['09:00', '13:00', '14:00', '18:00'].map((hour, index) => ({ id: uid(100 + index), user_id: punchOwner.id, employee_id: punchOwner.employee_id, employee_name: punchOwner.name, punch_code: punchOwner.employee_id, punched_at: `2026-11-07T${hour}:00+05:30`, updated_at: '2026-11-07T15:00:00Z', created_at: '2026-11-07T15:00:00Z' }));
+  const attendanceDate = indiaToday();
+  const punches = ['09:00', '13:00', '14:00', '18:00'].map((hour, index) => ({ id: uid(100 + index), user_id: punchOwner.id, employee_id: punchOwner.employee_id, employee_name: punchOwner.name, punch_code: punchOwner.employee_id, punched_at: `${attendanceDate}T${hour}:00+05:30`, updated_at: `${attendanceDate}T15:00:00Z`, created_at: `${attendanceDate}T15:00:00Z` }));
   const errors = [], mutations = [], reads = [];
   let timesheetReviewed = false, overtimeReviewed = false, entryDeleted = false, employeeDeleted = false;
   let profileReadsFail = false;
@@ -111,15 +117,14 @@ for (const width of widths) test(`${width}px attendance pages, timesheet modal, 
   await page.setViewportSize({ width, height: 740 });
   for (const route of ['/attendance/approvals', '/attendance/overtime']) {
     await page.goto(route);
-    const timesheetReview=route==='/attendance/approvals';
-    const reject = await showTableAction(page, timesheetReview?'Review':'Reject'); await reject.click();
+    const reject = await showTableAction(page, 'Reject'); await reject.click();
     const review = page.getByRole('dialog'); await expect(review).toBeVisible();
     await review.getByRole('textbox').fill('Mobile feedback: please correct this entry.');
     await verifyLayout(page, `${route} rejection`, width, samples);
     await page.keyboard.press('Escape'); await expect(review).not.toBeVisible();
     await expect(reject).toBeFocused();
     await reject.click(); await review.getByRole('textbox').fill('Mobile feedback: please correct this entry.');
-    await review.getByRole('button', { name: timesheetReview?'Reject':'Confirm rejection', exact: true }).click();
+    await review.getByRole('button', { name: 'Confirm rejection', exact: true }).click();
     await expect(review).not.toBeVisible();
     expect(await page.evaluate(() => getComputedStyle(document.body).overflowY)).not.toBe('hidden');
   }
@@ -232,10 +237,10 @@ for (const width of widths) test(`${width}px remaining popup variants and scoped
 
     const admin = await actor('admin', { profileImage: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=' });
     await admin.page.goto('/attendance/approvals');
-    await (await showTableAction(admin.page, 'Review')).click();
-    dialog = admin.page.getByRole('dialog', { name: 'Review timesheet', exact: true });
-    await verifyLayout(admin.page, 'timesheet approval popup', width, samples);
-    await dialog.getByRole('button', { name: 'Approve', exact: true }).click(); await expect(dialog).not.toBeVisible();
+    await (await showTableAction(admin.page, 'Approve')).click();
+    dialog = admin.page.getByRole('dialog', { name: 'Approve timesheet entry?', exact: true });
+    await verifyLayout(admin.page, 'timesheet approval confirmation', width, samples);
+    await dialog.getByRole('button', { name: 'Confirm approval', exact: true }).click(); await expect(dialog).not.toBeVisible();
     await admin.page.goto('/attendance/overtime');
     await (await showTableAction(admin.page, 'Approve')).click();
     dialog = admin.page.getByRole('dialog', { name: 'Approve overtime request?', exact: true });

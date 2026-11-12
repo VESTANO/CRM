@@ -63,19 +63,19 @@ export default function Login() {
 
   return (
     <main className="auth-main luxe-login workspace-login">
-      <aside className="login-brand-panel" aria-label="Vestano CRM">
+      <aside className="login-brand-panel" aria-label="VestaTrack CRM">
         <div className="login-brand-top">
           <span className="brand-mark">V</span>
-          <span><strong>VESTANO</strong><small>Customer CRM</small></span>
+          <span><strong>VESTATRACK</strong><small>CRM</small></span>
         </div>
         <div className="login-brand-story">
-          <span className="login-eyebrow">VESTANO WORKSPACE</span>
+          <span className="login-eyebrow">VESTATRACK WORKSPACE</span>
           <h2>Everything your team needs to <em>move forward.</em></h2>
           <p>Customers, sales, attendance and tasks in one connected workspace.</p>
           <div className="login-brand-rule" />
           <div className="login-brand-caption"><span>01</span><span>CUSTOMERS · SALES · ATTENDANCE</span></div>
         </div>
-        <div className="login-brand-footer"><span>VESTANO CRM</span><span>CUSTOMER OPERATIONS</span></div>
+        <div className="login-brand-footer"><span>VESTATRACK CRM</span><span>CUSTOMER OPERATIONS</span></div>
       </aside>
 
       <section className="login-access-panel">
@@ -146,7 +146,7 @@ export default function Login() {
           )}
           <div className="login-security-note"><i className="bi bi-shield-lock" aria-hidden="true" /> Your account is protected</div>
         </div>
-        <div className="login-access-footer"><span>VESTANO / CUSTOMER OPERATIONS</span><span>© {new Date().getFullYear()}</span></div>
+        <div className="login-access-footer"><span>VESTATRACK / CUSTOMER OPERATIONS</span><span>© {new Date().getFullYear()}</span></div>
       </section>
     </main>
   );

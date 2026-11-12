@@ -7,7 +7,7 @@ import { formatDateTime } from "../utils/formatters.js";
 export default function AdminUserDetail() {
   const { userId } = useParams();
   const navigate = useNavigate();
-  const { csrfToken } = useAuth();
+  const { csrfToken, user: signedInUser } = useAuth();
   const [user, setUser] = useState(() => peekCachedResponse(`/admin/users/${userId}/`)?.data || null);
   const [error, setError] = useState("");
 
@@ -53,7 +53,7 @@ export default function AdminUserDetail() {
         <div className="d-flex flex-wrap gap-2">
           <button className="btn btn-outline-secondary" type="button" onClick={() => navigate(-1)}>Back</button>
           <Link className="btn btn-primary" to={`/admin-panel/users/${user.id}/edit`}>{user.is_superuser ? "Edit Super Admin" : "Edit user"}</Link>
-          {!user.is_admin && (
+          {(!user.is_admin || signedInUser?.is_superuser) && (
             <Link className="btn btn-outline-secondary" to={`/admin-panel/users/${user.id}/password`}>
               Reset password
             </Link>
@@ -67,7 +67,8 @@ export default function AdminUserDetail() {
             <h2 className="h5 mb-3">Account information</h2>
             <Info label="Username" value={user.username} />
             <Info label="Email" value={user.email || "No email"} />
-            <Info label="Role" value={user.is_superuser ? "Super Admin" : user.is_admin ? "Admin" : "User"} />
+            <Info label="Role" value={user.is_admin ? "Admin" : "User"} />
+            <Info label="Designation" value={user.designation || "Not assigned"} />
             <Info label="Account status" value={user.is_active ? "Active" : "Inactive"} />
             <Info label="Date joined" value={formatDateTime(user.date_joined)} />
           </section>

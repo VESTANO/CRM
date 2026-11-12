@@ -687,7 +687,7 @@ def customer_edit(request, dataset_id, record_id):
 
     if request.method == "POST" and form.is_valid():
         save_customer_crm_change(form, request.user, previous_values)
-        messages.success(request, "Customer CRM information updated successfully.")
+        messages.success(request, "VestaTrack CRM information updated successfully.")
         return redirect(
             "customers:customer_detail",
             dataset_id=dataset.id,

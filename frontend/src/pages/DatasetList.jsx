@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { datasetsApi, peekCachedResponse, targetsApi } from "../services/api.js";
 import { useAuth } from "../hooks/useAuth.jsx";
-import { formatDateTime } from "../utils/formatters.js";
+import { formatCurrency, formatDateTime } from "../utils/formatters.js";
 import { filterDatasets } from "../utils/datasets.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { LoadingPanel, RequestError } from "../components/RequestState.jsx";
@@ -107,13 +107,13 @@ export default function DatasetList() {
               <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 border-top pt-3" key={target.id}>
                 <div>
                   <div className="fw-semibold">{target.monthLabel}</div>
-                  <div className="text-secondary small">{target.converted} of {target.target} converted ({target.percentage}%)</div>
+                  <div className="text-secondary small">{target.metric === "amount" ? formatCurrency(target.converted) : target.converted} of {target.metric === "amount" ? formatCurrency(target.target) : target.target} {target.metric === "amount" ? "in converted sales" : "converted"} ({target.percentage}%)</div>
                 </div>
                 <div className="d-flex flex-wrap gap-2">
-                  <span className={`badge text-bg-${target.statusColor}`}>Target: <AnimatedNumber value={target.target} /></span>
-                  <span className="badge text-bg-success">Converted: <AnimatedNumber value={target.converted} /></span>
+                  <span className={`badge text-bg-${target.statusColor}`}>Target: {target.metric === "amount" ? formatCurrency(target.target) : <AnimatedNumber value={target.target} />}</span>
+                  <span className="badge text-bg-success">{target.metric === "amount" ? "Converted amount" : "Converted"}: {target.metric === "amount" ? formatCurrency(target.converted) : <AnimatedNumber value={target.converted} />}</span>
                   <span className={`badge text-bg-${target.target - target.converted > 0 ? "warning" : "success"}`}>
-                    Remaining: <AnimatedNumber value={Math.max(target.target - target.converted, 0)} />
+                    Remaining: {target.metric === "amount" ? formatCurrency(Math.max(target.target - target.converted, 0)) : <AnimatedNumber value={Math.max(target.target - target.converted, 0)} />}
                   </span>
                 </div>
               </div>

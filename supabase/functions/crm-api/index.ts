@@ -17,8 +17,8 @@ type Context = { user: any; profile: any; activeStoreId?: string };
 
 const defaultStoreFeatures = {
   dashboard: true,
-  customers: true, sales: true, attendance: true, callbacks: true,
-  reminders: true, reports: true, tasks: true,
+  customers: true, sales: true, attendance: true, manual_attendance: true, callbacks: true,
+  reminders: true, reports: true, tasks: true, task_images: true,
 };
 type StoreFeature = keyof typeof defaultStoreFeatures;
 
@@ -59,7 +59,13 @@ function checkDb(error: any) {
   if (code === "23503") fail(400, "This record is still linked to another record. Reload and check its related records.");
   if (code === "42501") fail(403, "You do not have permission to perform this action.");
   if (code.startsWith("08") || code.startsWith("XX") || code.startsWith("PGRST") || ["57014","55P03","40001","40P01"].includes(code)) {
-    fail(503, "The database could not complete this request. Your changes may not have been saved. Reload to check before retrying.");
+    const reason = code === "57014" ? "the database request timed out"
+      : code === "55P03" ? "the database is busy"
+        : ["40001", "40P01"].includes(code) ? "another change was being saved at the same time"
+          : code.startsWith("PGRST") ? "the CRM database API could not process the request"
+            : "the CRM database service is temporarily unavailable";
+    console.error("CRM database request failed:", code || "unknown", error.message || "No message");
+    fail(503, `The user was not saved because ${reason}. Reload once and retry. If this keeps happening, contact the system administrator.`);
   }
   if (code.startsWith("22")) fail(400, "One or more values are invalid. Check the entered dates, amounts and identifiers.");
   // P0001 is reserved for our explicit business validation messages. Other
@@ -428,6 +434,37 @@ async function requireStoreFeature(ctx: Context, feature: StoreFeature) {
   if (!(await storeFeaturesFor(ctx))[feature]) fail(403, "This feature is not enabled for your store.");
 }
 
+async function requireTaskImageUploads(ctx: Context, files: File[], thumbnails: File[] = []) {
+  if ((files.length || thumbnails.length) && !(await storeFeaturesFor(ctx)).task_images) {
+    fail(403, "Task image uploads are disabled for this store.");
+  }
+}
+
+async function enforceStoreAccountLimit(storeId: string | null, role: string, active: boolean, excludedUserId = "") {
+  if (!storeId || !active || !["admin", "employee"].includes(role)) return;
+  const column = role === "admin" ? "admin_limit" : "user_limit";
+  const label = role === "admin" ? "Admin" : "User";
+  const { data: store, error: storeError } = await adminClient.from("crm_stores").select("id,admin_limit,user_limit").eq("id", storeId).maybeSingle();
+  checkDb(storeError);
+  if (!store) fail(400, "Choose an existing store.", { errors: { store_id: ["Choose an existing store."] } });
+  const limit = store[column];
+  if (limit === null || limit === undefined) return;
+  let query = adminClient.from("profiles").select("id", { count: "exact", head: true })
+    .eq("store_id", storeId).eq("role", role).eq("active", true);
+  if (excludedUserId) query = query.neq("id", excludedUserId);
+  const { count, error } = await query;
+  checkDb(error);
+  if (Number(count || 0) >= Number(limit)) {
+    const message = `This store has reached its ${label} limit of ${limit}.`;
+    fail(400, message, {
+      errors: {
+        non_field_errors: [message],
+        role: [`This store allows up to ${limit} active ${label} account${Number(limit) === 1 ? "" : "s"}.`],
+      },
+    });
+  }
+}
+
 function applyProfileScope(query: any, ctx: Context) {
   const storeId = profileScope(ctx);
   return storeId ? query.eq("store_id", storeId) : query;
@@ -517,6 +554,7 @@ function userPayload(profile: any, extras: any = {}) {
   return {
     id: profile.id,
     username: profile.employee_id || profile.email || "user",
+    name: profile.name || profile.employee_id || profile.email || "Employee",
     email: profile.email || "",
     role,
     is_staff: admin,
@@ -524,6 +562,7 @@ function userPayload(profile: any, extras: any = {}) {
     is_admin: admin,
     is_active: Boolean(profile.active),
     date_joined: profile.created_at,
+    designation: profile.designation || "",
     store_id: profile.store_id || null,
     store_name: profile.store?.name || extras.store_name || "",
     ...extras,
@@ -545,6 +584,11 @@ function indiaDate(date = new Date()) {
 }
 
 function monthStart(date = new Date()) { return indiaDate(date).slice(0, 7) + "-01"; }
+function reportMonth(value: string | null) {
+  if (!value) return monthStart();
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(value)) fail(400, "Choose a valid report month.");
+  return value + "-01";
+}
 function nextMonth(start: string) {
   const [year, month] = start.slice(0, 7).split("-").map(Number);
   return year + (month === 12 ? 1 : 0) + "-" + String(month === 12 ? 1 : month + 1).padStart(2, "0") + "-01";
@@ -607,13 +651,17 @@ async function datasetRecordCounts(ids: number[]) {
 
 async function targetAndConversions(ownerId: string, month: string) {
   const { data: target, error: targetError } = await adminClient
-    .from("crm_sales_targets").select("id,target").eq("user_id", ownerId).eq("month", month).maybeSingle();
+    .from("crm_sales_targets").select("id,target,metric").eq("user_id", ownerId).eq("month", month).maybeSingle();
   checkDb(targetError);
-  const { count, error } = await adminClient.from("crm_visits").select("id", { count: "exact", head: true })
+  const { data: visits, error } = await adminClient.from("crm_visits").select("id,total_amount")
     .eq("owner_id", ownerId).eq("status", "converted").gte("visit_date", month).lt("visit_date", nextMonth(month));
   checkDb(error);
-  const converted = count || 0;
-  return { target: target?.target ?? null, converted_count: converted, remaining_target: target ? Math.max(target.target - converted, 0) : null };
+  const metric = target?.metric === "amount" ? "amount" : "count";
+  const converted = metric === "amount"
+    ? (visits || []).reduce((sum: number, visit: any) => sum + Number(visit.total_amount || 0), 0)
+    : (visits || []).length;
+  const goal = target ? Number(target.target) : null;
+  return { target: goal, target_metric: metric, converted_count: converted, remaining_target: goal === null ? null : Math.max(goal - converted, 0) };
 }
 
 async function serializeDataset(dataset: any) {
@@ -643,28 +691,33 @@ async function serializeDatasets(datasets: any[]) {
   const followingMonth = nextMonth(currentMonth);
   const [profiles, targets, convertedVisits, customerCounts] = await Promise.all([
     fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id", ownerIds)),
-    fetchAll(() => adminClient.from("crm_sales_targets").select("user_id,target").in("user_id", ownerIds).eq("month", currentMonth)),
-    fetchAll(() => adminClient.from("crm_visits").select("owner_id").in("owner_id", ownerIds).eq("status", "converted").gte("visit_date", currentMonth).lt("visit_date", followingMonth)),
+    fetchAll(() => adminClient.from("crm_sales_targets").select("user_id,target,metric").in("user_id", ownerIds).eq("month", currentMonth)),
+    fetchAll(() => adminClient.from("crm_visits").select("owner_id,total_amount").in("owner_id", ownerIds).eq("status", "converted").gte("visit_date", currentMonth).lt("visit_date", followingMonth)),
     datasetRecordCounts(datasets.map((dataset: any) => dataset.id)),
   ]);
   const profileById = new Map(profiles.map((profile: any) => [profile.id, profile]));
-  const targetByOwner = new Map(targets.map((target: any) => [target.user_id, Number(target.target || 0)]));
-  const conversionsByOwner = new Map<string, number>();
-  for (const visit of convertedVisits) conversionsByOwner.set(visit.owner_id, (conversionsByOwner.get(visit.owner_id) || 0) + 1);
+  const targetByOwner = new Map(targets.map((target: any) => [target.user_id, { target: Number(target.target || 0), metric: target.metric === "amount" ? "amount" : "count" }]));
+  const conversionsByOwner = new Map<string, { count: number; amount: number }>();
+  for (const visit of convertedVisits) {
+    const current = conversionsByOwner.get(visit.owner_id) || { count: 0, amount: 0 };
+    current.count += 1; current.amount += Number(visit.total_amount || 0);
+    conversionsByOwner.set(visit.owner_id, current);
+  }
   const countByDataset = new Map(customerCounts.map((row: any) => [Number(row.dataset_id),Number(row.customer_count)]));
   return datasets.map((dataset: any) => {
     const profile = profileById.get(dataset.owner_id);
     const target = targetByOwner.get(dataset.owner_id);
-    const converted = conversionsByOwner.get(dataset.owner_id) || 0;
+    const converted = target?.metric === "amount" ? (conversionsByOwner.get(dataset.owner_id)?.amount || 0) : (conversionsByOwner.get(dataset.owner_id)?.count || 0);
     return {
       id: dataset.id,
       name: dataset.name,
       original_filename: dataset.original_filename,
       owner_username: profile?.employee_id || profile?.name || null,
       customer_count: countByDataset.get(Number(dataset.id)) || 0,
-      target: target ?? null,
+      target: target?.target ?? null,
+      target_metric: target?.metric || "count",
       converted_count: converted,
-      remaining_target: target === undefined ? null : Math.max(target - converted, 0),
+      remaining_target: target === undefined ? null : Math.max(target.target - converted, 0),
       uploaded_at: dataset.uploaded_at,
       updated_at: dataset.updated_at,
     };
@@ -943,30 +996,34 @@ async function serializeTask(task: any) { return (await serializeTasks([task]))[
 
 async function targetPayload(target: any) {
   const userName = await profileName(target.user_id);
-  const allTargets = await fetchAll(() => adminClient.from("crm_sales_targets").select("target,month")
+  const allTargets = await fetchAll(() => adminClient.from("crm_sales_targets").select("target,month,metric")
     .eq("user_id", target.user_id).order("month", { ascending: false }));
   const months = [...allTargets.map((item: any) => String(item.month)),String(target.month)].sort();
-  const visits = await fetchAll(() => adminClient.from("crm_visits").select("id,visit_date").order("id")
+  const visits = await fetchAll(() => adminClient.from("crm_visits").select("id,visit_date,total_amount").order("id")
     .eq("owner_id", target.user_id).eq("status", "converted").gte("visit_date",months[0]).lt("visit_date",nextMonth(months[months.length-1])));
-  const conversions = new Map<string,number>();
+  const conversions = new Map<string,{ count: number; amount: number }>();
   for (const visit of visits) {
     const month = String(visit.visit_date).slice(0,7);
-    conversions.set(month,(conversions.get(month) || 0)+1);
+    const current = conversions.get(month) || { count: 0, amount: 0 };
+    current.count += 1; current.amount += Number(visit.total_amount || 0);
+    conversions.set(month,current);
   }
-  const converted = conversions.get(String(target.month).slice(0,7)) || 0;
+  const metric = target.metric === "amount" ? "amount" : "count";
+  const converted = conversions.get(String(target.month).slice(0,7))?.[metric] || 0;
   let lowTargetCount = 0;
   for (const item of allTargets) {
     if (String(item.month) >= monthStart()) continue;
-    const count = conversions.get(String(item.month).slice(0,7)) || 0;
-    const percent = item.target ? Math.round((count / item.target) * 100) : 0;
+    const progress = conversions.get(String(item.month).slice(0,7))?.[item.metric === "amount" ? "amount" : "count"] || 0;
+    const percent = item.target ? Math.round((progress / Number(item.target)) * 100) : 0;
     if (percent <= 30) lowTargetCount += 1;
   }
-  const percentage = target.target ? Math.round((converted / target.target) * 100) : 0;
+  const goal = Number(target.target);
+  const percentage = goal ? Math.round((converted / goal) * 100) : 0;
   return {
     id: target.id, userId: target.user_id, username: userName,
     month: String(target.month).slice(0, 7),
     monthLabel: new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(String(target.month) + "T00:00:00Z")),
-    datasetId: null, datasetName: "", target: target.target, converted, percentage,
+    datasetId: null, datasetName: "", target: goal, metric, converted, percentage,
     statusColor: percentage <= 30 ? "danger" : percentage <= 70 ? "primary" : "success",
     lowTargetCount, needsWarning: lowTargetCount >= 3,
     warningMessage: lowTargetCount >= 3 ? userName + " has already failed to achieve at least 30% of the assigned target " + lowTargetCount + " times. Schedule a meeting and review this user's continuation." : "",
@@ -983,7 +1040,7 @@ async function serializeManualClient(client: any) {
 }
 
 async function serializeVisit(visit: any, includeFields = false) {
-  const [manualClient, customer, images] = await Promise.all([
+  const [manualClient, customer, images, employee] = await Promise.all([
     visit.manual_client_id
       ? adminClient.from("crm_manual_clients").select("*").eq("id", visit.manual_client_id).maybeSingle().then((r: any) => { checkDb(r.error); return r.data; })
       : Promise.resolve(null),
@@ -993,6 +1050,10 @@ async function serializeVisit(visit: any, includeFields = false) {
     adminClient.from("crm_visit_images").select("*").eq("visit_id", visit.id).order("uploaded_at").then(async (r: any) => {
       checkDb(r.error);
       return await signedTaskImages(adminClient, r.data || [], "crm-visit-images");
+    }),
+    adminClient.from("profiles").select("name,employee_id").eq("id", visit.owner_id).maybeSingle().then((r: any) => {
+      checkDb(r.error);
+      return r.data;
     }),
   ]);
   let dataset: any = null;
@@ -1021,6 +1082,8 @@ async function serializeVisit(visit: any, includeFields = false) {
     total_amount: visit.total_amount, paid_amount: visit.paid_amount,
     pending_amount: Math.max(Math.round((Number(visit.total_amount || 0) - Number(visit.paid_amount || 0)) * 100) / 100, 0),
     payment_description: visit.payment_description || "", note: visit.note || "",
+    employee_name: employee?.name || employee?.employee_id || "Unknown employee",
+    employee_id: employee?.employee_id || "",
     created_at: visit.created_at, updated_at: visit.updated_at,
   };
   if (includeFields) {
@@ -1043,9 +1106,11 @@ async function serializeVisitList(visits: any[]) {
   if (!visits.length) return [];
   const manualIds = [...new Set(visits.map((visit: any) => visit.manual_client_id).filter(Boolean))];
   const customerIds = [...new Set(visits.map((visit: any) => visit.customer_id).filter(Boolean))];
-  const [manualClients, customers] = await Promise.all([
+  const ownerIds = [...new Set(visits.map((visit: any) => visit.owner_id).filter(Boolean))];
+  const [manualClients, customers, employees] = await Promise.all([
     manualIds.length ? fetchAll(() => adminClient.from("crm_manual_clients").select("*").in("id", manualIds)) : [],
     customerIds.length ? fetchAll(() => adminClient.from("crm_customer_records").select("*").in("id", customerIds)) : [],
+    ownerIds.length ? fetchAll(() => adminClient.from("profiles").select("id,name,employee_id").in("id", ownerIds)) : [],
   ]);
   const datasetIds = [...new Set(customers.map((customer: any) => Number(customer.dataset_id)))];
   const [datasets, columns] = await Promise.all([
@@ -1054,6 +1119,7 @@ async function serializeVisitList(visits: any[]) {
   ]);
   const manualById = new Map(manualClients.map((item: any) => [Number(item.id), item]));
   const customerById = new Map(customers.map((item: any) => [Number(item.id), item]));
+  const employeeById = new Map(employees.map((item: any) => [item.id, item]));
   const datasetById = new Map(datasets.map((item: any) => [Number(item.id), item]));
   const columnsByDataset = new Map<number, any[]>();
   for (const column of columns) columnsByDataset.set(Number(column.dataset_id), [...(columnsByDataset.get(Number(column.dataset_id)) || []), column]);
@@ -1061,6 +1127,7 @@ async function serializeVisitList(visits: any[]) {
     const manualClient = manualById.get(Number(visit.manual_client_id));
     const customer = customerById.get(Number(visit.customer_id));
     const dataset = customer ? datasetById.get(Number(customer.dataset_id)) : null;
+    const employee = employeeById.get(visit.owner_id);
     const sheetColumns = customer ? (columnsByDataset.get(Number(customer.dataset_id)) || []).filter((column) => column.sheet_name === customer.sheet_name) : [];
     return {
       id: visit.id,
@@ -1093,6 +1160,8 @@ async function serializeVisitList(visits: any[]) {
       pending_amount: Math.max(Math.round((Number(visit.total_amount || 0) - Number(visit.paid_amount || 0)) * 100) / 100, 0),
       payment_description: visit.payment_description || "",
       note: visit.note || "",
+      employee_name: employee?.name || employee?.employee_id || "Unknown employee",
+      employee_id: employee?.employee_id || "",
       created_at: visit.created_at,
       updated_at: visit.updated_at,
     };
@@ -1417,6 +1486,103 @@ async function listReminders(ctx: Context) {
   }));
 }
 
+async function salesPerformance(ctx: Context, month = monthStart()) {
+  const profiles = await fetchAll(() => applyProfileScope(
+    adminClient.from("profiles").select("id,employee_id,name,designation,active,role").eq("active", true).order("employee_id"), ctx,
+  ));
+  const salesUsers = profiles.filter((profile: any) => !isAdminRole(profile.role) && String(profile.designation || "").trim().toLowerCase() === "sales");
+  if (!salesUsers.length) return [];
+  const userIds = salesUsers.map((profile: any) => profile.id);
+  const [visits, targets] = await Promise.all([
+    fetchAll(() => adminClient.from("crm_visits").select("owner_id,total_amount").in("owner_id", userIds).eq("status", "converted").gte("visit_date", month).lt("visit_date", nextMonth(month))),
+    fetchAll(() => adminClient.from("crm_sales_targets").select("user_id,target,metric").in("user_id", userIds).eq("month", month)),
+  ]);
+  const totals = new Map<string, { count: number; amount: number }>();
+  for (const visit of visits) {
+    const current = totals.get(visit.owner_id) || { count: 0, amount: 0 };
+    current.count += 1; current.amount += Number(visit.total_amount || 0);
+    totals.set(visit.owner_id, current);
+  }
+  const targetByUser = new Map(targets.map((target: any) => [target.user_id, target]));
+  return salesUsers.map((profile: any) => {
+    const totalsForUser = totals.get(profile.id) || { count: 0, amount: 0 };
+    const target = targetByUser.get(profile.id);
+    const metric = target?.metric === "amount" ? "amount" : "count";
+    const goal = target ? Number(target.target) : null;
+    const completed = totalsForUser[metric];
+    return {
+      userId: profile.id,
+      username: profile.employee_id || profile.name || "Sales user",
+      month: month.slice(0, 7),
+      convertedCount: totalsForUser.count,
+      convertedAmount: totalsForUser.amount,
+      target: goal,
+      metric: target ? metric : null,
+      completed,
+      remaining: goal === null ? null : Math.max(goal - completed, 0),
+      percentage: goal ? Math.round((completed / goal) * 100) : null,
+    };
+  });
+}
+
+async function userPerformance(ctx: Context, month = monthStart()) {
+  const profiles = await fetchAll(() => applyProfileScope(
+    adminClient.from("profiles").select("id,employee_id,name,designation,active,role").eq("active", true).order("employee_id"), ctx,
+  ));
+  const employees = profiles.filter((profile: any) => !isAdminRole(profile.role));
+  if (!employees.length) return [];
+  const employeeIds = employees.map((profile: any) => profile.id);
+  const [tasks, timesheetEntries, settings] = await Promise.all([
+    fetchAll(() => adminClient.from("crm_assigned_tasks").select("assignee_id,status")
+      .in("assignee_id", employeeIds).gte("created_at", month)),
+    fetchAll(() => adminClient.from("timesheet_entries").select("user_id,work_date,total_hours")
+      .in("user_id", employeeIds).gte("work_date", month).neq("approval_status", "Rejected")),
+    (async () => {
+      const { data, error } = await adminClient.from("app_settings").select("standard_hours").eq("id", true).maybeSingle();
+      checkDb(error);
+      return data;
+    })(),
+  ]);
+  const totals = new Map<string, { assigned: number; completed: number }>();
+  for (const task of tasks) {
+    const current = totals.get(task.assignee_id) || { assigned: 0, completed: 0 };
+    current.assigned += 1;
+    if (task.status === "done") current.completed += 1;
+    totals.set(task.assignee_id, current);
+  }
+  const dailyHours = new Map<string, number>();
+  for (const entry of timesheetEntries) {
+    const key = entry.user_id + "|" + entry.work_date;
+    dailyHours.set(key, (dailyHours.get(key) || 0) + Number(entry.total_hours || 0));
+  }
+  const standardHours = Number(settings?.standard_hours || 8);
+  const shortHours = new Map<string, { hours: number; days: number }>();
+  for (const [key, hours] of dailyHours) {
+    if (hours >= standardHours) continue;
+    const userId = key.split("|", 1)[0];
+    const current = shortHours.get(userId) || { hours: 0, days: 0 };
+    current.hours += standardHours - hours;
+    current.days += 1;
+    shortHours.set(userId, current);
+  }
+  return employees.map((profile: any) => {
+    const total = totals.get(profile.id) || { assigned: 0, completed: 0 };
+    const short = shortHours.get(profile.id) || { hours: 0, days: 0 };
+    return {
+      userId: profile.id,
+      username: profile.employee_id || profile.name || "Employee",
+      designation: profile.designation || null,
+      month: month.slice(0, 7),
+      assignedTasks: total.assigned,
+      completedTasks: total.completed,
+      pendingTasks: Math.max(total.assigned - total.completed, 0),
+      percentage: total.assigned ? Math.round((total.completed / total.assigned) * 100) : null,
+      shortHours: Math.round(short.hours * 100) / 100,
+      shortDays: short.days,
+    };
+  });
+}
+
 async function listTargets(ctx: Context, userId: string | null = null) {
   const storeUserIds = hasGlobalStoreAccess(ctx) ? null : await accessibleStoreUserIds(ctx);
   const targets = await fetchAll(() => {
@@ -1431,26 +1597,30 @@ async function listTargets(ctx: Context, userId: string | null = null) {
   const lastMonth = [...targets].sort((a: any, b: any) => String(b.month).localeCompare(String(a.month)))[0].month;
   const [profiles, visits] = await Promise.all([
     fetchAll(() => adminClient.from("profiles").select("id,employee_id,name").in("id", userIds)),
-    fetchAll(() => adminClient.from("crm_visits").select("id,owner_id,visit_date").in("owner_id", userIds).eq("status", "converted").gte("visit_date", firstMonth).lt("visit_date", nextMonth(lastMonth)).order("id")),
+    fetchAll(() => adminClient.from("crm_visits").select("id,owner_id,visit_date,total_amount").in("owner_id", userIds).eq("status", "converted").gte("visit_date", firstMonth).lt("visit_date", nextMonth(lastMonth)).order("id")),
   ]);
   const profileById = new Map(profiles.map((profile: any) => [profile.id, profile]));
-  const convertedByUserMonth = new Map<string, number>();
+  const convertedByUserMonth = new Map<string, { count: number; amount: number }>();
   for (const visit of visits) {
     const key = `${visit.owner_id}|${String(visit.visit_date).slice(0, 7)}`;
-    convertedByUserMonth.set(key, (convertedByUserMonth.get(key) || 0) + 1);
+    const current = convertedByUserMonth.get(key) || { count: 0, amount: 0 };
+    current.count += 1; current.amount += Number(visit.total_amount || 0);
+    convertedByUserMonth.set(key, current);
   }
   const lowCountsByUser = new Map<string, number>();
   for (const target of targets) {
     if (String(target.month) >= monthStart()) continue;
-    const converted = convertedByUserMonth.get(`${target.user_id}|${String(target.month).slice(0, 7)}`) || 0;
-    const percentage = target.target ? Math.round((converted / target.target) * 100) : 0;
+    const converted = convertedByUserMonth.get(`${target.user_id}|${String(target.month).slice(0, 7)}`)?.[target.metric === "amount" ? "amount" : "count"] || 0;
+    const percentage = target.target ? Math.round((converted / Number(target.target)) * 100) : 0;
     if (percentage <= 30) lowCountsByUser.set(target.user_id, (lowCountsByUser.get(target.user_id) || 0) + 1);
   }
   return targets.map((target: any) => {
     const profile = profileById.get(target.user_id);
     const username = profile?.employee_id || profile?.name || null;
-    const converted = convertedByUserMonth.get(`${target.user_id}|${String(target.month).slice(0, 7)}`) || 0;
-    const percentage = target.target ? Math.round((converted / target.target) * 100) : 0;
+    const metric = target.metric === "amount" ? "amount" : "count";
+    const converted = convertedByUserMonth.get(`${target.user_id}|${String(target.month).slice(0, 7)}`)?.[metric] || 0;
+    const goal = Number(target.target);
+    const percentage = goal ? Math.round((converted / goal) * 100) : 0;
     const lowTargetCount = lowCountsByUser.get(target.user_id) || 0;
     return {
       id: target.id,
@@ -1460,7 +1630,8 @@ async function listTargets(ctx: Context, userId: string | null = null) {
       monthLabel: new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(String(target.month) + "T00:00:00Z")),
       datasetId: null,
       datasetName: "",
-      target: target.target,
+      target: goal,
+      metric,
       converted,
       percentage,
       statusColor: percentage <= 30 ? "danger" : percentage <= 70 ? "primary" : "success",
@@ -1530,7 +1701,6 @@ async function createOrUpdateVisit(ctx: Context, visitId: number | null, body: a
     manualClientId = previous?.manual_client_id || null;
   } else {
     const dataset = await accessibleDataset(ctx, body.dataset);
-    if (!previous) visitOwnerId = dataset.owner_id;
     const requestedCustomer = parseId(body.customer);
     const { data: record, error } = await adminClient.from("crm_customer_records").select("id")
       .eq("id", requestedCustomer).eq("dataset_id", dataset.id).maybeSingle();
@@ -1622,7 +1792,8 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
     parts[0] === "dashboard" ? "dashboard" :
     parts[0] === "reports" ? "reports" :
     ["datasets", "customers", "import"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "users" && parts[3] === "datasets") ? "customers" :
-    ["sales", "targets"].includes(parts[0]) || (parts[0] === "admin" && parts[1] === "targets") ? "sales" :
+    ["sales", "targets"].includes(parts[0]) || (parts[0] === "admin" && ["targets", "sales-performance"].includes(parts[1])) ? "sales" :
+    parts[0] === "attendance" && parts[1] === "manual" ? "manual_attendance" :
     ["attendance", "overtime"].includes(parts[0]) ? "attendance" :
     parts[0] === "callbacks" ? "callbacks" :
     ["reminders", "push"].includes(parts[0]) ? "reminders" :
@@ -1630,7 +1801,126 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   if (requiredFeature) await requireStoreFeature(ctx, requiredFeature);
 
   if (hasGlobalStoreAccess(ctx) && !["auth", "push"].includes(parts[0])
-      && !(parts[0] === "admin" && ["stores", "users"].includes(parts[1]))) requireStoreContext(ctx);
+      // These administration routes receive the target store through their
+      // own request parameter, so a global Super Admin does not need to have
+      // a workspace store selected first.
+      && !(parts[0] === "admin" && ["stores", "users", "designations"].includes(parts[1]))) requireStoreContext(ctx);
+
+  if (parts[0] === "payroll") return await handlePayroll(ctx, method, parts, params, body);
+
+  if (parts[0] === "payroll" && parts[1] === "employees" && parts.length === 2 && method === "GET") {
+    requireAdmin(ctx);
+    const storeId = requireStoreContext(ctx);
+    const { data: profiles, error: profileError } = await adminClient.from("profiles")
+      .select("id,name,employee_id,designation").eq("store_id", storeId).eq("active", true).eq("role", "employee").order("name");
+    checkDb(profileError);
+    const ids = (profiles || []).map((profile: any) => profile.id);
+    const attendanceNames = new Map<string, string>();
+    if (ids.length) {
+      const rows = await fetchAll(() => adminClient.from("attendance_records").select("user_id,employee_name,punched_at")
+        .in("user_id", ids).not("employee_name", "is", null).order("punched_at", { ascending: false }));
+      for (const row of rows) {
+        const name = valueString(row.employee_name);
+        if (name && !attendanceNames.has(row.user_id)) attendanceNames.set(row.user_id, name);
+      }
+    }
+    return json(200, { results: (profiles || []).map((profile: any) => ({
+      id: profile.id, name: attendanceNames.get(profile.id) || profile.name || profile.employee_id || "Employee",
+      employee_id: profile.employee_id || "", designation: profile.designation || "",
+    })) });
+  }
+
+  if (parts[0] === "payroll" && parts[1] === "payments") {
+    const storeId = requireStoreContext(ctx);
+    const admin = isAdminRole(ctx.profile.role);
+    const paymentMethods = ["bank_transfer", "cash", "upi", "cheque", "other"];
+    const serializePayments = async (payments: any[]) => {
+      const employeeIds = [...new Set(payments.map((payment) => payment.employee_id).filter(Boolean))];
+      const employeeById = new Map<string, any>();
+      if (employeeIds.length) {
+        const { data, error } = await adminClient.from("profiles").select("id,name,employee_id,designation")
+          .in("id", employeeIds);
+        checkDb(error);
+        for (const employee of data || []) employeeById.set(employee.id, employee);
+      }
+      return payments.map((payment) => ({
+        ...payment,
+        employee_name: employeeById.get(payment.employee_id)?.name || "Employee",
+        employee_code: employeeById.get(payment.employee_id)?.employee_id || "",
+        employee_designation: employeeById.get(payment.employee_id)?.designation || "",
+      }));
+    };
+    if (parts.length === 2 && method === "GET") {
+      let query = adminClient.from("crm_payroll_payments").select("*").eq("store_id", storeId).order("payroll_month", { ascending: false }).order("created_at", { ascending: false });
+      if (!admin) query = query.eq("employee_id", ctx.user.id).in("status", ["approved", "paid"]);
+      const { data, error } = await query;
+      checkDb(error);
+      return json(200, { results: await serializePayments(data || []), can_manage: admin, can_approve: isSuperAdmin(ctx) });
+    }
+    if (parts.length === 2 && method === "POST") {
+      requireAdmin(ctx);
+      const employeeId = valueString(body.employee_id);
+      const month = valueString(body.payroll_month);
+      const paymentDate = valueString(body.payment_date);
+      const paymentMethod = valueString(body.payment_method || "bank_transfer");
+      const requestedStatus = valueString(body.status || "draft");
+      const errors: Record<string, string[]> = {};
+      const amount = (field: string, label: string) => {
+        const text = valueString(body[field] ?? 0);
+        const value = Number(text);
+        if (!/^\d+(?:\.\d{1,2})?$/.test(text) || !Number.isFinite(value) || value > 100000000000) {
+          errors[field] = [`Enter a valid ${label} amount.`];
+          return 0;
+        }
+        return value;
+      };
+      const basicSalary = amount("basic_salary", "basic salary");
+      const bonusAmount = amount("bonus_amount", "bonus");
+      const overtimeHours = amount("overtime_hours", "overtime hours");
+      const overtimeRate = amount("overtime_rate", "overtime rate");
+      const overtimeAmount = Math.round(overtimeHours * overtimeRate * 100) / 100;
+      const deductionAmount = amount("deduction_amount", "deduction");
+      const advanceRecovery = amount("advance_recovery", "advance recovery");
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(employeeId)) errors.employee_id = ["Choose an employee."];
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) errors.payroll_month = ["Choose a payroll month."];
+      if (paymentDate && !/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) errors.payment_date = ["Choose a valid payment date."];
+      if (!paymentMethods.includes(paymentMethod)) errors.payment_method = ["Choose a valid payment method."];
+      if (!["draft", "submitted"].includes(requestedStatus)) errors.status = ["Choose Draft or Submitted."];
+      if (valueString(body.reference_number).length > 120) errors.reference_number = ["Reference number can contain up to 120 characters."];
+      if (valueString(body.notes).length > 2000) errors.notes = ["Notes can contain up to 2,000 characters."];
+      const netAmount = basicSalary + bonusAmount + overtimeAmount - deductionAmount - advanceRecovery;
+      if (netAmount < 0) errors.deduction_amount = ["Deductions and advance recovery cannot exceed the gross amount."];
+      if (Object.keys(errors).length) fail(400, "Correct the payment details.", { errors });
+      const { data: employee, error: employeeError } = await adminClient.from("profiles").select("id,role,active")
+        .eq("id", employeeId).eq("store_id", storeId).maybeSingle();
+      checkDb(employeeError);
+      if (!employee || !employee.active || isAdminRole(employee.role)) fail(400, "Choose an active employee in this store.", { errors: { employee_id: ["Choose an active employee in this store."] } });
+      const { data, error } = await adminClient.from("crm_payroll_payments").insert({
+        store_id: storeId, employee_id: employeeId, payroll_month: `${month}-01`,
+        basic_salary: basicSalary, bonus_amount: bonusAmount, overtime_hours: overtimeHours,
+        overtime_rate: overtimeRate, overtime_amount: overtimeAmount,
+        deduction_amount: deductionAmount, advance_recovery: advanceRecovery, net_amount: netAmount,
+        payment_date: paymentDate || null, payment_method: paymentMethod,
+        reference_number: valueString(body.reference_number), notes: valueString(body.notes),
+        status: requestedStatus, created_by: ctx.user.id,
+      }).select("*").single();
+      checkDb(error);
+      return json(201, { payment: (await serializePayments([data]))[0] });
+    }
+    if (parts.length === 4 && parts[3] === "approve" && method === "POST") {
+      requireSuperAdmin(ctx);
+      const { data: existing, error: existingError } = await adminClient.from("crm_payroll_payments").select("*")
+        .eq("id", parts[2]).eq("store_id", storeId).maybeSingle();
+      checkDb(existingError);
+      if (!existing) fail(404, "Payroll payment not found.");
+      if (existing.status !== "submitted") fail(400, "Only submitted payroll payments can be approved.");
+      const { data, error } = await adminClient.from("crm_payroll_payments").update({
+        status: "approved", approved_by: ctx.user.id, approved_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).eq("id", existing.id).select("*").single();
+      checkDb(error);
+      return json(200, { payment: (await serializePayments([data]))[0] });
+    }
+  }
 
   if (path === "dashboard/" || path === "dashboard" || path === "reports/summary") {
     if (method === "GET") {
@@ -1859,6 +2149,7 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
       if (body.status !== undefined) values.status = valueString(body.status);
       if (body.submission_note !== undefined) values.submission_note = valueString(body.submission_note);
       if (body.previous_submission_id !== undefined) values.previous_submission_id = body.previous_submission_id;
+      await requireTaskImageUploads(ctx, files, thumbnails);
       const data = await saveTaskPhotos(adminClient, ctx.user.id, id, "completion", values, files, thumbnails);
       return json(200, await serializeTask(data));
     }
@@ -1927,6 +2218,512 @@ async function routeApi(ctx: Context, request: Request, apiPath: string, params:
   fail(404, "CRM API endpoint not found.");
 }
 
+function payrollMonthBounds(value: string) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) fail(400, "Choose a valid payroll month.");
+  const start = value + "-01";
+  const date = new Date(start + "T00:00:00Z");
+  date.setUTCMonth(date.getUTCMonth() + 1);
+  return { start, end: date.toISOString().slice(0, 10) };
+}
+
+function payrollAmount(value: any, label: string, optional = true) {
+  const text = valueString(value);
+  if (!text && optional) return 0;
+  const amount = Number(text);
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text) || !Number.isFinite(amount) || amount > 100000000000) fail(400, `Enter a valid ${label} amount.`);
+  return amount;
+}
+
+async function payrollAudit(ctx: Context, storeId: string, entityType: string, entityId: string | null, action: string, details: any = {}, paymentId: string | null = null) {
+  const { error } = await adminClient.from("crm_payroll_audit").insert({ store_id: storeId, entity_type: entityType, entity_id: entityId, payment_id: paymentId, action, details, actor_id: ctx.user.id });
+  checkDb(error);
+}
+
+async function payrollEmployees(storeId: string) {
+  const { data, error } = await adminClient.from("profiles").select("id,name,employee_id,designation,active").eq("store_id", storeId).eq("role", "employee").eq("active", true).order("name");
+  checkDb(error);
+  return data || [];
+}
+
+async function payrollPaymentPayload(payment: any) {
+  const { data: employee, error } = await adminClient.from("profiles").select("id,name,employee_id,designation").eq("id", payment.employee_id).maybeSingle();
+  checkDb(error);
+  const netAmount = Math.max(0, Number(payment.net_amount || 0));
+  const paidAmount = Math.min(netAmount, Math.max(0, Number(payment.paid_amount || 0)));
+  return {
+    ...payment,
+    paid_amount: paidAmount,
+    remaining_amount: Math.max(0, netAmount - paidAmount),
+    employee_name: employee?.name || "Employee",
+    employee_code: employee?.employee_id || "",
+    employee_designation: employee?.designation || "",
+  };
+}
+
+async function payrollEmployeePayload(item: any) {
+  const { data: employee, error } = await adminClient.from("profiles").select("name,employee_id").eq("id", item.employee_id).maybeSingle();
+  checkDb(error);
+  return { ...item, employee_name: employee?.name || "Employee", employee_code: employee?.employee_id || "" };
+}
+
+async function inheritedPayrollBankDetails(storeId: string, employeeId: string) {
+  const { data, error } = await adminClient.from("crm_salary_structures")
+    .select("bank_account_holder,bank_name,bank_account_number,bank_ifsc")
+    .eq("store_id", storeId).eq("employee_id", employeeId)
+    .order("effective_from", { ascending: false }).limit(1).maybeSingle();
+  checkDb(error);
+  return data || {};
+}
+
+async function createAutomaticPayrollPayment(ctx: Context, storeId: string, body: any) {
+  requireAdmin(ctx);
+  const computed = await calculatePayroll(ctx, storeId, valueString(body.employee_id), valueString(body.payroll_month));
+  const bonus = payrollAmount(body.bonus_amount, "bonus");
+  const deduction = payrollAmount(body.deduction_amount, "deduction");
+  const advanceRecovery = Math.min(payrollAmount(body.advance_recovery, "advance recovery"), computed.advances.reduce((sum: number, item: any) => sum + Number(item.remaining_amount), 0));
+  const enteredSalesExpense = valueString(body.sales_expense_amount);
+  const salesExpenseAmount = enteredSalesExpense ? payrollAmount(enteredSalesExpense, "sales expense") : Number(computed.sales_expense_amount || 0);
+  const reimbursementAmount = Number(computed.expense_claim_amount || 0) + salesExpenseAmount;
+  const enteredAllowance = valueString(body.allowance_amount);
+  const allowanceAmount = enteredAllowance ? payrollAmount(enteredAllowance, "allowance") : Number(computed.salary.allowance_amount || computed.settings?.default_allowance_amount || 0);
+  const enteredOvertimeHours = valueString(body.overtime_hours);
+  const overtimeHours = enteredOvertimeHours ? payrollAmount(enteredOvertimeHours, "overtime hours") : Number(computed.overtime_hours || 0);
+  if (overtimeHours > 744) fail(400, "Overtime hours cannot exceed 744 for one month.");
+  // The store-wide Payroll Settings rate is authoritative. Payroll processing
+  // may correct approved hours, but cannot silently replace the configured rate.
+  const overtimeRate = Number(computed.overtime_rate || 0);
+  const overtimeAmount = Math.round(overtimeHours * overtimeRate * 100) / 100;
+  const gross = Number(computed.salary.basic_salary) + allowanceAmount + overtimeAmount + reimbursementAmount + bonus;
+  const net = gross - computed.lop_deduction - deduction - advanceRecovery;
+  if (net < 0) fail(400, "Deductions cannot exceed calculated earnings.");
+  const requestedStatus = valueString(body.status || "draft");
+  if (!["draft", "submitted", "approved"].includes(requestedStatus)) fail(400, "Choose Draft, Submitted, or Approved.");
+  // Direct Admin finalization is stored as submitted inside the atomic creation
+  // transaction, then immediately finalized and audited before responding.
+  const status = requestedStatus === "approved" ? "submitted" : requestedStatus;
+  const calculation = {
+    ...computed, salary: undefined, employee: undefined, advances: undefined,
+    sales_expense_auto_amount: computed.sales_expense_amount,
+    sales_expense_amount: salesExpenseAmount,
+    allowance_amount: allowanceAmount,
+    overtime_hours: overtimeHours,
+    overtime_rate: overtimeRate,
+    overtime_amount: overtimeAmount,
+    reimbursement_amount: reimbursementAmount,
+    reimbursement_claims: (computed.reimbursement_claims || []).map((item: any) => item.id),
+    sales_visit_expenses: (computed.sales_visit_expenses || []).map((item: any) => item.id),
+  };
+  const paymentInput = {
+    store_id: storeId, employee_id: computed.employee.id, payroll_month: computed.start,
+    salary_structure_id: computed.salary.id, basic_salary: computed.salary.basic_salary,
+    allowance_amount: allowanceAmount, gross_amount: gross, bonus_amount: bonus,
+    overtime_hours: overtimeHours, overtime_rate: overtimeRate,
+    overtime_amount: overtimeAmount, reimbursement_amount: reimbursementAmount,
+    expense_claim_amount: computed.expense_claim_amount, sales_expense_amount: salesExpenseAmount,
+    lop_deduction: computed.lop_deduction, deduction_amount: deduction,
+    advance_recovery: advanceRecovery, net_amount: net, paid_amount: 0, remaining_amount: net,
+    present_days: computed.present_days, absent_days: computed.absent_days,
+    paid_leave_days: computed.paid_leave_days, unpaid_leave_days: computed.unpaid_leave_days,
+    calculation, payment_date: valueString(body.payment_date) || null,
+    payment_method: valueString(body.payment_method || "bank_transfer"),
+    reference_number: valueString(body.reference_number), notes: valueString(body.notes),
+    status, created_by: ctx.user.id,
+  };
+  // New installations use the atomic database function. The narrowly scoped
+  // fallback keeps already-running installations compatible until this
+  // migration is explicitly applied; every other database failure is surfaced.
+  const advanceRepayments: { advance_id: string; amount: number }[] = [];
+  let recoveryForPayload = advanceRecovery;
+  for (const advance of computed.advances || []) {
+    if (recoveryForPayload <= 0) break;
+    const amount = Math.min(recoveryForPayload, Number(advance.remaining_amount));
+    advanceRepayments.push({ advance_id: advance.id, amount });
+    recoveryForPayload -= amount;
+  }
+  const { data: atomicPayment, error: atomicError } = await adminClient.rpc("crm_create_payroll_payment", {
+    p_store_id: storeId, p_actor_id: ctx.user.id,
+    p_payment: { ...paymentInput, audit_details: { month: computed.month, net, allowance_amount: allowanceAmount, overtime_hours_auto: computed.overtime_hours, overtime_hours: overtimeHours, overtime_rate: overtimeRate, sales_expense_auto_amount: computed.sales_expense_amount, sales_expense_amount: salesExpenseAmount } },
+    p_expense_claim_ids: (computed.reimbursement_claims || []).map((claim: any) => claim.id),
+    p_visit_ids: (computed.sales_visit_expenses || []).map((visit: any) => visit.id),
+    p_advance_repayments: advanceRepayments,
+  });
+  if (!atomicError) {
+    if (requestedStatus !== "approved") return json(201, { payment: await payrollPaymentPayload(atomicPayment) });
+    const finalizedAt = new Date().toISOString();
+    const { data: finalized, error: finalizeError } = await adminClient.from("crm_payroll_payments").update({ status: "approved", approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt, updated_at: finalizedAt }).eq("id", atomicPayment.id).select("*").single();
+    checkDb(finalizeError);
+    await payrollAudit(ctx, storeId, "payment", finalized.id, "approved", { month: computed.month, net }, finalized.id);
+    return json(201, { payment: await payrollPaymentPayload(finalized) });
+  }
+  // PostgREST reports an unavailable RPC as PGRST202. PostgreSQL returns
+  // 42883 when invoked before schema-cache refresh. Do not hide other errors.
+  if (atomicError.code !== "PGRST202" && atomicError.code !== "42883") checkDb(atomicError);
+  const { data, error } = await adminClient.from("crm_payroll_payments").insert(paymentInput).select("*").single();
+  checkDb(error);
+  for (const claim of computed.reimbursement_claims || []) {
+    const { error: linkError } = await adminClient.from("crm_payroll_expense_reimbursements").insert({ payment_id: data.id, expense_claim_id: claim.id, amount: claim.amount });
+    checkDb(linkError);
+    const { error: claimError } = await adminClient.from("crm_expense_claims").update({ reimbursed_payment_id: data.id, updated_at: new Date().toISOString() }).eq("id", claim.id).is("reimbursed_payment_id", null);
+    checkDb(claimError);
+  }
+  for (const visit of computed.sales_visit_expenses || []) {
+    const { error: visitError } = await adminClient.from("crm_payroll_visit_expenses").insert({ payment_id: data.id, visit_id: visit.id, amount: visit.expense });
+    checkDb(visitError);
+  }
+  let remainingRecovery = advanceRecovery;
+  for (const advance of computed.advances || []) {
+    if (remainingRecovery <= 0) break;
+    const recovered = Math.min(remainingRecovery, Number(advance.remaining_amount));
+    const { error: repaymentError } = await adminClient.from("crm_payroll_advance_repayments").insert({ payment_id: data.id, advance_id: advance.id, amount: recovered });
+    checkDb(repaymentError);
+    const next = Number(advance.remaining_amount) - recovered;
+    const { error: advanceError } = await adminClient.from("crm_salary_advances").update({ remaining_amount: next, status: next <= 0 ? "closed" : "approved", updated_at: new Date().toISOString() }).eq("id", advance.id);
+    checkDb(advanceError);
+    remainingRecovery -= recovered;
+  }
+  await payrollAudit(ctx, storeId, "payment", data.id, status === "submitted" ? "submitted" : "created", { month: computed.month, net, allowance_amount: allowanceAmount, overtime_hours_auto: computed.overtime_hours, overtime_hours: overtimeHours, overtime_rate: overtimeRate, sales_expense_auto_amount: computed.sales_expense_amount, sales_expense_amount: salesExpenseAmount });
+  if (requestedStatus !== "approved") return json(201, { payment: await payrollPaymentPayload(data) });
+  const finalizedAt = new Date().toISOString();
+  const { data: finalized, error: finalizeError } = await adminClient.from("crm_payroll_payments").update({ status: "approved", approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt, updated_at: finalizedAt }).eq("id", data.id).select("*").single();
+  checkDb(finalizeError);
+  await payrollAudit(ctx, storeId, "payment", finalized.id, "approved", { month: computed.month, net }, finalized.id);
+  return json(201, { payment: await payrollPaymentPayload(finalized) });
+}
+
+async function updatePayrollPayment(ctx: Context, storeId: string, paymentId: string, body: any) {
+  requireAdmin(ctx);
+  const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*").eq("id", paymentId).eq("store_id", storeId).maybeSingle();
+  checkDb(readError);
+  if (!current) fail(404, "Payroll record not found.");
+  if (!["draft", "submitted", "rejected"].includes(current.status)) fail(400, "Only draft, submitted, or rejected payroll can be edited.");
+  const status = valueString(body.status || "draft");
+  if (!['draft', 'submitted', 'approved'].includes(status)) fail(400, "Choose Draft, Submitted, or Approved.");
+  const returnedPayroll = current.status === "rejected"
+    ? await calculatePayroll(ctx, storeId, current.employee_id, String(current.payroll_month).slice(0, 7))
+    : null;
+  const bonus = payrollAmount(body.bonus_amount, "bonus");
+  const deduction = payrollAmount(body.deduction_amount, "deduction");
+  const salesExpense = payrollAmount(body.sales_expense_amount, "sales expense");
+  const requestedRecovery = payrollAmount(body.advance_recovery, "advance recovery");
+  const { data: oldRepayments, error: repaymentReadError } = await adminClient.from("crm_payroll_advance_repayments").select("advance_id,amount").eq("payment_id", current.id);
+  checkDb(repaymentReadError);
+  for (const repayment of oldRepayments || []) {
+    const { data: advance, error: advanceReadError } = await adminClient.from("crm_salary_advances").select("remaining_amount").eq("id", repayment.advance_id).maybeSingle();
+    checkDb(advanceReadError);
+    if (advance) { const { error } = await adminClient.from("crm_salary_advances").update({ remaining_amount: Number(advance.remaining_amount) + Number(repayment.amount), status: "approved", updated_at: new Date().toISOString() }).eq("id", repayment.advance_id); checkDb(error); }
+  }
+  const { error: repaymentDeleteError } = await adminClient.from("crm_payroll_advance_repayments").delete().eq("payment_id", current.id);
+  checkDb(repaymentDeleteError);
+  const { data: advances, error: advancesError } = await adminClient.from("crm_salary_advances").select("id,remaining_amount").eq("store_id", storeId).eq("employee_id", current.employee_id).eq("status", "approved").gt("remaining_amount", 0).order("created_at");
+  checkDb(advancesError);
+  let advanceRecovery = Math.min(requestedRecovery, (advances || []).reduce((sum: number, item: any) => sum + Number(item.remaining_amount), 0));
+  const basicSalary = Number(returnedPayroll?.salary?.basic_salary ?? current.basic_salary);
+  const enteredAllowance = valueString(body.allowance_amount);
+  const allowanceAmount = enteredAllowance ? payrollAmount(enteredAllowance, "allowance") : Number(returnedPayroll?.salary?.allowance_amount || returnedPayroll?.settings?.default_allowance_amount || current.allowance_amount || 0);
+  const enteredOvertimeHours = valueString(body.overtime_hours);
+  const overtimeHours = enteredOvertimeHours ? payrollAmount(enteredOvertimeHours, "overtime hours") : Number(returnedPayroll?.overtime_hours ?? current.overtime_hours);
+  if (overtimeHours > 744) fail(400, "Overtime hours cannot exceed 744 for one month.");
+  // Preserve the payroll's configured rate snapshot unless a rejected payroll
+  // is recalculated, in which case the latest Payroll Settings rate is used.
+  const overtimeRate = Number(returnedPayroll?.overtime_rate ?? current.overtime_rate ?? 0);
+  const overtimeAmount = Math.round(overtimeHours * overtimeRate * 100) / 100;
+  const expenseClaimAmount = Number(returnedPayroll?.expense_claim_amount ?? current.expense_claim_amount);
+  const lopDeduction = Number(returnedPayroll?.lop_deduction ?? current.lop_deduction);
+  const gross = basicSalary + allowanceAmount + overtimeAmount + expenseClaimAmount + salesExpense + bonus;
+  const net = gross - lopDeduction - deduction - advanceRecovery;
+  if (net < 0) fail(400, "Deductions cannot exceed calculated earnings.");
+  let remainingRecovery = advanceRecovery;
+  for (const advance of advances || []) {
+    if (remainingRecovery <= 0) break;
+    const recovered = Math.min(remainingRecovery, Number(advance.remaining_amount));
+    const next = Number(advance.remaining_amount) - recovered;
+    const { error: repaymentError } = await adminClient.from("crm_payroll_advance_repayments").insert({ payment_id: current.id, advance_id: advance.id, amount: recovered }); checkDb(repaymentError);
+    const { error: advanceError } = await adminClient.from("crm_salary_advances").update({ remaining_amount: next, status: next <= 0 ? "closed" : "approved", updated_at: new Date().toISOString() }).eq("id", advance.id); checkDb(advanceError);
+    remainingRecovery -= recovered;
+  }
+  const previousCalculation = current.calculation && typeof current.calculation === "object" ? current.calculation : {};
+  const calculationBasis = returnedPayroll ? { ...returnedPayroll, salary: undefined, employee: undefined, advances: undefined, reimbursement_claims: (returnedPayroll.reimbursement_claims || []).map((item: any) => item.id), sales_visit_expenses: (returnedPayroll.sales_visit_expenses || []).map((item: any) => item.id) } : previousCalculation;
+  const calculation = { ...calculationBasis, allowance_amount: allowanceAmount, overtime_hours: overtimeHours, overtime_rate: overtimeRate, overtime_amount: overtimeAmount, sales_expense_amount: salesExpense, reimbursement_amount: expenseClaimAmount + salesExpense, advance_recovery: advanceRecovery, bonus_amount: bonus, deduction_amount: deduction, net_amount: net };
+  const refreshedValues = returnedPayroll ? {
+    salary_structure_id: returnedPayroll.salary.id, basic_salary: basicSalary, allowance_amount: allowanceAmount,
+    overtime_hours: overtimeHours, overtime_rate: overtimeRate, overtime_amount: overtimeAmount,
+    expense_claim_amount: expenseClaimAmount, lop_deduction: lopDeduction,
+    present_days: returnedPayroll.present_days, absent_days: returnedPayroll.absent_days,
+    paid_leave_days: returnedPayroll.paid_leave_days, unpaid_leave_days: returnedPayroll.unpaid_leave_days,
+  } : {};
+  const finalizedAt = status === "approved" ? new Date().toISOString() : null;
+  const finalizationValues = status === "approved" ? { approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt } : {};
+  const { data, error } = await adminClient.from("crm_payroll_payments").update({ ...refreshedValues, ...finalizationValues, allowance_amount: allowanceAmount, overtime_hours: overtimeHours, overtime_rate: overtimeRate, overtime_amount: overtimeAmount, bonus_amount: bonus, deduction_amount: deduction, advance_recovery: advanceRecovery, sales_expense_amount: salesExpense, reimbursement_amount: expenseClaimAmount + salesExpense, gross_amount: gross, net_amount: net, remaining_amount: Math.max(0, net - Number(current.paid_amount || 0)), calculation, payment_date: valueString(body.payment_date) || current.payment_date, payment_method: valueString(body.payment_method) || current.payment_method, reference_number: valueString(body.reference_number), notes: valueString(body.notes), status, updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single();
+  checkDb(error);
+  if (returnedPayroll) {
+    for (const claim of returnedPayroll.reimbursement_claims || []) {
+      const { error: linkError } = await adminClient.from("crm_payroll_expense_reimbursements").insert({ payment_id: current.id, expense_claim_id: claim.id, amount: claim.amount });
+      checkDb(linkError);
+      const { error: claimError } = await adminClient.from("crm_expense_claims").update({ reimbursed_payment_id: current.id, updated_at: new Date().toISOString() }).eq("id", claim.id).is("reimbursed_payment_id", null);
+      checkDb(claimError);
+    }
+    for (const visit of returnedPayroll.sales_visit_expenses || []) {
+      const { error: visitError } = await adminClient.from("crm_payroll_visit_expenses").insert({ payment_id: current.id, visit_id: visit.id, amount: visit.expense });
+      checkDb(visitError);
+    }
+  }
+  await payrollAudit(ctx, storeId, "payment", data.id, status === "approved" ? "approved" : "updated", { allowance_amount: allowanceAmount, overtime_hours: overtimeHours, overtime_rate: overtimeRate, bonus, deduction, sales_expense: salesExpense, advance_recovery: advanceRecovery, status }, data.id);
+  return json(200, { payment: await payrollPaymentPayload(data) });
+}
+
+async function rejectPayrollPayment(ctx: Context, storeId: string, paymentId: string, body: any) {
+  requireAdmin(ctx);
+  const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*").eq("id", paymentId).eq("store_id", storeId).maybeSingle();
+  checkDb(readError);
+  if (!current || current.status !== "submitted") fail(400, "Only submitted payroll can be rejected.");
+  const [{ data: reimbursements, error: reimbursementError }, { data: repayments, error: repaymentError }] = await Promise.all([
+    adminClient.from("crm_payroll_expense_reimbursements").select("expense_claim_id").eq("payment_id", current.id),
+    adminClient.from("crm_payroll_advance_repayments").select("advance_id,amount").eq("payment_id", current.id),
+  ]);
+  checkDb(reimbursementError); checkDb(repaymentError);
+  for (const item of reimbursements || []) {
+    const { error } = await adminClient.from("crm_expense_claims").update({ reimbursed_payment_id: null, updated_at: new Date().toISOString() }).eq("id", item.expense_claim_id).eq("reimbursed_payment_id", current.id);
+    checkDb(error);
+  }
+  for (const item of repayments || []) {
+    const { data: advance, error: advanceError } = await adminClient.from("crm_salary_advances").select("remaining_amount").eq("id", item.advance_id).maybeSingle();
+    checkDb(advanceError);
+    if (advance) {
+      const { error } = await adminClient.from("crm_salary_advances").update({ remaining_amount: Number(advance.remaining_amount) + Number(item.amount), status: "approved", updated_at: new Date().toISOString() }).eq("id", item.advance_id);
+      checkDb(error);
+    }
+  }
+  const [{ error: expenseDeleteError }, { error: visitDeleteError }, { error: repaymentDeleteError }] = await Promise.all([
+    adminClient.from("crm_payroll_expense_reimbursements").delete().eq("payment_id", current.id),
+    adminClient.from("crm_payroll_visit_expenses").delete().eq("payment_id", current.id),
+    adminClient.from("crm_payroll_advance_repayments").delete().eq("payment_id", current.id),
+  ]);
+  checkDb(expenseDeleteError); checkDb(visitDeleteError); checkDb(repaymentDeleteError);
+  const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "rejected", notes: [current.notes, valueString(body.note)].filter(Boolean).join("\n"), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single();
+  checkDb(error);
+  await payrollAudit(ctx, storeId, "payment", data.id, "rejected", { note: valueString(body.note) }, data.id);
+  return json(200, { payment: await payrollPaymentPayload(data) });
+}
+
+async function calculatePayroll(ctx: Context, storeId: string, employeeId: string, month: string) {
+  const { start, end } = payrollMonthBounds(month);
+  const [{ data: employee, error: employeeError }, { data: settings, error: settingsError }] = await Promise.all([
+    adminClient.from("profiles").select("id,name,employee_id,store_id,active").eq("id", employeeId).eq("store_id", storeId).eq("role", "employee").maybeSingle(),
+    adminClient.from("crm_payroll_settings").select("*").eq("store_id", storeId).maybeSingle(),
+  ]);
+  checkDb(employeeError); checkDb(settingsError);
+  if (!employee?.active) fail(400, "Choose an active employee in this store.");
+  const { data: salary, error: salaryError } = await adminClient.from("crm_salary_structures").select("*").eq("store_id", storeId).eq("employee_id", employeeId).lt("effective_from", end).order("effective_from", { ascending: false }).limit(1).maybeSingle();
+  checkDb(salaryError);
+  if (!salary) fail(400, "Set the employee salary structure before calculating payroll.");
+  const [attendanceRows, leaves, overtime, expenseClaims, advances, salesVisits] = await Promise.all([
+    fetchAll(() => adminClient.from("attendance_records").select("punched_at").eq("user_id", employeeId).gte("punched_at", start + "T00:00:00+05:30").lt("punched_at", end + "T00:00:00+05:30")),
+    fetchAll(() => adminClient.from("attendance_leave_days").select("leave_date,leave_type").eq("user_id", employeeId).gte("leave_date", start).lt("leave_date", end)),
+    fetchAll(() => adminClient.from("crm_overtime_requests").select("approved_minutes").eq("employee_id", employeeId).eq("status", "approved").gte("work_date", start).lt("work_date", end)),
+    fetchAll(() => adminClient.from("crm_expense_claims").select("id,amount").eq("store_id", storeId).eq("employee_id", employeeId).eq("status", "approved").eq("reimbursable", true).is("reimbursed_payment_id", null).gte("expense_date", start).lt("expense_date", end)),
+    fetchAll(() => adminClient.from("crm_salary_advances").select("id,remaining_amount").eq("store_id", storeId).eq("employee_id", employeeId).eq("status", "approved").gt("remaining_amount", 0).order("created_at")),
+    fetchAll(() => adminClient.from("crm_visits").select("id,expense").eq("store_id", storeId).eq("owner_id", employeeId).gt("expense", 0).gte("visit_date", start).lt("visit_date", end)),
+  ]);
+  const visitIds = (salesVisits || []).map((visit: any) => visit.id);
+  const reimbursedVisitIds = visitIds.length ? new Set((await fetchAll(() => adminClient.from("crm_payroll_visit_expenses").select("visit_id").in("visit_id", visitIds))).map((row: any) => row.visit_id)) : new Set<number>();
+  const eligibleSalesVisits = (salesVisits || []).filter((visit: any) => !reimbursedVisitIds.has(visit.id));
+  // For an in-progress month, future dates cannot be treated as absences or LOP.
+  const todayValue = indiaDate();
+  const currentMonth = todayValue.slice(0, 7);
+  const tomorrow = new Date(todayValue + "T00:00:00Z");
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const attendanceEnd = month < currentMonth ? end : month === currentMonth ? tomorrow.toISOString().slice(0, 10) : start;
+  const workDays: string[] = [];
+  for (let day = new Date(start + "T00:00:00Z"); day < new Date(attendanceEnd + "T00:00:00Z"); day.setUTCDate(day.getUTCDate() + 1)) if (day.getUTCDay() !== 0) workDays.push(day.toISOString().slice(0, 10));
+  const evaluatedDays = new Set(workDays);
+  // Punches are stored as timestamps. Convert them to the CRM's India
+  // calendar day before comparing them with payroll dates; slicing a UTC
+  // timestamp would otherwise put late-evening punches into the prior day.
+  const present = new Set((attendanceRows || []).map((row: any) => indiaDate(new Date(row.punched_at))).filter((day: string) => evaluatedDays.has(day)));
+  const paidLeave = new Set((leaves || []).filter((row: any) => row.leave_type === "paid" && evaluatedDays.has(row.leave_date)).map((row: any) => row.leave_date));
+  const unpaidLeave = new Set((leaves || []).filter((row: any) => row.leave_type === "unpaid" && evaluatedDays.has(row.leave_date)).map((row: any) => row.leave_date));
+  const absentDays = workDays.filter((day) => !present.has(day) && !paidLeave.has(day) && !unpaidLeave.has(day)).length;
+  const overtimeHours = Math.round((overtime || []).reduce((sum: number, row: any) => sum + Number(row.approved_minutes || 0), 0) / 60 * 100) / 100;
+  const expenseClaimAmount = (expenseClaims || []).reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
+  const salesExpenseAmount = eligibleSalesVisits.reduce((sum: number, row: any) => sum + Number(row.expense || 0), 0);
+  const reimbursementAmount = expenseClaimAmount + salesExpenseAmount;
+  const base = Number(salary.basic_salary || 0);
+  const unpaidDays = unpaidLeave.size + absentDays;
+  const divisor = Number(settings?.payroll_days_per_month || 26);
+  const lopDeduction = Math.round((base / divisor) * unpaidDays * 100) / 100;
+  const payrollSettings = settings || { payroll_days_per_month: 26, paid_leave_allowance: 0, default_allowance_amount: 0, default_overtime_rate: 0 };
+  const overtimeRate = Number(payrollSettings.default_overtime_rate || 0);
+  const overtimeAmount = Math.round(overtimeHours * overtimeRate * 100) / 100;
+  return { employee, salary, settings: payrollSettings, month, start, end, present_days: present.size, absent_days: absentDays, paid_leave_days: paidLeave.size, unpaid_leave_days: unpaidLeave.size, overtime_hours: overtimeHours, overtime_rate: overtimeRate, overtime_amount: overtimeAmount, expense_claim_amount: expenseClaimAmount, sales_expense_amount: salesExpenseAmount, reimbursement_amount: reimbursementAmount, reimbursement_claims: expenseClaims || [], sales_visit_expenses: eligibleSalesVisits, advances: advances || [], lop_deduction: lopDeduction };
+}
+
+async function handlePayroll(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any) {
+  const storeId = requireStoreContext(ctx);
+  const admin = isAdminRole(ctx.profile.role);
+  const superAdmin = isSuperAdmin(ctx);
+  const section = parts[1] || "";
+  if (section === "store-data" && method === "DELETE") {
+    requireSuperAdmin(ctx);
+    const { data, error } = await adminClient.rpc("crm_clear_payroll_store", {
+      p_actor: ctx.user.id,
+      p_store: storeId,
+    });
+    if (error?.code === "42501") fail(403, "Only an active Super Admin can clear payroll data.");
+    if (error?.code === "P0002") fail(404, "Store not found.");
+    checkDb(error);
+    return json(200, data);
+  }
+  if (section === "employees" && method === "GET") { requireAdmin(ctx); return json(200, { results: await payrollEmployees(storeId) }); }
+  if (section === "settings") {
+    if (method === "GET") { requireAdmin(ctx); const { data, error } = await adminClient.from("crm_payroll_settings").select("*").eq("store_id", storeId).maybeSingle(); checkDb(error); return json(200, data || { payroll_days_per_month: 26, paid_leave_allowance: 0, default_allowance_amount: 0, default_overtime_rate: 0 }); }
+    if (method === "PATCH") { requireAdmin(ctx); const values = { payroll_days_per_month: payrollAmount(body.payroll_days_per_month, "payroll days", false), paid_leave_allowance: payrollAmount(body.paid_leave_allowance, "paid leave allowance"), default_allowance_amount: payrollAmount(body.default_allowance_amount, "default allowance"), default_overtime_rate: payrollAmount(body.default_overtime_rate, "OT rate per hour"), updated_by: ctx.user.id, updated_at: new Date().toISOString() }; if (values.payroll_days_per_month <= 0 || values.payroll_days_per_month > 31) fail(400, "Payroll days must be between 1 and 31."); const { data, error } = await adminClient.from("crm_payroll_settings").upsert({ store_id: storeId, ...values }).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "settings", null, "updated", values); return json(200, data); }
+  }
+  if (section === "salary-structures") {
+    if (method === "GET") { requireAdmin(ctx); const { data, error } = await adminClient.from("crm_salary_structures").select("*").eq("store_id", storeId).order("effective_from", { ascending: false }); checkDb(error); return json(200, { results: data || [] }); }
+    if (method === "POST") {
+      requireAdmin(ctx);
+      const employeeId = valueString(body.employee_id);
+      const effectiveFrom = valueString(body.effective_from);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) fail(400, "Choose an effective date.");
+      const employee = (await payrollEmployees(storeId)).find((item: any) => item.id === employeeId);
+      if (!employee) fail(400, "Choose an active employee in this store.");
+      const inheritedBank = await inheritedPayrollBankDetails(storeId, employeeId);
+      const { data: existing, error: existingError } = await adminClient.from("crm_salary_structures")
+        .select("id").eq("store_id", storeId).eq("employee_id", employeeId).eq("effective_from", effectiveFrom).maybeSingle();
+      checkDb(existingError);
+      const bankAccountNumber = valueString(body.bank_account_number) || inheritedBank.bank_account_number || "";
+      if (bankAccountNumber && !/^\d{1,80}$/.test(bankAccountNumber)) {
+        fail(400, "Enter a valid bank account number.", { errors: { bank_account_number: ["Account number must contain numbers only."] } });
+      }
+      const values = {
+        store_id: storeId,
+        employee_id: employeeId,
+        effective_from: effectiveFrom,
+        basic_salary: payrollAmount(body.basic_salary, "basic salary", false),
+        allowance_amount: payrollAmount(body.allowance_amount, "allowance"),
+        overtime_rate: payrollAmount(body.overtime_rate, "overtime rate"),
+        bank_account_holder: valueString(body.bank_account_holder) || inheritedBank.bank_account_holder || "",
+        bank_name: valueString(body.bank_name) || inheritedBank.bank_name || "",
+        bank_account_number: bankAccountNumber,
+        bank_ifsc: valueString(body.bank_ifsc) || inheritedBank.bank_ifsc || "",
+        notes: valueString(body.notes),
+        created_by: ctx.user.id,
+      };
+      const query = existing
+        ? adminClient.from("crm_salary_structures").update(values).eq("id", existing.id)
+        : adminClient.from("crm_salary_structures").insert(values);
+      const { data, error } = await query.select("*").single();
+      checkDb(error);
+      await payrollAudit(ctx, storeId, "salary_structure", data.id, existing ? "updated" : "created", {
+        employee_id: employeeId,
+        effective_from: effectiveFrom,
+      });
+      return json(existing ? 200 : 201, data);
+    }
+  }
+  if (section === "expense-preview" && method === "GET") {
+    requireAdmin(ctx);
+    const employeeId = valueString(params.get("employee_id"));
+    const { start, end } = payrollMonthBounds(valueString(params.get("month")));
+    const employee = (await payrollEmployees(storeId)).find((item: any) => item.id === employeeId);
+    if (!employee) fail(400, "Choose an active employee in this store.");
+    const [claims, visits] = await Promise.all([
+      fetchAll(() => adminClient.from("crm_expense_claims").select("amount").eq("store_id", storeId).eq("employee_id", employeeId).eq("status", "approved").eq("reimbursable", true).is("reimbursed_payment_id", null).gte("expense_date", start).lt("expense_date", end)),
+      fetchAll(() => adminClient.from("crm_visits").select("id,expense").eq("store_id", storeId).eq("owner_id", employeeId).gt("expense", 0).gte("visit_date", start).lt("visit_date", end)),
+    ]);
+    const visitIds = visits.map((visit: any) => visit.id);
+    const reimbursedIds = visitIds.length ? new Set((await fetchAll(() => adminClient.from("crm_payroll_visit_expenses").select("visit_id").in("visit_id", visitIds))).map((row: any) => row.visit_id)) : new Set<number>();
+    const approvedExpenseAmount = claims.reduce((sum: number, claim: any) => sum + Number(claim.amount || 0), 0);
+    const salesExpenseAmount = visits.filter((visit: any) => !reimbursedIds.has(visit.id)).reduce((sum: number, visit: any) => sum + Number(visit.expense || 0), 0);
+    return json(200, { month: start.slice(0, 7), approved_expense_amount: approvedExpenseAmount, sales_expense_amount: salesExpenseAmount, total_expense_amount: approvedExpenseAmount + salesExpenseAmount });
+  }
+  if (section === "expenses") {
+    if (parts.length === 2 && method === "GET") { let query = adminClient.from("crm_expense_claims").select("*").eq("store_id", storeId).order("expense_date", { ascending: false }); if (!admin) query = query.eq("employee_id", ctx.user.id); const { data, error } = await query; checkDb(error); return json(200, { results: await Promise.all((data || []).map(payrollEmployeePayload)) }); }
+    if (parts.length === 2 && method === "POST" && Number(valueString(body.amount)) < 1) fail(400, "Expense amount must be at least 1.");
+    if (parts.length === 2 && method === "POST") { const amount = payrollAmount(body.amount, "expense", false); const expenseDate = valueString(body.expense_date); if (!/^\d{4}-\d{2}-\d{2}$/.test(expenseDate)) fail(400, "Choose an expense date."); const { data, error } = await adminClient.from("crm_expense_claims").insert({ store_id: storeId, employee_id: ctx.user.id, expense_date: expenseDate, category: valueString(body.category) || "Other", description: valueString(body.description), amount, reimbursable: body.reimbursable !== false }).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "expense", data.id, "submitted", { amount }); return json(201, data); }
+    if (parts.length === 4 && parts[3] === "review" && method === "POST") { requireAdmin(ctx); const status = valueString(body.status); if (!["approved", "rejected"].includes(status)) fail(400, "Choose Approved or Rejected."); const { data: current, error: readError } = await adminClient.from("crm_expense_claims").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(readError); if (!current || current.status !== "submitted") fail(400, "This expense cannot be reviewed."); const { data, error } = await adminClient.from("crm_expense_claims").update({ status, reviewed_by: ctx.user.id, reviewed_at: new Date().toISOString(), review_note: valueString(body.note), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "expense", data.id, status, {}); return json(200, data); }
+  }
+  if (section === "advances") {
+    if (parts.length === 2 && method === "GET") { let query = adminClient.from("crm_salary_advances").select("*").eq("store_id", storeId).order("created_at", { ascending: false }); if (!admin) query = query.eq("employee_id", ctx.user.id); const { data, error } = await query; checkDb(error); return json(200, { results: await Promise.all((data || []).map(payrollEmployeePayload)) }); }
+    if (parts.length === 2 && method === "POST" && Number(valueString(body.amount)) < 1) fail(400, "Salary advance amount must be at least 1.");
+    if (parts.length === 2 && method === "POST") { const amount = payrollAmount(body.amount, "salary advance", false); const { data, error } = await adminClient.from("crm_salary_advances").insert({ store_id: storeId, employee_id: ctx.user.id, requested_amount: amount, reason: valueString(body.reason) }).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "advance", data.id, "submitted", { amount }); return json(201, data); }
+    if (parts.length === 4 && parts[3] === "review" && method === "POST") { requireAdmin(ctx); const status = valueString(body.status); if (!["approved", "rejected"].includes(status)) fail(400, "Choose Approved or Rejected."); const { data: current, error: readError } = await adminClient.from("crm_salary_advances").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(readError); if (!current || current.status !== "submitted") fail(400, "This advance cannot be reviewed."); const approved = status === "approved" ? payrollAmount(body.approved_amount, "approved advance", false) : 0; const { data, error } = await adminClient.from("crm_salary_advances").update({ status, approved_amount: approved, remaining_amount: approved, reviewed_by: ctx.user.id, reviewed_at: new Date().toISOString(), review_note: valueString(body.note), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "advance", data.id, status, { approved }); return json(200, data); }
+  }
+  if (section === "calculate" && method === "POST") { requireAdmin(ctx); const result = await calculatePayroll(ctx, storeId, valueString(body.employee_id), valueString(body.payroll_month)); return json(200, result); }
+  if (section === "payments") {
+    if (parts.length === 2 && method === "GET") { let query = adminClient.from("crm_payroll_payments").select("*").eq("store_id", storeId).order("payroll_month", { ascending: false }); if (!admin) query = query.eq("employee_id", ctx.user.id).in("status", ["approved", "paid"]); const { data, error } = await query; checkDb(error); return json(200, { results: await Promise.all((data || []).map(payrollPaymentPayload)), can_manage: admin, can_approve: admin }); }
+    if (parts.length === 2 && method === "POST") return await createAutomaticPayrollPayment(ctx, storeId, body);
+    if (parts.length === 3 && method === "PATCH") return await updatePayrollPayment(ctx, storeId, parts[2], body);
+    if (parts.length === 2 && method === "POST") { requireAdmin(ctx); const computed = await calculatePayroll(ctx, storeId, valueString(body.employee_id), valueString(body.payroll_month)); const bonus = payrollAmount(body.bonus_amount, "bonus"); const otherDeduction = payrollAmount(body.deduction_amount, "deduction"); let advanceRecovery = Math.min(payrollAmount(body.advance_recovery, "advance recovery"), computed.advances.reduce((sum: number, item: any) => sum + Number(item.remaining_amount), 0)); const overtimeAmount = Math.round(computed.overtime_hours * computed.overtime_rate * 100) / 100; const gross = Number(computed.salary.basic_salary) + Number(computed.salary.allowance_amount) + overtimeAmount + computed.reimbursement_amount + bonus; const net = gross - computed.lop_deduction - otherDeduction - advanceRecovery; if (net < 0) fail(400, "Deductions cannot exceed calculated earnings."); const status = valueString(body.status || "draft"); if (!["draft", "submitted"].includes(status)) fail(400, "Choose Draft or Submitted."); const calculation = { ...computed, salary: undefined, employee: undefined, advances: undefined, reimbursement_claims: (computed.reimbursement_claims || []).map((item: any) => item.id) }; const { data, error } = await adminClient.from("crm_payroll_payments").insert({ store_id: storeId, employee_id: computed.employee.id, payroll_month: computed.start, salary_structure_id: computed.salary.id, basic_salary: computed.salary.basic_salary, allowance_amount: computed.salary.allowance_amount, gross_amount: gross, bonus_amount: bonus, overtime_hours: computed.overtime_hours, overtime_rate: computed.overtime_rate, overtime_amount: overtimeAmount, reimbursement_amount: computed.reimbursement_amount, lop_deduction: computed.lop_deduction, deduction_amount: otherDeduction, advance_recovery: advanceRecovery, net_amount: net, paid_amount: 0, remaining_amount: net, present_days: computed.present_days, absent_days: computed.absent_days, paid_leave_days: computed.paid_leave_days, unpaid_leave_days: computed.unpaid_leave_days, calculation, payment_date: valueString(body.payment_date) || null, payment_method: valueString(body.payment_method || "bank_transfer"), reference_number: valueString(body.reference_number), notes: valueString(body.notes), status, created_by: ctx.user.id }).select("*").single(); checkDb(error); for (const claim of computed.reimbursement_claims || []) { const { error: reimbursementError } = await adminClient.from("crm_payroll_expense_reimbursements").insert({ payment_id: data.id, expense_claim_id: claim.id, amount: claim.amount }); checkDb(reimbursementError); const { error: expenseError } = await adminClient.from("crm_expense_claims").update({ reimbursed_payment_id: data.id, updated_at: new Date().toISOString() }).eq("id", claim.id).is("reimbursed_payment_id", null); checkDb(expenseError); } let remainingRecovery = advanceRecovery; for (const advance of computed.advances || []) { if (remainingRecovery <= 0) break; const recovered = Math.min(remainingRecovery, Number(advance.remaining_amount)); const next = Number(advance.remaining_amount) - recovered; const { error: repaymentError } = await adminClient.from("crm_payroll_advance_repayments").insert({ payment_id: data.id, advance_id: advance.id, amount: recovered }); checkDb(repaymentError); const { error: advanceError } = await adminClient.from("crm_salary_advances").update({ remaining_amount: next, status: next <= 0 ? "closed" : "approved", updated_at: new Date().toISOString() }).eq("id", advance.id); checkDb(advanceError); remainingRecovery -= recovered; } await payrollAudit(ctx, storeId, "payment", data.id, status === "submitted" ? "submitted" : "created", { month: computed.month, net }); return json(201, { payment: await payrollPaymentPayload(data) }); }
+    if (parts.length === 4 && parts[3] === "approve" && method === "POST") { requireAdmin(ctx); const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(readError); if (!current || current.status !== "submitted") fail(400, "Only submitted payroll can be finalized."); const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "approved", approved_by: ctx.user.id, approved_at: new Date().toISOString(), finalized_by: ctx.user.id, finalized_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "payment", data.id, "approved", {}, data.id); return json(200, { payment: await payrollPaymentPayload(data) }); }
+    if (parts.length === 4 && parts[3] === "reject" && method === "POST") return await rejectPayrollPayment(ctx, storeId, parts[2], body);
+    if (parts.length === 4 && parts[3] === "reject" && method === "POST") { requireSuperAdmin(ctx); const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(readError); if (!current || current.status !== "submitted") fail(400, "Only submitted payroll can be rejected."); const [{ data: reimbursements, error: reimbursementReadError }, { data: repayments, error: repaymentReadError }] = await Promise.all([adminClient.from("crm_payroll_expense_reimbursements").select("expense_claim_id").eq("payment_id", current.id), adminClient.from("crm_payroll_advance_repayments").select("advance_id,amount").eq("payment_id", current.id)]); checkDb(reimbursementReadError); checkDb(repaymentReadError); for (const item of reimbursements || []) { const { error } = await adminClient.from("crm_expense_claims").update({ reimbursed_payment_id: null, updated_at: new Date().toISOString() }).eq("id", item.expense_claim_id).eq("reimbursed_payment_id", current.id); checkDb(error); } for (const item of repayments || []) { const { data: advance, error: advanceReadError } = await adminClient.from("crm_salary_advances").select("remaining_amount").eq("id", item.advance_id).maybeSingle(); checkDb(advanceReadError); if (advance) { const { error } = await adminClient.from("crm_salary_advances").update({ remaining_amount: Number(advance.remaining_amount) + Number(item.amount), status: "approved", updated_at: new Date().toISOString() }).eq("id", item.advance_id); checkDb(error); } } const [{ error: reimbursementDeleteError }, { error: repaymentDeleteError }] = await Promise.all([adminClient.from("crm_payroll_expense_reimbursements").delete().eq("payment_id", current.id), adminClient.from("crm_payroll_advance_repayments").delete().eq("payment_id", current.id)]); checkDb(reimbursementDeleteError); checkDb(repaymentDeleteError); const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "rejected", notes: [current.notes, valueString(body.note)].filter(Boolean).join("\n"), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "payment", data.id, "rejected", { note: valueString(body.note) }, data.id); return json(200, { payment: await payrollPaymentPayload(data) }); }
+    if (parts.length === 4 && parts[3] === "pay" && method === "POST") {
+      requireAdmin(ctx);
+      const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*")
+        .eq("id", parts[2]).eq("store_id", storeId).maybeSingle();
+      checkDb(readError);
+      if (!current || !["approved", "paid"].includes(current.status)) fail(400, "Approve payroll before recording a payment.");
+      const netAmount = Math.max(0, Number(current.net_amount || 0));
+      const paidAmount = Math.min(netAmount, Math.max(0, Number(current.paid_amount || 0)));
+      const currentRemaining = Math.max(0, netAmount - paidAmount);
+      if (currentRemaining <= 0) fail(400, "This salary is already fully paid.");
+      const amount = payrollAmount(body.amount, "payment", false);
+      if (amount > currentRemaining) fail(400, "Payment amount cannot exceed the remaining balance.");
+      const paid = paidAmount + amount;
+      const remaining = Math.max(0, netAmount - paid);
+      const { error: transactionError } = await adminClient.from("crm_salary_payment_transactions").insert({
+        payment_id: current.id,
+        store_id: storeId,
+        amount,
+        payment_date: valueString(body.payment_date) || indiaDate(),
+        payment_method: valueString(body.payment_method || current.payment_method),
+        reference_number: valueString(body.reference_number),
+        notes: valueString(body.notes),
+        recorded_by: ctx.user.id,
+      });
+      checkDb(transactionError);
+      const { data, error } = await adminClient.from("crm_payroll_payments").update({
+        paid_amount: paid,
+        remaining_amount: remaining,
+        status: remaining === 0 ? "paid" : "approved",
+        updated_at: new Date().toISOString(),
+      }).eq("id", current.id).select("*").single();
+      checkDb(error);
+      await payrollAudit(ctx, storeId, "payment", data.id, "payment_recorded", { amount, remaining }, data.id);
+      return json(200, { payment: await payrollPaymentPayload(data) });
+    }
+    if (parts.length === 4 && parts[3] === "payslip" && method === "GET") { const { data: payment, error } = await adminClient.from("crm_payroll_payments").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(error); if (!payment || (!admin && (payment.employee_id !== ctx.user.id || !["approved", "paid"].includes(payment.status)))) fail(404, "Payslip not found."); const { data: transactions, error: transactionsError } = await adminClient.from("crm_salary_payment_transactions").select("*").eq("payment_id", payment.id).order("payment_date"); checkDb(transactionsError); return json(200, { payment: await payrollPaymentPayload(payment), transactions: transactions || [] }); }
+  }
+  if (section === "reports" && method === "GET") {
+    requireAdmin(ctx);
+    const month = valueString(params.get("month")) || indiaDate().slice(0, 7);
+    const { start, end } = payrollMonthBounds(month);
+    const { data, error } = await adminClient.from("crm_payroll_payments").select("*")
+      .eq("store_id", storeId).gte("payroll_month", start).lt("payroll_month", end);
+    checkDb(error);
+    const rows = (data || []).map((row: any) => {
+      const netAmount = Math.max(0, Number(row.net_amount || 0));
+      const paidAmount = Math.min(netAmount, Math.max(0, Number(row.paid_amount || 0)));
+      return { ...row, paid_amount: paidAmount, remaining_amount: Math.max(0, netAmount - paidAmount) };
+    });
+    return json(200, {
+      month,
+      totals: {
+        payroll: rows.reduce((sum: number, row: any) => sum + Number(row.net_amount), 0),
+        paid: rows.reduce((sum: number, row: any) => sum + Number(row.paid_amount), 0),
+        pending: rows.reduce((sum: number, row: any) => sum + Number(row.remaining_amount), 0),
+        awaitingApproval: rows.filter((row: any) => row.status === "submitted").length,
+        reimbursements: rows.reduce((sum: number, row: any) => sum + Number(row.reimbursement_amount), 0),
+        lopDeductions: rows.reduce((sum: number, row: any) => sum + Number(row.lop_deduction), 0),
+        overtime: rows.reduce((sum: number, row: any) => sum + Number(row.overtime_amount), 0),
+      },
+      results: await Promise.all(rows.map(payrollPaymentPayload)),
+    });
+  }
+  fail(404, "Payroll endpoint not found.");
+}
+
 async function profileWithCounts(profile: any) {
   const id = profile.id;
   const { count: datasetCount, error: datasetError } = await adminClient.from("crm_datasets")
@@ -1982,7 +2779,21 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
     if (parts.length === 4 && parts[3] === "features" && method === "PATCH") {
       requireSuperAdmin(ctx);
       const features = validateStoreFeatures(body.features);
-      const { data, error } = await adminClient.from("crm_stores").update({ features }).eq("id", parts[2]).select("*").maybeSingle();
+      const errors: Record<string, string[]> = {};
+      const parseLimit = (value: any, field: string, label: string) => {
+        const text = String(value ?? "").trim();
+        if (!text) return null;
+        if (!/^\d+$/.test(text) || Number(text) > 100000) {
+          errors[field] = [`Enter a whole-number ${label} between 0 and 100,000.`];
+          return null;
+        }
+        return Number(text);
+      };
+      const updates: any = { features };
+      if (body.admin_limit !== undefined) updates.admin_limit = parseLimit(body.admin_limit, "admin_limit", "Admin limit");
+      if (body.user_limit !== undefined) updates.user_limit = parseLimit(body.user_limit, "user_limit", "User limit");
+      if (Object.keys(errors).length) fail(400, "Correct the account limits.", { errors });
+      const { data, error } = await adminClient.from("crm_stores").update(updates).eq("id", parts[2]).select("*").maybeSingle();
       checkDb(error);
       if (!data) fail(404, "Store not found.");
       return json(200, data);
@@ -2006,6 +2817,17 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const postalCode = valueString(body.postal_code);
       const features = validateStoreFeatures(body.features ?? defaultStoreFeatures);
       const errors: Record<string, string[]> = {};
+      const parseLimit = (value: any, field: string, label: string) => {
+        const text = String(value ?? "").trim();
+        if (!text) return null;
+        if (!/^\d+$/.test(text) || Number(text) > 100000) {
+          errors[field] = [`Enter a whole-number ${label} between 0 and 100,000.`];
+          return null;
+        }
+        return Number(text);
+      };
+      const adminLimit = parseLimit(body.admin_limit, "admin_limit", "Admin limit");
+      const userLimit = parseLimit(body.user_limit, "user_limit", "User limit");
       if (!name || name.length > 120) errors.name = ["Enter a store name up to 120 characters."];
       if (contactPerson.length > 120) errors.contact_person = ["Enter a contact person up to 120 characters."];
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail) || contactEmail.length > 254) errors.contact_email = ["Enter a valid contact email."];
@@ -2018,7 +2840,8 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const { data, error } = await adminClient.from("crm_stores").insert({
         name, contact_person: contactPerson || null, contact_email: contactEmail,
         contact_phone: contactPhone, address_line1: addressLine1 || null,
-        city: city || null, state: state || null, postal_code: postalCode || null, features, created_by: ctx.user.id,
+        city: city || null, state: state || null, postal_code: postalCode || null, features,
+        admin_limit: adminLimit, user_limit: userLimit, created_by: ctx.user.id,
       }).select("*").single();
       checkDb(error);
       return json(201, data);
@@ -2074,6 +2897,22 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
     response.headers.set("Cache-Control", "no-store, max-age=0");
     return response;
   }
+  if (parts[1] === "designations") {
+    const requestedStoreId = valueString(params.get("store"));
+    const storeId = isSuperAdmin(ctx) && requestedStoreId ? requestedStoreId : requireStoreContext(ctx);
+    if (parts.length === 2 && method === "GET") {
+      const { data, error } = await adminClient.from("crm_designations").select("id,name").eq("store_id", storeId).order("name").order("id");
+      checkDb(error);
+      return json(200, { results: data || [] });
+    }
+    if (parts.length === 2 && method === "POST") {
+      const name = valueString(body.name).replace(/\s+/g, " ");
+      if (!name || name.length > 80) fail(400, "Enter a designation up to 80 characters.", { errors: { name: ["Enter a designation up to 80 characters."] } });
+      const { data, error } = await adminClient.from("crm_designations").insert({ store_id: storeId, name, created_by: ctx.user.id }).select("id,name").single();
+      checkDb(error);
+      return json(201, data);
+    }
+  }
   if (parts[1] === "users") {
     if (parts.length === 2 && method === "GET") {
       const requestedStoreId = valueString(params.get("store"));
@@ -2094,23 +2933,47 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const password1 = String(body.password1 || "");
       const password2 = String(body.password2 || "");
       const role = body.role === undefined ? "employee" : body.role;
+      const designation = role === "employee" ? valueString(body.designation).replace(/\s+/g, " ") : "";
+      const accountStoreId = role === "super_admin" ? null : (isSuperAdmin(ctx) ? valueString(body.store_id) : ctx.profile.store_id);
       const errors: Record<string, string[]> = {};
       if (role !== "employee" && role !== "admin" && role !== "super_admin") errors.role = ["Choose Employee, Admin, or Super Admin."];
       if (role === "super_admin" && !isSuperAdmin(ctx)) errors.role = ["Only a Super Admin can create another Super Admin."];
-      if (role !== "super_admin" && isSuperAdmin(ctx) && !body.store_id) errors.store_id = ["Select a store first, then add the account from that store."];
+      if (!isSuperAdmin(ctx) && role !== "employee") errors.role = ["Only a Super Admin can create administrator accounts."];
+      if (role !== "super_admin" && !accountStoreId) errors.store_id = ["Select a store first, then add the account from that store."];
       if (!username || username.length > 150) errors.username = ["Enter a username up to 150 characters."];
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = ["Enter a valid email address."];
+      if (role === "employee" && !designation) errors.designation = ["Choose a designation."];
+      if (designation.length > 80) errors.designation = ["Choose a designation up to 80 characters."];
       if (password1.length < 8) errors.password1 = ["This password must contain at least 8 characters."];
       if (password1 !== password2) errors.password2 = ["The two password fields did not match."];
       if (Object.keys(errors).length) fail(400, "Unable to create user.", { errors });
-      const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).maybeSingle();
+      // Username and email can each match a different existing account. Read
+      // both matches instead of using maybeSingle(), which turns that normal
+      // validation case into a PostgREST PGRST116 error.
+      const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).limit(2);
       checkDb(duplicate.error);
-      if (duplicate.data) fail(400, "A user with that username or email already exists.", { errors: { username: ["A user with that username or email already exists."], email: ["A user with that username or email already exists."] } });
+      if (duplicate.data?.length) {
+        const usernameTaken = duplicate.data.some((profile: any) => String(profile.employee_id || "").toLocaleLowerCase() === username.toLocaleLowerCase());
+        const emailTaken = duplicate.data.some((profile: any) => String(profile.email || "").toLocaleLowerCase() === email);
+        const errors: Record<string, string[]> = { non_field_errors: ["Use a different username or email address."] };
+        if (usernameTaken) errors.username = ["This username is already in use."];
+        if (emailTaken) errors.email = ["This email address is already in use."];
+        fail(400, "A user with that username or email already exists.", { errors });
+      }
+      await enforceStoreAccountLimit(accountStoreId, role, body.is_active !== false);
       const { data: created, error: createError } = await adminClient.auth.admin.createUser({
         email, password: password1, email_confirm: true,
         user_metadata: { employee_id: username, name: username },
       });
-      checkDb(createError);
+      if (createError) {
+        const authCode = String(createError.code || "").toLowerCase();
+        const authMessage = String(createError.message || "").toLowerCase();
+        if (["email_exists", "email_already_exists", "user_already_exists"].includes(authCode) || /already (registered|exists|in use)/.test(authMessage)) {
+          fail(400, "This email address already has an account.", { errors: { email: ["This email address already has an account. Use a different email address."] } });
+        }
+        console.error("CRM account creation failed:", authCode || "unknown", createError.message || "No message");
+        fail(503, "The authentication account could not be created. Please try again shortly.");
+      }
       if (!created.user) fail(502, "Unable to create the user account.");
       let profile: any;
       try {
@@ -2118,12 +2981,12 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         checkDb(readError); profile = readProfile;
         if (!profile) {
           const { data: inserted, error: insertError } = await adminClient.from("profiles").insert({
-            id: created.user.id, employee_id: username, name: username, email, role, active: body.is_active !== false,
-            store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id),
+            id: created.user.id, employee_id: username, name: username, email, role, active: body.is_active !== false, designation,
+            store_id: accountStoreId,
           }).select("*").single();
           checkDb(insertError); profile = inserted;
         } else {
-          const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false, store_id: role === "super_admin" ? null : (isSuperAdmin(ctx) && body.store_id ? body.store_id : ctx.profile.store_id) }).eq("id", profile.id).select("*").single();
+          const { data: updated, error: updateError } = await adminClient.from("profiles").update({ employee_id: username, name: username, email, role, active: body.is_active !== false, designation, store_id: accountStoreId }).eq("id", profile.id).select("*").single();
           checkDb(updateError); profile = updated;
         }
         await syncAttendanceAdmin(profile);
@@ -2132,7 +2995,11 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         if (cleanupError) fail(503, "Account setup failed and the CRM account could not be rolled back. Contact an administrator before retrying.");
         throw error;
       }
-      return json(201, await profileWithCounts(profile));
+      // Creation only needs the new account ID so the client can open its
+      // detail page. Avoid unrelated dataset-count reads here: if one of
+      // those reads is temporarily unavailable, a successfully created user
+      // must never be reported as a failed save.
+      return json(201, userPayload(profile, { dataset_count: 0, customer_count: 0 }));
     }
     if (parts.length === 3) {
       const target = await adminUserById(ctx, parts[2]);
@@ -2143,13 +3010,25 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         const email = body.email === undefined ? target.email : valueString(body.email).toLowerCase();
         const active = body.is_active === undefined ? target.active : Boolean(body.is_active);
         const role = body.role === undefined ? target.role : body.role;
+        const requestedDesignation = body.designation === undefined ? String(target.designation || "") : valueString(body.designation).replace(/\s+/g, " ");
+        const designation = role === "employee" ? requestedDesignation : "";
         if (!["employee", "admin", "super_admin"].includes(role) && body.role !== undefined) fail(400, "Choose a valid role.", { errors: { role: ["Choose Employee, Admin, or Super Admin."] } });
         if (!isSuperAdmin(ctx) && (role === "super_admin" || target.role === "super_admin")) fail(403, "Only a Super Admin can manage Super Admin accounts.");
+        if (!isSuperAdmin(ctx) && (target.role !== "employee" || role !== "employee")) fail(403, "Only a Super Admin can manage administrator accounts.");
         if (target.id === ctx.user.id && !isAdminRole(role)) fail(400, "You cannot remove your own administrator access.", { errors: { role: ["You cannot remove your own administrator access."] } });
         if (!username || username.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "Enter a valid username and email.", { errors: { username: ["Enter a valid username and email."], email: ["Enter a valid username and email."] } });
-        const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).neq("id", target.id).maybeSingle();
+        if (role === "employee" && !designation) fail(400, "Choose a designation.", { errors: { designation: ["Choose a designation."] } });
+        if (designation.length > 80) fail(400, "Choose a designation up to 80 characters.", { errors: { designation: ["Choose a designation up to 80 characters."] } });
+        const duplicate = await adminClient.from("profiles").select("id,employee_id,email").or("employee_id.eq." + username + ",email.eq." + email).neq("id", target.id).limit(2);
         checkDb(duplicate.error);
-        if (duplicate.data) fail(400, "A user with that username or email already exists.", { errors: { username: ["A user with that username or email already exists."], email: ["A user with that username or email already exists."] } });
+        if (duplicate.data?.length) {
+          const usernameTaken = duplicate.data.some((profile: any) => String(profile.employee_id || "").toLocaleLowerCase() === username.toLocaleLowerCase());
+          const emailTaken = duplicate.data.some((profile: any) => String(profile.email || "").toLocaleLowerCase() === email);
+          const errors: Record<string, string[]> = { non_field_errors: ["Use a different username or email address."] };
+          if (usernameTaken) errors.username = ["This username is already in use."];
+          if (emailTaken) errors.email = ["This email address is already in use."];
+          fail(400, "A user with that username or email already exists.", { errors });
+        }
         const requestedStoreId = isSuperAdmin(ctx) ? valueString(body.store_id) : "";
         // Store ownership is immutable after creation. Every CRM record is
         // scoped through its owner's store, so moving an existing account
@@ -2172,11 +3051,14 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
           if (!selectedStore) fail(400, "The selected store no longer exists.", { errors: { store_id: ["Choose an existing store."] } });
           storeId = selectedStore.id;
         }
+        if (role !== target.role || active !== target.active || storeId !== target.store_id) {
+          await enforceStoreAccountLimit(storeId, role, active, target.id);
+        }
         if (email !== target.email) {
           const { error } = await adminClient.auth.admin.updateUserById(target.id, { email, email_confirm: true });
           checkDb(error);
         }
-        const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active, role, store_id: storeId }).eq("id", target.id).select("*").single();
+        const { data, error } = await adminClient.from("profiles").update({ employee_id: username, email, active, role, designation, store_id: storeId }).eq("id", target.id).select("*").single();
         if (error) {
           if (email !== target.email) {
             const { error: restoreError } = await adminClient.auth.admin.updateUserById(target.id, { email: target.email, email_confirm: true });
@@ -2213,7 +3095,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
         checkDb(error); return json(200, await profileWithCounts(data));
       }
       if (action === "password") {
-        if (isAdminRole(target.role)) fail(403, "Password reset is available for normal CRM users only.");
+        if (isAdminRole(target.role) && !isSuperAdmin(ctx)) fail(403, "Only a Super Admin can reset an administrator password.");
         const password1 = String(body.password1 || "");
         const password2 = String(body.password2 || "");
         const errors: Record<string, string[]> = {};
@@ -2225,6 +3107,14 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       }
       fail(404, "Unknown user action.");
     }
+  }
+  if (parts[1] === "sales-performance" && parts.length === 2 && method === "GET") {
+    const month = reportMonth(params.get("month"));
+    return json(200, { month: month.slice(0, 7), results: await salesPerformance(ctx, month) });
+  }
+  if (parts[1] === "user-performance" && parts.length === 2 && method === "GET") {
+    const month = reportMonth(params.get("month"));
+    return json(200, { month: month.slice(0, 7), results: await userPerformance(ctx, month) });
   }
   if (parts[1] === "tasks") {
     if (parts.length === 2 && method === "GET") {
@@ -2244,6 +3134,8 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       if (!title) fail(400, "Enter a task.", { errors: { title: ["Enter a task."] } });
       const assignee = await adminUserById(ctx, assigneeId);
       if (isAdminRole(assignee.role)) fail(400, "Tasks can only be assigned to normal users.");
+      if (!assignee.active) fail(400, "Tasks cannot be assigned to an inactive user.");
+      await requireTaskImageUploads(ctx, files, thumbnails);
       const data = await saveTaskPhotos(adminClient, ctx.user.id, null, "assignment", {
         assignee: assigneeId, title, note: valueString(body.note), due_at: body.due_at || null,
       }, files, thumbnails);
@@ -2264,6 +3156,7 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       if (body.title !== undefined) updates.title = valueString(body.title);
       if (body.note !== undefined) updates.note = String(body.note || "");
       if (body.due_at !== undefined) updates.due_at = body.due_at || null;
+      await requireTaskImageUploads(ctx, files, thumbnails);
       const data = await saveTaskPhotos(adminClient, ctx.user.id, id, "assignment", updates, files, thumbnails);
       return json(200, await serializeTask(data));
     }
@@ -2274,24 +3167,29 @@ async function handleAdmin(ctx: Context, method: string, parts: string[], params
       const userId = valueString(body.userId);
       const monthText = valueString(body.month);
       const target = Number(body.target);
+      const metric = valueString(body.metric || "count");
       if (!userId) fail(400, "Select a sales user.");
       const monthDate = new Date((monthText.length === 7 ? monthText + "-01" : monthText) + "T00:00:00Z");
       if (!/^\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?$/.test(monthText) || Number.isNaN(monthDate.getTime()) || monthDate.toISOString().slice(0, monthText.length) !== monthText) fail(400, "Choose a valid target month.");
-      if (!Number.isInteger(target) || target <= 0) fail(400, "Target must be a positive whole number.");
+      if (!['count', 'amount'].includes(metric)) fail(400, "Choose count or amount for the target.");
+      if (!Number.isFinite(target) || target <= 0 || (metric === "count" && !Number.isInteger(target)) || (metric === "amount" && (target > 9999999999.99 || Math.abs(target - Math.round(target * 100) / 100) > 0.0000001))) fail(400, metric === "count" ? "Target count must be a positive whole number." : "Target amount must be positive and use no more than two decimals.");
       const profile = await adminUserById(ctx, userId);
-      if (isAdminRole(profile.role)) fail(400, "Targets can only be assigned to sales users.");
+      if (isAdminRole(profile.role) || !profile.active || String(profile.designation || "").trim().toLowerCase() !== "sales") fail(400, "Targets can only be assigned to active users with the Sales designation.");
       const month = monthText.slice(0, 7) + "-01";
-      const { data, error } = await adminClient.from("crm_sales_targets").upsert({ user_id: userId, month, target }, { onConflict: "user_id,month" }).select("*").single();
+      const { data, error } = await adminClient.from("crm_sales_targets").upsert({ user_id: userId, month, target, metric }, { onConflict: "user_id,month" }).select("*").single();
       checkDb(error); return json(200, await targetPayload(data));
     }
     if (parts.length === 3 && method === "PATCH") {
       const id = parseId(parts[2]);
       const target = Number(body.target);
-      if (!Number.isInteger(target) || target <= 0) fail(400, "Target must be a positive whole number.");
       const { data: existing, error: existingError } = await adminClient.from("crm_sales_targets").select("*").eq("id", id).maybeSingle();
       checkDb(existingError); if (!existing) fail(404, "Target not found.");
-      await adminUserById(ctx, existing.user_id);
-      const { data, error } = await adminClient.from("crm_sales_targets").update({ target }).eq("id", id).select("*").maybeSingle();
+      const metric = valueString(body.metric || existing.metric || "count");
+      if (!['count', 'amount'].includes(metric)) fail(400, "Choose count or amount for the target.");
+      if (!Number.isFinite(target) || target <= 0 || (metric === "count" && !Number.isInteger(target)) || (metric === "amount" && (target > 9999999999.99 || Math.abs(target - Math.round(target * 100) / 100) > 0.0000001))) fail(400, metric === "count" ? "Target count must be a positive whole number." : "Target amount must be positive and use no more than two decimals.");
+      const profile = await adminUserById(ctx, existing.user_id);
+      if (isAdminRole(profile.role) || !profile.active || String(profile.designation || "").trim().toLowerCase() !== "sales") fail(400, "Targets can only be assigned to active users with the Sales designation.");
+      const { data, error } = await adminClient.from("crm_sales_targets").update({ target, metric }).eq("id", id).select("*").maybeSingle();
       checkDb(error); if (!data) fail(404, "Target not found.");
       return json(200, await targetPayload(data));
     }
@@ -2408,6 +3306,255 @@ function mapProfile(profile: any) {
 }
 
 async function handleAttendance(ctx: Context, method: string, parts: string[], params: URLSearchParams, body: any) {
+  if (parts[1] === "manual") {
+    requireAdmin(ctx);
+    requireStoreContext(ctx);
+    const employeesQuery = () => applyProfileScope(
+      adminClient.from("profiles").select("id,name,employee_id,active,role").eq("active", true).eq("role", "employee").order("name"), ctx,
+    );
+    if (parts.length === 3 && parts[2] === "records" && method === "GET") {
+      const attendanceDate = valueString(params.get("date"));
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) fail(400, "Choose a valid attendance date.");
+      const parsedDate = new Date(attendanceDate + "T00:00:00Z");
+      if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== attendanceDate) fail(400, "Choose a valid attendance date.");
+      const profiles = await fetchAll(() => applyProfileScope(
+        adminClient.from("profiles").select("id,name,employee_id,active,role").eq("active", true).eq("role", "employee").order("name"), ctx,
+      ));
+      const employeeIds = profiles.map((profile: any) => profile.id);
+      if (!employeeIds.length) return json(200, { results: [] });
+      const nextDay = new Date(parsedDate.getTime() + 86_400_000).toISOString().slice(0, 10);
+      const { data: records, error } = await adminClient.from("attendance_records")
+        .select("user_id,status,punched_at,raw").in("user_id", employeeIds).eq("serial_number", "CRM-MANUAL")
+        .gte("punched_at", `${attendanceDate}T00:00:00+05:30`).lt("punched_at", `${nextDay}T00:00:00+05:30`)
+        .order("punched_at", { ascending: true });
+      checkDb(error);
+      const recordsByEmployee = new Map<string, any[]>();
+      for (const record of records || []) {
+        const entries = recordsByEmployee.get(record.user_id) || [];
+        entries.push(record);
+        recordsByEmployee.set(record.user_id, entries);
+      }
+      return json(200, { results: profiles.map((profile: any) => {
+        const entries = recordsByEmployee.get(profile.id) || [];
+        const checkIn = entries.find((record: any) => String(record.status || "").trim().toUpperCase() === "IN")?.punched_at || "";
+        const checkOut = entries.find((record: any) => String(record.status || "").trim().toUpperCase() === "OUT")?.punched_at || "";
+        const entryMetadata = entries.map((record: any) => {
+          try {
+            const raw = JSON.parse(String(record.raw || ""));
+            return {
+              note: typeof raw?.note === "string" ? raw.note.trim() : "",
+              breakMinutes: Number.isSafeInteger(raw?.break_minutes) && raw.break_minutes >= 0 ? raw.break_minutes : 0,
+            };
+          } catch { return { note: "", breakMinutes: 0 }; }
+        });
+        const notes = [...new Set(entryMetadata.map((item: any) => item.note).filter(Boolean))];
+        const breakMinutes = entries.reduce((total: number, record: any, index: number) => (
+          ["BREAK", "OUT"].includes(String(record.status || "").trim().toUpperCase()) ? total + entryMetadata[index].breakMinutes : total
+        ), 0);
+        const checkInTime = new Date(checkIn).getTime();
+        const checkOutTime = new Date(checkOut).getTime();
+        const workingMinutes = Number.isFinite(checkInTime) && Number.isFinite(checkOutTime) && checkOutTime > checkInTime
+          ? Math.max(0, Math.round((checkOutTime - checkInTime) / 60_000) - breakMinutes)
+          : null;
+        return {
+          userId: profile.id,
+          employeeId: profile.employee_id || "",
+          employeeName: profile.name || profile.employee_id || "Employee",
+          checkIn,
+          checkOut,
+          notes,
+          breakMinutes,
+          workingMinutes,
+          status: checkOut ? "checked_out" : checkIn ? "checked_in" : "not_marked",
+        };
+      }) });
+    }
+    if (parts.length === 3 && parts[2] === "employees" && method === "GET") {
+      const employees = await fetchAll(employeesQuery);
+      const attendanceDate = valueString(params.get("date"));
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) fail(400, "Choose a valid attendance date.");
+      const parsedDate = new Date(attendanceDate + "T00:00:00Z");
+      if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== attendanceDate) fail(400, "Choose a valid attendance date.");
+      const employeeIds = employees.map((employee: any) => employee.id);
+      const nextDay = new Date(parsedDate.getTime() + 86_400_000).toISOString().slice(0, 10);
+      const start = `${attendanceDate}T00:00:00+05:30`;
+      const end = `${nextDay}T00:00:00+05:30`;
+      const { data: dayRecords, error: dayRecordsError } = employeeIds.length
+        ? await adminClient.from("attendance_records").select("user_id,status,serial_number,punched_at")
+          .in("user_id", employeeIds).gte("punched_at", start).lt("punched_at", end)
+        : { data: [], error: null };
+      checkDb(dayRecordsError);
+      const recordsByEmployee = new Map<string, any[]>();
+      for (const record of dayRecords || []) {
+        const records = recordsByEmployee.get(record.user_id) || [];
+        records.push(record);
+        recordsByEmployee.set(record.user_id, records);
+      }
+      return json(200, { results: employees.map((employee: any) => {
+        const records = recordsByEmployee.get(employee.id) || [];
+        const manualRecords = records.filter((record: any) => record.serial_number === "CRM-MANUAL");
+        const manualIns = manualRecords.filter((record: any) => String(record.status || "").trim().toUpperCase() === "IN");
+        const manualOuts = manualRecords.filter((record: any) => String(record.status || "").trim().toUpperCase() === "OUT");
+        const state = manualIns.length > manualOuts.length ? "checked_in"
+          : manualIns.length ? "checked_out"
+            : records.length ? "recorded"
+              : "not_started";
+        return {
+          id: employee.id,
+          name: employee.name || employee.employee_id || "Employee",
+          employeeId: employee.employee_id || "",
+          state,
+        };
+      }) });
+    }
+    if (parts.length === 2 && method === "POST") {
+      const employeeIds = [...new Set((Array.isArray(body.employee_ids) ? body.employee_ids : [body.employee_id])
+        .map((id: any) => valueString(id)).filter(Boolean))];
+      const attendanceDate = valueString(body.attendance_date);
+      const action = valueString(body.action || "check_in");
+      const checkIn = valueString(body.check_in);
+      const checkOut = valueString(body.check_out);
+      const breakTime = valueString(body.break_time);
+      const breakEnd = valueString(body.break_end);
+      const note = valueString(body.note);
+      const parsedDate = new Date(attendanceDate + "T00:00:00Z");
+      // Profile IDs are verified against the active, store-scoped roster below.
+      // Do not reject valid legacy/auth identifiers merely because they do not
+      // use an RFC UUID version nibble.
+      if (!employeeIds.length || employeeIds.length > 500 || employeeIds.some((id) => id.length > 128)) fail(400, "Choose between 1 and 500 employees.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== attendanceDate) fail(400, "Choose a valid attendance date.");
+      if (!["check_in", "check_out", "break"].includes(action)) fail(400, "Choose whether to record check-in, break, or check-out.");
+      const punchTime = action === "check_in" ? checkIn : action === "check_out" ? checkOut : breakTime;
+      const actionLabel = action === "check_in" ? "check-in" : action === "check_out" ? "check-out" : "break start";
+      if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(punchTime)) fail(400, `Enter a valid ${actionLabel} time.`);
+      if (action === "break" && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(breakEnd)) fail(400, "Enter a valid break end time.");
+      const toMinutes = (time: string) => {
+        const [hour, minute] = time.split(":").map(Number);
+        return hour * 60 + minute;
+      };
+      const breakMinutes = action === "break" ? toMinutes(breakEnd) - toMinutes(breakTime) : 0;
+      if (action === "break" && (breakMinutes < 1 || breakMinutes > 720)) fail(400, "Break end time must be after break start time and within 12 hours.");
+      if (note.length > 500) fail(400, "The note must be 500 characters or fewer.");
+      const { data: employees, error: employeeError } = await applyProfileScope(
+        adminClient.from("profiles").select("id,name,employee_id,active,role").in("id", employeeIds).eq("active", true).eq("role", "employee"), ctx,
+      );
+      checkDb(employeeError);
+      if ((employees || []).length !== employeeIds.length) fail(404, "One or more employees were not found in the selected store.");
+      const nextDay = new Date(parsedDate.getTime() + 86_400_000).toISOString().slice(0, 10);
+      const start = `${attendanceDate}T00:00:00+05:30`;
+      const end = `${nextDay}T00:00:00+05:30`;
+      const { data: existing, error: existingError } = await adminClient.from("attendance_records").select("id,user_id,status,serial_number,punched_at")
+        .in("user_id", employeeIds).gte("punched_at", start).lt("punched_at", end);
+      checkDb(existingError);
+      const raw = JSON.stringify({ source: "manual", entered_by: ctx.profile.employee_id || ctx.user.id, note, break_minutes: action === "break" ? breakMinutes : 0, break_end: action === "break" ? breakEnd : "" });
+      const recordsByEmployee = new Map<string, any[]>();
+      for (const record of existing || []) {
+        const records = recordsByEmployee.get(record.user_id) || [];
+        records.push(record);
+        recordsByEmployee.set(record.user_id, records);
+      }
+      const punchAt = new Date(`${attendanceDate}T${punchTime}:00+05:30`).getTime();
+      if (action === "check_out" || action === "break") {
+        const entryBeforeCheckin = (employees || []).some((employee: any) => {
+          const manualRecords = (recordsByEmployee.get(employee.id) || []).filter((record: any) => record.serial_number === "CRM-MANUAL");
+          const manualIns = manualRecords.filter((record: any) => String(record.status || "").trim().toUpperCase() === "IN");
+          const manualOuts = manualRecords.filter((record: any) => String(record.status || "").trim().toUpperCase() === "OUT");
+          const latestCheckIn = Math.max(...manualIns.map((record: any) => new Date(record.punched_at).getTime()));
+          return manualIns.length > manualOuts.length && latestCheckIn >= punchAt;
+        });
+        if (entryBeforeCheckin) fail(400, `${action === "check_out" ? "Check-out" : "Break start"} must be after the recorded check-in time.`);
+      }
+      const pendingEmployees = (employees || []).filter((employee: any) => {
+        const records = recordsByEmployee.get(employee.id) || [];
+        if (action === "check_in") return records.length === 0;
+        const manualRecords = records.filter((record: any) => record.serial_number === "CRM-MANUAL");
+        const manualIns = manualRecords.filter((record: any) => String(record.status || "").trim().toUpperCase() === "IN").length;
+        const manualOuts = manualRecords.filter((record: any) => String(record.status || "").trim().toUpperCase() === "OUT").length;
+        return manualIns > manualOuts;
+      });
+      const records = pendingEmployees.map((employee: any) => {
+        const punchCode = `MANUAL:${employee.employee_id || employee.id}`;
+        const shared = { user_id: employee.id, employee_id: employee.employee_id || "", employee_name: employee.name || employee.employee_id || "Employee", punch_code: punchCode, serial_number: "CRM-MANUAL", verify_mode: "MANUAL", raw };
+        return { ...shared, punched_at: `${attendanceDate}T${punchTime}:00+05:30`, status: action === "check_in" ? "IN" : action === "check_out" ? "OUT" : "BREAK" };
+      });
+      if (!records.length) return json(200, { createdCount: 0, skippedCount: employeeIds.length, attendanceDate, action });
+      const { error: insertError } = await adminClient.from("attendance_records").insert(records);
+      if (insertError?.code === "23505") fail(409, "An identical manual attendance entry already exists.");
+      checkDb(insertError);
+      return json(201, { createdCount: pendingEmployees.length, skippedCount: employeeIds.length - pendingEmployees.length, attendanceDate, action, checkIn: action === "check_in" ? punchTime : undefined, checkOut: action === "check_out" ? punchTime : undefined, breakTime: action === "break" ? punchTime : undefined, breakEnd: action === "break" ? breakEnd : undefined, breakMinutes: action === "break" ? breakMinutes : 0 });
+    }
+    fail(404, "Manual attendance endpoint not found.");
+  }
+  if (parts[1] === "leaves") {
+    requireAdmin(ctx);
+    const profiles = await fetchAll(() => applyProfileScope(
+      adminClient.from("profiles").select("id,employee_id,name,active,role").eq("active", true).order("employee_id"), ctx,
+    ));
+    const profileById = new Map(profiles.map((profile: any) => [profile.id, profile]));
+    const scopedIds = profiles.map((profile: any) => profile.id);
+    const validDate = (value: string, label: string) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) fail(400, "Choose a valid " + label + ".");
+      const date = new Date(value + "T00:00:00Z");
+      if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) fail(400, "Choose a valid " + label + ".");
+      return value;
+    };
+    if (parts.length === 2 && method === "GET") {
+      const from = valueString(params.get("from"));
+      const to = valueString(params.get("to"));
+      const userId = valueString(params.get("userId"));
+      if (from) validDate(from, "start date");
+      if (to) validDate(to, "end date");
+      if (from && to && from > to) fail(400, "The leave start date must be before the end date.");
+      if (userId && !profileById.has(userId)) fail(404, "Employee not found.");
+      const leaves = await fetchAll(() => {
+        let query = adminClient.from("attendance_leave_days").select("*").order("leave_date", { ascending: false }).order("id", { ascending: false });
+        query = scopedIds.length ? query.in("user_id", scopedIds) : query.eq("user_id", "00000000-0000-0000-0000-000000000000");
+        if (userId) query = query.eq("user_id", userId);
+        if (from) query = query.gte("leave_date", from);
+        if (to) query = query.lte("leave_date", to);
+        return query;
+      });
+      return json(200, { results: leaves.map((leave: any) => {
+        const profile = profileById.get(leave.user_id);
+        return { id: leave.id, userId: leave.user_id, date: leave.leave_date, reason: leave.reason || "", leaveType: leave.leave_type || "paid",
+          employeeName: profile?.name || profile?.employee_id || "Employee", employeeId: profile?.employee_id || "" };
+      }) });
+    }
+    if (parts.length === 2 && method === "POST") {
+      const userId = valueString(body.userId);
+      const from = validDate(valueString(body.from), "leave start date");
+      const to = validDate(valueString(body.to || body.from), "leave end date");
+      const reason = valueString(body.reason);
+      const leaveType = valueString(body.leaveType || "paid");
+      if (!profileById.has(userId)) fail(404, "Employee not found.");
+      if (from > to) fail(400, "The leave start date must be before the end date.");
+      if (reason.length > 500) fail(400, "Leave reason must be 500 characters or fewer.");
+      if (!["paid", "unpaid"].includes(leaveType)) fail(400, "Choose Paid or Unpaid leave.");
+      const start = new Date(from + "T00:00:00Z");
+      const end = new Date(to + "T00:00:00Z");
+      const days: string[] = [];
+      for (let date = start; date <= end; date = new Date(date.getTime() + 86_400_000)) {
+        days.push(date.toISOString().slice(0, 10));
+        if (days.length > 366) fail(400, "A leave entry can cover up to 366 days.");
+      }
+      const { error } = await adminClient.from("attendance_leave_days").upsert(
+        days.map((leaveDate) => ({ user_id: userId, leave_date: leaveDate, reason, leave_type: leaveType, created_by: ctx.user.id })),
+        { onConflict: "user_id,leave_date" },
+      );
+      checkDb(error);
+      return json(201, { created: days.length });
+    }
+    if (parts.length === 3 && method === "DELETE") {
+      const id = parseId(parts[2]);
+      const { data: leave, error: readError } = await adminClient.from("attendance_leave_days").select("id,user_id").eq("id", id).maybeSingle();
+      checkDb(readError);
+      if (!leave || !profileById.has(leave.user_id)) fail(404, "Leave record not found.");
+      const { error } = await adminClient.from("attendance_leave_days").delete().eq("id", id);
+      checkDb(error);
+      return json(204);
+    }
+    fail(404, "Attendance leave endpoint not found.");
+  }
   if (parts.length === 1 && method === "GET") {
     const admin = isAdminRole(ctx.profile.role);
     let profileQuery = admin

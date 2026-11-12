@@ -59,6 +59,7 @@
 }
 .workspace-shell .brand-copy strong { color: #fff; font-size: 0.86rem; letter-spacing: 0.16em; }
 .workspace-shell .brand-copy small { color: #94a3be; font-size: 0.65rem; font-weight: 400; letter-spacing: 0.055em; }
+.workspace-shell .sidebar-current-store { max-width: 156px; overflow: hidden; color: #94a3be; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.035em; text-overflow: ellipsis; text-transform: none; white-space: nowrap; }
 .workspace-shell .sidebar-nav { gap: 0.3rem; }
 .workspace-shell .sidebar-link {
   min-height: 43px;
@@ -75,6 +76,9 @@
 .workspace-shell .sidebar-link.active.has-alert { background: #3563e9; color: #fff; box-shadow: 0 3px 9px #050e2020; }
 .workspace-shell .sidebar-link.active i,
 .workspace-shell .sidebar-link.active.has-alert i { color: #fff; }
+.workspace-shell .sidebar-nav-svg { width: 1.1rem; height: 1.1rem; flex: 0 0 1.1rem; color: #7e90ae; }
+.workspace-shell .sidebar-link:hover .sidebar-nav-svg,
+.workspace-shell .sidebar-link.active .sidebar-nav-svg { color: #fff; }
 .workspace-shell .sidebar-sublink { min-height: 36px; font-size: 0.78rem; }
 .workspace-shell .sidebar-submenu { border-color: #2c3c56; }
 .workspace-shell .sidebar-attendance-toggle { color: #94a3be; }
@@ -128,6 +132,7 @@
 .workspace-shell .breadcrumb a { color: #3563e9; }
 .workspace-shell .offcanvas { background: #111d32; }
 .workspace-shell .offcanvas-title { color: #fff; }
+.workspace-shell .offcanvas-current-store { display: inline-block; max-width: 150px; margin-left: 0.55rem; overflow: hidden; color: #94a3be; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.03em; text-overflow: ellipsis; text-transform: none; vertical-align: middle; white-space: nowrap; }
 .workspace-shell #mobileNav .offcanvas-body { scrollbar-width: thin; scrollbar-color: #465777 #111d32; }
 .workspace-shell .mobile-topbar { background: #111d32; box-shadow: none; }
 

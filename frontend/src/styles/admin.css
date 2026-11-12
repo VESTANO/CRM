@@ -76,21 +76,20 @@
 .app-main.is-admin .admin-users-table td:nth-child(8) { white-space: nowrap; }
 
 .app-main.is-admin .responsive-table td[data-label="Actions"] .table-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.5rem !important;
-  width: 250px;
-  min-width: 250px;
+  width: 300px;
+  min-width: 300px;
   max-width: none;
   margin: 0;
 }
 
 .app-main.is-admin .responsive-table .table-actions .btn {
-  flex: 0 0 auto;
-  width: auto;
+  width: 100%;
   min-height: 36px;
   margin: 0 !important;
-  padding: 0.45rem 0.75rem;
+  padding: 0.45rem 0.4rem;
   border-radius: 8px !important;
   white-space: nowrap;
 }
@@ -139,21 +138,86 @@
   border-color: #e18b51;
 }
 
-.app-main.is-admin .admin-users-table .admin-user-actions-primary .btn:nth-child(odd),
-.app-main.is-admin .admin-users-table .admin-user-actions-secondary .btn:nth-child(even) {
-  color: #fff;
-  background-color: var(--luxe-taupe);
-  border-color: var(--luxe-taupe);
+.app-main.is-admin .admin-users-table .admin-user-actions .action-view {
+  color: #315b91;
+  background-color: #edf4ff;
+  border-color: #c9dcf7;
 }
 
-.app-main.is-admin .admin-users-table .admin-user-actions-primary .btn:nth-child(odd):hover,
-.app-main.is-admin .admin-users-table .admin-user-actions-primary .btn:nth-child(odd):active,
-.app-main.is-admin .admin-users-table .admin-user-actions-secondary .btn:nth-child(even):hover,
-.app-main.is-admin .admin-users-table .admin-user-actions-secondary .btn:nth-child(even):active {
-  color: #fff;
-  background-color: var(--luxe-ink);
-  border-color: var(--luxe-ink);
+.app-main.is-admin .admin-users-table .admin-user-actions .action-edit {
+  color: #2458b8;
+  background-color: #dfeeff;
+  border-color: #b4d1fb;
 }
+
+.app-main.is-admin .admin-users-table .admin-user-actions .action-datasets {
+  color: #4d4c9b;
+  background-color: #ebedff;
+  border-color: #c9cdf8;
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions .action-targets {
+  color: #1e6b81;
+  background-color: #e1f5fa;
+  border-color: #b7e1eb;
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions .action-assign-task {
+  color: #24734f;
+  background-color: #e4f6ec;
+  border-color: #b9e1ca;
+}
+
+.app-main.is-admin .admin-users-table .admin-user-actions .action-view:hover,
+.app-main.is-admin .admin-users-table .admin-user-actions .action-view:active { background-color: #dfeeff; border-color: #a9c9ef; }
+.app-main.is-admin .admin-users-table .admin-user-actions .action-edit:hover,
+.app-main.is-admin .admin-users-table .admin-user-actions .action-edit:active { background-color: #cfe3ff; border-color: #8fbbf3; }
+.app-main.is-admin .admin-users-table .admin-user-actions .action-datasets:hover,
+.app-main.is-admin .admin-users-table .admin-user-actions .action-datasets:active { background-color: #dfe3ff; border-color: #b5bced; }
+.app-main.is-admin .admin-users-table .admin-user-actions .action-targets:hover,
+.app-main.is-admin .admin-users-table .admin-user-actions .action-targets:active { background-color: #d2eef5; border-color: #9dcedc; }
+.app-main.is-admin .table-actions .action-targets {
+  color: #1e6b81;
+  background-color: #e1f5fa;
+  border-color: #b7e1eb;
+}
+.app-main.is-admin .table-actions .action-targets:hover,
+.app-main.is-admin .table-actions .action-targets:active { background-color: #d2eef5; border-color: #9dcedc; }
+.app-main.is-admin .admin-users-table .admin-user-actions .action-assign-task:hover,
+.app-main.is-admin .admin-users-table .admin-user-actions .action-assign-task:active { background-color: #d2f0df; border-color: #9dcdb2; }
+
+.app-main.is-admin .responsive-table .table-actions .action-view {
+  color: #315b91;
+  background-color: #edf4ff;
+  border-color: #c9dcf7;
+}
+
+.app-main.is-admin .responsive-table .table-actions .action-edit {
+  color: #2458b8;
+  background-color: #dfeeff;
+  border-color: #b4d1fb;
+}
+
+.app-main.is-admin .responsive-table .table-actions .action-datasets {
+  color: #4d4c9b;
+  background-color: #ebedff;
+  border-color: #c9cdf8;
+}
+
+.app-main.is-admin .responsive-table .table-actions .action-assign-task {
+  color: #24734f;
+  background-color: #e4f6ec;
+  border-color: #b9e1ca;
+}
+
+.app-main.is-admin .responsive-table .table-actions .action-view:hover,
+.app-main.is-admin .responsive-table .table-actions .action-view:active { background-color: #dfeeff; border-color: #a9c9ef; }
+.app-main.is-admin .responsive-table .table-actions .action-edit:hover,
+.app-main.is-admin .responsive-table .table-actions .action-edit:active { background-color: #cfe3ff; border-color: #8fbbf3; }
+.app-main.is-admin .responsive-table .table-actions .action-datasets:hover,
+.app-main.is-admin .responsive-table .table-actions .action-datasets:active { background-color: #dfe3ff; border-color: #b5bced; }
+.app-main.is-admin .responsive-table .table-actions .action-assign-task:hover,
+.app-main.is-admin .responsive-table .table-actions .action-assign-task:active { background-color: #d2f0df; border-color: #9dcdb2; }
 
 .app-main.is-admin .admin-users-table .admin-user-actions .btn:focus-visible {
   outline: 3px solid var(--luxe-ink);
@@ -204,6 +268,11 @@
 .app-main.is-admin .admin-form-panel .input-group { flex-wrap: nowrap; }
 .app-main.is-admin .admin-form-panel .input-group .form-control { border-left: 1px solid var(--luxe-sand); }
 .app-main.is-admin .admin-form-panel .input-group .btn { flex: 0 0 46px; }
+.app-main.is-admin .admin-form-panel .input-group .btn.designation-add-button {
+  flex: 0 0 96px;
+  min-width: 96px;
+  white-space: nowrap;
+}
 .app-main.is-admin .admin-form-panel .form-check { display: flex; align-items: center; gap: 0.75rem; padding-left: 0; }
 .app-main.is-admin .admin-form-panel .form-check-input { float: none; flex-shrink: 0; margin: 0; }
 .app-main.is-admin .content-wrap .admin-info-row {

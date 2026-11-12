@@ -4,7 +4,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Customer CRM</title>
+    <title>VestaTrack</title>
     <link rel="icon" type="image/svg+xml" href="{% static 'images/customer-crm.svg' %}?v=2">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -17,14 +17,14 @@
       {% if request.user.is_authenticated %}
         <header class="mobile-topbar d-lg-none">
           <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileNav" aria-controls="mobileNav">Menu</button>
-          <a class="mobile-brand" href="{% url 'customers:dashboard' %}">Customer CRM</a>
+          <a class="mobile-brand" href="{% url 'customers:dashboard' %}">VestaTrack</a>
         </header>
 
         <aside class="app-sidebar d-none d-lg-flex">
           <div>
             <a class="app-brand" href="{% url 'customers:dashboard' %}">
               <span class="brand-mark">C</span>
-              <span>Customer CRM</span>
+              <span>VestaTrack</span>
             </a>
             <nav class="sidebar-nav" aria-label="Main navigation">
               <a class="sidebar-link {% if current_url == 'dashboard' %}active{% endif %}" href="{% url 'customers:dashboard' %}"><i class="bi bi-grid-1x2"></i><span>Dashboard</span></a>
@@ -56,7 +56,7 @@
 
         <div class="offcanvas offcanvas-start" tabindex="-1" id="mobileNav" aria-labelledby="mobileNavLabel">
           <div class="offcanvas-header">
-            <h2 class="h5 offcanvas-title" id="mobileNavLabel">Customer CRM</h2>
+            <h2 class="h5 offcanvas-title" id="mobileNavLabel">VestaTrack</h2>
             <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
           </div>
           <div class="offcanvas-body d-flex flex-column">

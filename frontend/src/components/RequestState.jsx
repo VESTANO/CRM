@@ -18,7 +18,7 @@ export function RequestError({ message = "Unable to load this page.", onRetry })
 export function AppBootLoader({ label = "Preparing your CRM workspace" }) {
   return <main className="crm-boot-loader" role="status" aria-live="polite">
     <section className="crm-boot-card">
-      <div className="crm-boot-brand"><span className="brand-mark">V</span><span><strong>VESTANO</strong><small>Customer CRM</small></span></div>
+      <div className="crm-boot-brand"><span className="brand-mark">V</span><span><strong>VESTATRACK</strong><small>CRM</small></span></div>
       <div className="crm-boot-spinner" aria-hidden="true" />
       <h1>{label}</h1>
       <p>Restoring your secure session and loading the workspace.</p>

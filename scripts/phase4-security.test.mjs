@@ -101,7 +101,7 @@ function handlers(db,{wrongSessionUser=false,failMigrationReads=false,resetBefor
         return {data:(await db.query(`select * from ${table}${where}`,params)).rows,error:null};
       };
       const q={select:()=>q,eq:(key,value)=>{assert.match(key,/^[a-z_]+$/);filters.push([key,value]);return q;},
-        neq:()=>q,or:()=>{duplicateLookup=true;return q;},
+        neq:()=>q,or:()=>{duplicateLookup=true;return q;},limit:()=>q,
         maybeSingle:async()=>{const result=await execute();return {...result,data:result.data[0]||null};},
         single:async()=>{const result=await execute();return {...result,data:result.data[0]||null};},
         update:payload=>{values=payload;return q;},then:(yes,no)=>execute().then(yes,no)};
@@ -129,6 +129,9 @@ test('Phase 4 actual SQL/handler security, legacy credential revocation and priv
     await db.exec(sql('202611070012_optimistic_concurrency'));
     await db.exec(sql('202611070104_native_login_compatibility'));
     await db.exec(sql('202611070105_current_login_identity'));
+    // The current admin handler requires a designation for employee roles.
+    // Apply that additive schema before exercising the current handler.
+    await db.exec(sql('202611100003_user_designations'));
 
     await t.test('migration preserves existing passwords; sign-in and metadata timestamps do not prove a password change',async()=>{
       const rows=(await db.query('select auth_user_id,password_hash from crm_legacy_auth order by local_user_id')).rows;
@@ -179,7 +182,6 @@ test('Phase 4 actual SQL/handler security, legacy credential revocation and priv
       assert.equal(app.authWrites.length,0);
       assert.equal((await db.query('select encrypted_password from auth.users where id=$1',[native.id])).rows[0].encrypted_password,'Current-store-password');
     });
-
     await t.test('a reset between legacy verification and provider write cannot be overwritten',async()=>{
       const victim=await account(db,14),app=handlers(db,{resetBeforeUpgrade:true});
       await assert.rejects(app.login('EMP14'),error=>error.status===400);
@@ -312,10 +314,10 @@ test('Phase 4 actual SQL/handler security, legacy credential revocation and priv
     await t.test('real admin handler rejects cross-store demotion before changing provider email',async()=>{
       const victim=await account(db,34,{store:fresh.store}),app=handlers(db);
       await db.query("update profiles set role='super_admin',store_id=null where id=$1",[victim.id]);
-      await assert.rejects(app.admin(victim.id,{role:'employee',store_id:uid(300),email:'changed-before-validation@example.test'}),error=>error.status===400);
+      await assert.rejects(app.admin(victim.id,{role:'employee',store_id:uid(300),designation:'Operations',email:'changed-before-validation@example.test'}),error=>error.status===400);
       assert.equal(app.authWrites.length,0);
       assert.equal((await db.query('select email from profiles where id=$1',[victim.id])).rows[0].email,victim.email);
-      assert.equal((await app.admin(victim.id,{role:'employee',store_id:fresh.store})).status,200);
+      assert.equal((await app.admin(victim.id,{role:'employee',store_id:fresh.store,designation:'Operations'})).status,200);
     });
 
     await t.test('known global history is backfilled; ambiguous/unmapped legacy history fails closed on assignment',async()=>{

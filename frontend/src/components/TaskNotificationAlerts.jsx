@@ -7,7 +7,7 @@ function NotificationAlert({ notification, onOpen, onDismiss }) {
     let timer;
     const visible = () => {
       window.clearTimeout(timer);
-      if (!document.hidden) timer = window.setTimeout(() => onDismiss(notification.id), 10000);
+      if (!document.hidden) timer = window.setTimeout(() => onDismiss(notification.id), 3000);
     };
     visible();
     document.addEventListener("visibilitychange", visible);

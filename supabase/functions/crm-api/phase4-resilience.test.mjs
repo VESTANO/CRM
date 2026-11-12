@@ -6,7 +6,7 @@ const source=stripTypeScriptTypes(readFileSync(new URL('./index.ts',import.meta.
 const app=new Function('createClient','Deno','corsHeaders',`${source};return {checkDb,updateCustomerWithHistory};`)(()=>({rpc:async(name,args)=>({data:args.p_changes,error:globalThis.qaConflictError})}),{env:{get:()=>''},serve:()=>{}},{});
 test('database timeouts and provider failures offer safe retry without leaking SQL diagnostics',()=>{
   for(const code of ['57014','55P03','40001','40P01','08006','XX000','PGRST002',undefined]) {
-    assert.throws(()=>app.checkDb({code,message:'secret connection string and internal relation'}),error=>error.status===503 && /check.*before retrying/i.test(error.message) && !error.message.includes('secret'));
+    assert.throws(()=>app.checkDb({code,message:'secret connection string and internal relation'}),error=>error.status===503 && /(reload.*retry|check.*before retrying)/i.test(error.message) && !error.message.includes('secret'));
   }
   assert.throws(()=>app.checkDb({code:'23505',message:'private_constraint'}),e=>e.status===409 && !e.message.includes('private_constraint'));
   assert.throws(()=>app.checkDb({code:'42501',message:'private_table'}),e=>e.status===403 && !e.message.includes('private_table'));

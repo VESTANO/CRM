@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Customer CRM",
-  "short_name": "Customer CRM",
+  "name": "VestaTrack",
+  "short_name": "VestaTrack",
   "description": "Customer relationship management and reminders",
   "start_url": "./",
   "scope": "./",

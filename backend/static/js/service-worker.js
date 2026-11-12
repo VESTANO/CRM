@@ -6,7 +6,7 @@ self.addEventListener("push", (event) => {
     payload = { body: event.data?.text() || "A reminder is due." };
   }
 
-  event.waitUntil(self.registration.showNotification(payload.title || "Customer CRM", {
+  event.waitUntil(self.registration.showNotification(payload.title || "VestaTrack", {
     body: payload.body || "A reminder is due.",
     icon: "/static/images/customer-crm.svg",
     badge: "/static/images/customer-crm.svg",

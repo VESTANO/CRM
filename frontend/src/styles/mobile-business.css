@@ -56,6 +56,8 @@
   .business-reports .reports-breakdown-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: .35rem; }
   .business-reports .reports-breakdown-track { grid-column: 1 / -1; grid-row: 2; }
   .business-reports .reports-breakdown-count { white-space: nowrap; }
+  .business-reports .user-performance-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: .45rem; }
+  .business-reports .user-performance-track { grid-column: 1 / -1; grid-row: 2; }
   .business-reports .reports-summary-currency .reports-summary-value { font-size: clamp(1rem, 4.2vw, 1.6rem); white-space: normal; }
   .business-reports .reports-trend-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

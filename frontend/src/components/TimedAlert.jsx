@@ -6,7 +6,7 @@ export default function TimedAlert({ message, variant = "success" }) {
   useEffect(() => {
     setVisible(Boolean(message));
     if (!message) return undefined;
-    const timeout = window.setTimeout(() => setVisible(false), 5000);
+    const timeout = window.setTimeout(() => setVisible(false), 3000);
     return () => window.clearTimeout(timeout);
   }, [message]);
 

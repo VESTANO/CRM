@@ -37,6 +37,7 @@ async function fixture(page) {
     if(path.includes('/rest/v1/profiles'))payload=[profile];
     else if(path.includes('/auth/v1/user'))payload=session.user;
     else if(path.includes('/auth/v1/'))payload={};
+    else if(path.endsWith('/store/features/'))payload={features:{dashboard:true,customers:true,sales:true,attendance:true,callbacks:true,reminders:true,reports:true,tasks:true}};
     else if(path.endsWith('/task-notifications/'))payload={results:[],unreadCount:0};
     else if(path.endsWith('/dashboard/')||path.endsWith('/reports/summary/'))payload={totalDatasets:99999999,totalCustomers:999999999,responseStats:choices,recentDatasets:[dataset],payments:{},sales:{}};
     else if(path.endsWith('/sales/report/'))payload={totalVisits:999999999,totalExpenses:9999999999.99,activeMonths:999999,statuses:choices,recentMonths:Array.from({length:6},(_,i)=>({key:`2026-${String(i+6).padStart(2,'0')}`,label:['Jun','Jul','Aug','Sep','Oct','Nov'][i],count:123456789+i}))};
@@ -51,7 +52,7 @@ async function fixture(page) {
     else if(path.endsWith('/callbacks/'))payload={results:Array.from({length:5},(_,i)=>({id:i+1,revision:7,customerName:longName,datasetId:1,datasetName:longDataset,phone:'001234567890',callbackDate:'2026-11-07',status:'callback',statusLabel:'Callback',note:longNote})),counts:{today:999999999,tomorrow:999999999,total:999999999,calledBack:999999999},filters:{},outcomeChoices:choices.filter(c=>c.value!=='callback'),pagination:{page:1,numPages:500,count:25000}};
     else if(path.endsWith('/admin/targets/'))payload=[target];
     else if(path.endsWith('/targets/'))payload={results:[target]};
-    else if(path.endsWith('/admin/summary/'))payload={users:[{id:employee,username:longEmail,email:longEmail,is_admin:false,is_active:true,dataset_count:999999,customer_count:999999999,date_joined:'2026-11-07T10:00:00Z'}],metrics:{totalUsers:1,activeUsers:1,totalDatasets:6,totalCustomers:25000},recentDatasets:[dataset],recentUsers:[{id:employee,username:longEmail,email:longEmail,date_joined:'2026-11-07T10:00:00Z'}]};
+    else if(path.endsWith('/admin/summary/'))payload={users:[{id:employee,username:longEmail,email:longEmail,is_admin:false,is_active:true,designation:'Sales',dataset_count:999999,customer_count:999999999,date_joined:'2026-11-07T10:00:00Z'}],metrics:{totalUsers:1,activeUsers:1,totalDatasets:6,totalCustomers:25000},recentDatasets:[dataset],recentUsers:[{id:employee,username:longEmail,email:longEmail,date_joined:'2026-11-07T10:00:00Z'}]};
     return route.fulfill({json:payload,headers:{'access-control-allow-origin':'*','access-control-allow-credentials':'true'}});
   });
   return {errors,mutations};

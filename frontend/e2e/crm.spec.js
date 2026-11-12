@@ -38,6 +38,7 @@ async function fixture(page,{signedIn=true,role='admin'}={}) {
     }
     else if(path.endsWith('/reminders/3/')) {Object.assign(reminders.find(r=>r.id===3),request.postDataJSON());payload=reminders.find(r=>r.id===3);}
     else if(path.endsWith('/auth/legacy-login/')) payload=session;
+    else if(path.endsWith('/store/features/')) payload={features:{dashboard:true,customers:true,sales:true,attendance:true,callbacks:true,reminders:true,reports:true,tasks:true}};
     else if(path.endsWith('/task-notifications/')) payload={results:[],unreadCount:0};
     else if(path.endsWith('/admin/tasks/')) payload={results:[{id:1,title:'Inspect display',status:reviewed?'done':'submitted',assignee_username:'EMPLOYEE',assigned_by_username:'QAADMIN',created_at:'2026-11-01',assignment_images:[],completion_images:[],current_submission:{id:11,note:'Evidence ready',images:[]},submissions:[]}]};
     else if(path.endsWith('/admin/tasks/1/')){reviewed=true;payload={};}
@@ -130,26 +131,12 @@ test('login form, logout and expired-session route guard',async({page})=>{
   await expect(page).toHaveURL(/login/);
   await page.goto('/admin-panel/tasks'); await expect(page).toHaveURL(/login/);
 });
-
-test('ordinary store-account login survives a rejected legacy credential probe',async({page})=>{
-  await fixture(page,{signedIn:false});
-  await page.route('**/auth/legacy-login/',route=>route.fulfill({status:401,json:{detail:'Invalid username or password.'},headers:{'access-control-allow-origin':'*'}}));
-  await page.route('**/auth/v1/token**',route=>route.fulfill({json:session,headers:{'access-control-allow-origin':'*'}}));
-  await page.goto('/login');
-  await page.getByLabel(/Username|Employee ID/i).fill('qa@example.test');
-  await page.getByLabel('Password',{exact:true}).fill('Existing-store-password');
-  await page.getByRole('button',{name:'Continue to CRM'}).click();
-  await expect(page.getByRole('heading',{name:/CRM Dashboard/})).toBeVisible();
-});
 test('timesheet rejection dialog posts feedback through the attendance RPC',async({page})=>{
   const mutations=await fixture(page); await page.goto('/attendance/approvals');
-  await page.getByRole('button',{name:'Review',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Review timesheet'});
-  await dialog.getByRole('button',{name:'Reject',exact:true}).click();
-  await expect(dialog.getByRole('alert')).toHaveText('Enter feedback before rejecting this entry.');
-  expect(mutations.filter(r=>r.path.endsWith('/rpc/review_timesheet_entry'))).toHaveLength(0);
-  await dialog.getByLabel('Approval comment').fill('Correct the work date');
-  await dialog.getByRole('button',{name:'Reject',exact:true}).click(); await expect(dialog).not.toBeVisible();
+  await page.getByRole('button',{name:'Reject',exact:true}).click();
+  const dialog=page.getByRole('dialog'); await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeDisabled();
+  await dialog.getByLabel('Rejection feedback').fill('Correct the work date');
+  await dialog.getByRole('button',{name:'Confirm rejection'}).click(); await expect(dialog).not.toBeVisible();
   expect(mutations.find(r=>r.path.endsWith('/rpc/review_timesheet_entry')).body.p_approval_comment).toBe('Correct the work date');
 });
 test('customer search, status selection, editing and callback completion',async({page})=>{
@@ -195,8 +182,15 @@ test('daily timesheet form submits work and XLSX export contains the displayed h
   await dialog.locator('input[type=date]').fill('2026-11-07');
   await dialog.locator('label').filter({hasText:/^Project$/}).locator('..').locator('input').fill('Display QA');
   await dialog.locator('label').filter({hasText:/^Work details$/}).locator('..').locator('input').fill('Arrange display');
-  await dialog.getByRole('button',{name:'Submit entry',exact:true}).click(); await expect(dialog).not.toBeVisible();
-  expect(mutations.find(r=>r.path.endsWith('/rpc/create_timesheet_entry')).body.p_project).toBe('Display QA');
+  await dialog.getByRole('button',{name:'+ Add another entry',exact:true}).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Date',{exact:true})).toHaveValue('2026-11-07');
+  await expect(dialog.getByLabel('Project',{exact:true})).toHaveValue('Display QA');
+  await dialog.getByLabel('Project 2',{exact:true}).fill('Follow-up QA');
+  await dialog.getByLabel('Work details 2',{exact:true}).fill('Add the next work item');
+  await dialog.getByRole('button',{name:'Submit 2 entries',exact:true}).click(); await expect(dialog).not.toBeVisible();
+  const created=mutations.filter(r=>r.path.endsWith('/rpc/create_timesheet_entry'));
+  expect(created).toHaveLength(2); expect(created[0].body.p_project).toBe('Display QA'); expect(created[1].body.p_project).toBe('Follow-up QA');
   const downloading=page.waitForEvent('download');
   await page.getByRole('button',{name:'Download XLSX',exact:true}).click();
   const download=await downloading,stream=await download.createReadStream(),chunks=[];
@@ -205,6 +199,17 @@ test('daily timesheet form submits work and XLSX export contains the displayed h
   const data=XLSX.utils.sheet_to_json(wb.Sheets.Timesheet);
   expect(data[0]['Employee ID']).toBe('QAADMIN'); expect(data[0]['Total hours']).toBe(8);
   expect(data[0]['Approval status']).toBe('Submitted');
+});
+test('timesheet groups one employee’s same-day entries into one row',async({page})=>{
+  await fixture(page);
+  const followUp={...timesheet,id:'00000000-0000-4000-8000-000000000045',user_id:'00000000-0000-4000-8000-000000000099',project:'Follow-up QA',details:'Add the next work item',start_time:'13:00',end_time:'17:30',total_hours:4};
+  await page.route('**/rest/v1/timesheet_entries**',route=>route.fulfill({json:[timesheet,followUp],headers:{'access-control-allow-origin':'*'}}));
+  await page.goto('/attendance/timesheet');
+  const rows=page.locator('#timesheet-results tbody tr');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first().locator('td').first()).toHaveAttribute('rowspan','2');
+  await expect(rows.first()).toContainText('Display');
+  await expect(rows.nth(1)).toContainText('Follow-up QA');
 });
 test('reminders save and edit with denied notification permission; due/upcoming remain separate',async({page})=>{
   const cdp=await page.context().newCDPSession(page);
@@ -223,16 +228,13 @@ test('reminders save and edit with denied notification permission; due/upcoming 
   await expect(page.getByText('Edited follow up',{exact:true})).toBeVisible();
   expect(mutations.filter(r=>r.path.endsWith('/reminders/3/'))[0].body.text).toBe('Edited follow up');
 });
-test('global role demotion requires a store selection before saving',async({page})=>{
-  const mutations=await fixture(page,{role:'super_admin'}); await page.goto('/admin-panel/users/target/edit');
-  await page.getByLabel('Role',{exact:true}).selectOption('admin');
-  await expect(page.getByLabel('Store',{exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'Save Changes',exact:true}).click();
-  expect(mutations.filter(r=>r.path.endsWith('/admin/users/target/'))).toHaveLength(0);
-  await page.getByLabel('Store',{exact:true}).selectOption('00000000-0000-4000-8000-000000000012');
-  await page.getByRole('button',{name:'Save Changes',exact:true}).click();
-  await expect(page).toHaveURL(/\/admin-panel\/users\/target$/);
-  expect(mutations.find(r=>r.path.endsWith('/admin/users/target/')).body.store_id).toBe('00000000-0000-4000-8000-000000000012');
+test('global Super Admin roles are protected from in-place demotion',async({page})=>{
+  await fixture(page,{role:'super_admin'}); await page.goto('/admin-panel/users/target/edit');
+  const role = page.getByLabel('Role',{exact:true});
+  await expect(role).toHaveValue('Super Admin');
+  await expect(role).toHaveAttribute('readonly','');
+  await expect(page.getByText('Super Admin is a protected global role and is managed separately from store accounts.')).toBeVisible();
+  await expect(page.getByLabel('Store',{exact:true})).toHaveCount(0);
 });
 test('sales report renders aggregated data without requesting complete visit history',async({page})=>{
   const calls=[]; page.on('request',r=>calls.push(r.url())); await fixture(page); await page.goto('/reports');

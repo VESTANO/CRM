@@ -69,7 +69,7 @@ export function createAttendanceFeed({ source, mapRecord, accepts, onSnapshot, o
       })),
       availableFrom: dates.at(-1) || "", availableTo: dates[0] || "",
       lastSync: metadata.devices[0]?.last_seen || null, historyLoading: !complete,
-      source: "Live Vestano Supabase attendance", deviceConfig: {},
+      source: "Live VestaTrack Supabase attendance", deviceConfig: {},
     };
   }
   function publish() { if (active && isVisible()) { const next = snapshot(); if (next) { recovering = false; onSnapshot(next); } } }

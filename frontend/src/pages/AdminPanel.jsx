@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { adminApi, peekCachedResponse } from "../services/api.js";
-import { formatDateTime } from "../utils/formatters.js";
+import { formatCurrency, formatDateTime } from "../utils/formatters.js";
 import AnimatedNumber from "../components/AnimatedNumber.jsx";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useStoreFeatures } from "../hooks/useStoreFeatures.jsx";
@@ -24,7 +24,9 @@ function getTargetForMonth(targets, userId, month) {
 
 function progressLabel(target) {
   if (!target) return "No target";
-  return `${target.monthLabel}: ${target.converted} / ${target.target} (${target.percentage}%)`;
+  const value = target.metric === "amount" ? formatCurrency(target.converted) : target.converted;
+  const goal = target.metric === "amount" ? formatCurrency(target.target) : target.target;
+  return `${target.monthLabel}: ${value} / ${goal} (${target.percentage}%)`;
 }
 
 function currentMonthValue() {
@@ -51,6 +53,7 @@ function StoreAdminPanel() {
   const [targetUser, setTargetUser] = useState(null);
   const [targetMonth, setTargetMonth] = useState(currentMonthValue());
   const [targetInput, setTargetInput] = useState("");
+  const [targetMetric, setTargetMetric] = useState("count");
   const [targetSaving, setTargetSaving] = useState(false);
   const [targetMessage, setTargetMessage] = useState("");
   const [targetMessageType, setTargetMessageType] = useState("success");
@@ -59,7 +62,7 @@ function StoreAdminPanel() {
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskImages, setTaskImages] = useState([]);
   const [taskImagePreparing, setTaskImagePreparing] = useState(false);
-  const { csrfToken, user } = useAuth();
+  const { csrfToken, user: signedInUser } = useAuth();
   const targetDialogRef = useRef(null), targetMonthRef = useRef(null);
   const taskDialogRef = useRef(null), taskTitleRef = useRef(null);
   useDialogFocus({ open: Boolean(targetUser), dialogRef: targetDialogRef, initialFocusRef: targetMonthRef, onCancel: () => closeTargetModal(), busy: targetSaving });
@@ -111,6 +114,7 @@ function StoreAdminPanel() {
     setTargetUser(user);
     setTargetMonth(initialMonth);
     setTargetInput(initialTarget?.target ?? "");
+    setTargetMetric(initialTarget?.metric || "count");
     setTargetMessage("");
   };
 
@@ -122,6 +126,7 @@ function StoreAdminPanel() {
 
     setTargetMonth(month);
     setTargetInput(existingTarget?.target ?? "");
+    setTargetMetric(existingTarget?.metric || "count");
     setTargetMessage("");
   };
 
@@ -129,6 +134,7 @@ function StoreAdminPanel() {
     setTargetUser(null);
     setTargetMonth(currentMonthValue());
     setTargetInput("");
+    setTargetMetric("count");
   };
 
   const assignTarget = async () => {
@@ -139,9 +145,9 @@ function StoreAdminPanel() {
       setTargetMessage("Choose a month for this target.");
       return;
     }
-    if (!Number.isInteger(target) || target <= 0) {
+    if (!Number.isFinite(target) || target <= 0 || (targetMetric === "count" && !Number.isInteger(target))) {
       setTargetMessageType("danger");
-      setTargetMessage("Target must be a positive whole number.");
+      setTargetMessage(targetMetric === "count" ? "Target count must be a positive whole number." : "Target amount must be positive.");
       return;
     }
 
@@ -150,10 +156,10 @@ function StoreAdminPanel() {
 
     try {
       if (targetBeingEdited?.id) {
-        await adminApi.updateTarget(targetBeingEdited.id, { target }, csrfToken);
+        await adminApi.updateTarget(targetBeingEdited.id, { target, metric: targetMetric }, csrfToken);
       } else {
         await adminApi.saveTarget(
-          { userId: targetUser.id, month: targetMonth, target },
+          { userId: targetUser.id, month: targetMonth, target, metric: targetMetric },
           csrfToken
         );
       }
@@ -236,10 +242,10 @@ function StoreAdminPanel() {
           <p className="text-secondary mb-0">Manage users, datasets, and CRM activity.</p>
         </div>
         <div className="d-flex gap-2">
-          {user?.is_superuser && <Link className="btn btn-outline-secondary" to="/admin-panel/stores"><i className="bi bi-arrow-left me-1" />Back to Stores</Link>}
-          <Link className="btn btn-primary" to={user?.is_superuser ? activeStoreId() ? `/admin-panel/users/add?store=${activeStoreId()}` : "/admin-panel/stores" : "/admin-panel/users/add"}>
+          {signedInUser?.is_superuser && <Link className="btn btn-outline-secondary" to="/admin-panel/stores"><i className="bi bi-arrow-left me-1" />Back to Stores</Link>}
+          <Link className="btn btn-primary" to={signedInUser?.is_superuser ? activeStoreId() ? `/admin-panel/users/add?store=${activeStoreId()}` : "/admin-panel/stores" : "/admin-panel/users/add"}>
             <i className="bi bi-person-plus me-1" />
-            {user?.is_superuser && !activeStoreId() ? "Choose store to add user" : "Add User"}
+            {signedInUser?.is_superuser && !activeStoreId() ? "Choose store to add user" : "Add User"}
           </Link>
         </div>
       </div>
@@ -375,6 +381,8 @@ function StoreAdminPanel() {
                     {features.tasks && <td data-label="Tasks">
                       {user.is_admin ? (
                         <span className="text-secondary small">Admin user</span>
+                      ) : !user.is_active ? (
+                        <span className="text-secondary small">Inactive user</span>
                       ) : (
                         <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}/tasks`}>
                           View Tasks
@@ -385,22 +393,22 @@ function StoreAdminPanel() {
                     <td data-label="Actions">
                       <div className="admin-user-actions" role="group" aria-label={`Actions for ${user.username}`}>
                         <div className="admin-user-actions-primary">
-                          <Link className="btn btn-outline-primary btn-sm" to={`/admin-panel/users/${user.id}`}>View</Link>
-                          <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>
-                          {features.customers && <Link className="btn btn-outline-secondary btn-sm" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>}
+                          <Link className="btn btn-outline-primary btn-sm action-view" to={`/admin-panel/users/${user.id}`}>View</Link>
+                          {(signedInUser?.is_superuser || !user.is_admin) && <Link className="btn btn-outline-secondary btn-sm action-edit" to={`/admin-panel/users/${user.id}/edit`}>Edit</Link>}
+                          {features.customers && <Link className="btn btn-outline-secondary btn-sm action-datasets" to={`/admin-panel/users/${user.id}/datasets`}>Datasets</Link>}
                         </div>
                         {!user.is_admin && (
                           <div className="admin-user-actions-secondary">
-                            {features.sales && <button
-                              className="btn btn-outline-secondary btn-sm"
+                            {features.sales && user.is_active && String(user.designation || "").trim().toLowerCase() === "sales" && <button
+                              className="btn btn-outline-secondary btn-sm action-targets"
                               type="button"
                               onClick={() => openTargetModal(user)}
                               disabled={targetsLoading || Boolean(targetsError)}
                             >
                               Manage Targets
                             </button>}
-                            {features.tasks && <button
-                              className="btn btn-outline-secondary btn-sm"
+                            {features.tasks && user.is_active && <button
+                              className="btn btn-outline-secondary btn-sm action-assign-task"
                               type="button"
                               onClick={() => openTaskModal(user)}
                             >
@@ -483,21 +491,28 @@ function StoreAdminPanel() {
                     value={targetMonth}
                     onChange={changeTargetMonth}
                   />
-                  <div className="form-text">Converted sales visits in this month will count toward the target.</div>
+                  <div className="form-text">Only converted sales visits in this month count toward the target.</div>
+                </div>
+                <div className="mb-3">
+                  <label className="form-label" htmlFor="target-metric">Target type</label>
+                  <select id="target-metric" className="form-select" value={targetMetric} onChange={(event) => setTargetMetric(event.target.value)}>
+                    <option value="count">By converted customer count</option>
+                    <option value="amount">By converted sales amount</option>
+                  </select>
                 </div>
                 <div>
-                  <label className="form-label" htmlFor="target-converted-clients">Target - Converted Clients</label>
+                  <label className="form-label" htmlFor="target-converted-clients">{targetMetric === "amount" ? "Target - Converted Sales Amount" : "Target - Converted Clients"}</label>
                   <input
                     id="target-converted-clients"
                     className="form-control"
                     type="number"
                     min="1"
-                    step="1"
+                    step={targetMetric === "amount" ? "0.01" : "1"}
                     value={targetInput}
                     onChange={(event) => setTargetInput(event.target.value)}
-                    placeholder="Example: 20"
+                    placeholder={targetMetric === "amount" ? "Example: 50000" : "Example: 20"}
                   />
-                  <div className="form-text">Number of clients this user should convert from the selected dataset.</div>
+                  <div className="form-text">{targetMetric === "amount" ? "Total value of converted sales visits for the selected month." : "Number of converted sales visits for the selected month."}</div>
                 </div>
               </div>
               <div className="modal-footer">
@@ -565,10 +580,10 @@ function StoreAdminPanel() {
                   />
                   <div className="form-text">Leave empty if this task does not have a deadline.</div>
                 </div>
-                <div className="mt-3">
+                {features.task_images && <div className="mt-3">
                   <TaskImagePicker label="Before photos (optional)" files={taskImages} onChange={setTaskImages} disabled={taskSaving} onBusyChange={setTaskImagePreparing} />
                   <div className="form-text">Attach photos of the section that needs arranging. The user will upload After photos when the work is done.</div>
-                </div>
+                </div>}
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-outline-secondary" onClick={closeTaskModal} disabled={taskSaving}>Cancel</button>

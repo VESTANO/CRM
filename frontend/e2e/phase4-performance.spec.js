@@ -20,7 +20,8 @@ async function fixture(page, business) {
     if(path.includes('/rest/v1/profiles'))payload=[profile];
     else if(path.includes('/auth/v1/user'))payload=session.user;
     else if(path.includes('/auth/v1/'))payload={};
-    else if(path.endsWith('/dashboard/'))payload={totalDatasets:0,totalCustomers:0,responseStats:[],recentDatasets:[],payments:{},sales:{}};
+    else if(path.endsWith('/store/features/'))payload={features:{dashboard:true,customers:true,sales:true,attendance:true,callbacks:true,reminders:true,reports:true,tasks:true}};
+    else if(path.endsWith('/dashboard/')||path.endsWith('/reports/summary/'))payload={totalDatasets:0,totalCustomers:0,responseStats:[],recentDatasets:[],payments:{},sales:{}};
     else if(path.endsWith('/task-notifications/'))payload={results:[],unreadCount:0};
     else if(path.endsWith('/sales/summary/'))payload={totalVisits:12,todaysVisits:0,monthVisits:12,totalVisitExpenses:0};
     else if(path.endsWith('/sales/report/'))payload={totalVisits:0,totalExpenses:0,activeMonths:0,statuses:[],recentMonths:[]};

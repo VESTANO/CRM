@@ -44,7 +44,7 @@ self.createReminderWorker = ({ storage, showNotification, getNotifications, clie
       const existing = await getNotifications({ tag });
       if (!prior && !existing.length) {
         const icon = base.pathname === "/" ? "/static/images/customer-crm.svg" : new URL("notification-icon.svg", base).href;
-        await showNotification(p.title || "Customer CRM | Reminder", { body: p.body || "A reminder is due.", tag, icon, badge: icon, renotify: false, requireInteraction: true, data: { ...p, url: targetUrl(p) } });
+        await showNotification(p.title || "VestaTrack | Reminder", { body: p.body || "A reminder is due.", tag, icon, badge: icon, renotify: false, requireInteraction: true, data: { ...p, url: targetUrl(p) } });
       }
       await storage.put(key, now());
       await queueReceipt(p, "displayed");

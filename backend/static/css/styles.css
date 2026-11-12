@@ -596,6 +596,64 @@ a:not(.btn):hover {
   color: var(--crm-primary-ink);
 }
 
+.user-performance-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.user-performance-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(8rem, 2fr) minmax(3.25rem, auto);
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #dce5ef;
+  border-radius: 0.65rem;
+  background: #fbfdff;
+}
+
+.user-performance-meta {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.user-performance-meta strong,
+.user-performance-meta span {
+  overflow-wrap: anywhere;
+}
+
+.user-performance-meta span {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.user-performance-track {
+  height: 0.75rem;
+  overflow: hidden;
+  border: 1px solid #c9d8e7;
+  border-radius: 999px;
+  background: #eaf1f8;
+}
+
+.user-performance-bar {
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: var(--performance-color, #3b82f6);
+  transform-origin: left center;
+}
+
+.user-performance-graph.is-visible .user-performance-bar {
+  animation: reports-bar-fill 700ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.user-performance-value {
+  color: var(--crm-primary-ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .reports-trend {
   height: 156px;
   max-width: 100%;
