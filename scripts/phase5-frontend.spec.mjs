@@ -2,6 +2,7 @@ import { test, expect } from '../frontend/node_modules/@playwright/test/index.mj
 
 const id = '00000000-0000-4000-8000-000000000001';
 const profile = { id, employee_id: 'QAADMIN', name: 'Local release QA', email: 'qa@example.test', role: 'admin', active: true, store_id: '00000000-0000-4000-8000-000000000011' };
+const attendanceRange = { from: '2026-10-29', to: '2026-11-07' };
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const session = { access_token: `${encode({ alg: 'HS256' })}.${encode({ sub: id, role: 'authenticated', exp: 4070908800 })}.local-only`, refresh_token: 'local-refresh', token_type: 'bearer', expires_at: 4070908800, user: { id, email: profile.email, aud: 'authenticated', role: 'authenticated', user_metadata: {} } };
 
@@ -124,7 +125,12 @@ test('Phase 5 production build: bounded fixture rendering and local browser meas
   await measure('dataset_list_100_entries_5_visible', () => go('datasets', 'Customer Lists'), () => expect(page.getByRole('row').filter({ hasText: 'Release dataset' })).toHaveCount(5));
   await measure('sales_first_5_of_25000', () => go('sales', 'Client Visits'), () => expect(page.locator('.sales-visits-table tbody tr')).toHaveCount(5));
   await measure('sales_report_25000_summary', () => go('reports', 'Reports'), () => expect(page.getByRole('heading', { name: 'Sales Insights', exact: true })).toBeVisible());
-  await measure('attendance_4000_punches_100_employees_10_days', () => go('attendance', 'Attendance'), async () => {
+  await measure('attendance_4000_punches_100_employees_10_days', async () => {
+    await go('attendance', 'Attendance');
+    await page.getByLabel('From', { exact: true }).fill(attendanceRange.from);
+    await page.getByLabel('To', { exact: true }).fill(attendanceRange.to);
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  }, async () => {
     await expect(page.getByRole('button', { name: 'Download XLSX', exact: true })).toBeEnabled();
     await expect(page.locator('.attendance-metrics .summary-card').filter({ hasText: 'Punches' })).toContainText('4000');
     await expect.poll(() => state.requests.some(request => request.path.includes('/rest/v1/attendance_records') && request.query?.updated_at && request.query?.or?.includes('id.gt.00000000-0000-4000-8000-000000004000'))).toBe(true);
