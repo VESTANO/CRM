@@ -275,7 +275,10 @@ export const authApi = {
       if (!user) throw apiError("This account is inactive or has no CRM profile.", 403);
       return { data: { user, csrfToken: "" } };
     } catch (error) {
-      if (error.response?.status !== 404) throw error;
+      // New CRM accounts do not have a legacy credential. Both the legacy
+      // endpoint's 404 and its intentionally non-enumerating 401 should fall
+      // through to the account's normal Supabase password sign-in.
+      if (![401, 404].includes(error.response?.status)) throw error;
     }
     let email = identity;
     if (!identity.includes("@")) {
