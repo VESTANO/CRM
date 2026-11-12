@@ -25,6 +25,14 @@ function currentReportMonth() {
   return value("year") + "-" + value("month");
 }
 
+function isCustomerReport(data) {
+  return Boolean(data) && Array.isArray(data.responseStats);
+}
+
+function isSalesReport(data) {
+  return Boolean(data) && Array.isArray(data.statuses) && Array.isArray(data.recentMonths);
+}
+
 export default function Reports() {
   const { features } = useStoreFeatures();
   const { user } = useAuth();
@@ -46,10 +54,16 @@ export default function Reports() {
   const load = useCallback(() => {
     setError("");
     const customers = !features.customers ? Promise.resolve() : reportsApi.summary()
-      .then(({ data }) => setCustomerStats(data))
+      .then(({ data }) => {
+        if (!isCustomerReport(data)) throw new Error("Invalid customer report response.");
+        setCustomerStats(data);
+      })
       .catch(() => setError("Unable to load customer insights."));
     const sales = !features.sales ? Promise.resolve() : salesApi.report()
-      .then(({ data }) => setVisitStats(data))
+      .then(({ data }) => {
+        if (!isSalesReport(data)) throw new Error("Invalid sales report response.");
+        setVisitStats(data);
+      })
       .catch(() => setError("Unable to load sales insights."));
     const performance = !features.sales || !user?.is_admin ? Promise.resolve() : adminApi.salesPerformance(reportMonth)
       .then(({ data }) => setSalesPerformance(data.results || []))
