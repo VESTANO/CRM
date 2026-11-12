@@ -13,7 +13,6 @@ export default function TaskReviewForm({ task, csrfToken, onSaved }) {
   const review = async () => {
     if (saving) return;
     setError("");
-    if (action === "reject" && !note.trim()) { setError("Add a rejection note explaining what the user needs to arrange again."); return; }
     setSaving(true);
     try {
       await adminApi.updateTask(task.id, {
@@ -22,7 +21,7 @@ export default function TaskReviewForm({ task, csrfToken, onSaved }) {
       setNote("");
       const completedAction = action;
       setAction("");
-      onSaved(completedAction === "approve" ? "Task approved." : "Task rejected. The user can read your note and submit new After photos.");
+      onSaved(completedAction === "approve" ? "Task approved." : "Task rejected. The user can submit new After photos.");
     } catch (requestError) {
       setError(requestError.response?.data?.detail || "Unable to review this task. Please try again.");
     } finally { setSaving(false); }
@@ -39,10 +38,10 @@ export default function TaskReviewForm({ task, csrfToken, onSaved }) {
       details={<><strong>{task.title}</strong><div className="small text-secondary mt-1">Submission #{task.current_submission.id}</div></>}
       actionLabel={action === "approve" ? "Confirm approval" : "Confirm rejection"}
       tone={action === "reject" ? "danger" : "primary"}
-      requiresReason={action === "reject"}
+      showNote
       reason={note}
-      reasonLabel="Rejection feedback"
-      reasonPlaceholder="Explain what needs to change before the task can be approved."
+      reasonLabel="Review note (optional)"
+      reasonPlaceholder="Add context for the employee, if helpful."
       onReasonChange={(value) => { setNote(value); setError(""); }}
       onConfirm={review}
       onCancel={close}

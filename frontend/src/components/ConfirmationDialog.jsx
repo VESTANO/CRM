@@ -9,9 +9,13 @@ export default function ConfirmationDialog({
   actionLabel,
   tone = "primary",
   requiresReason = false,
+  showNote = false,
+  noteRequired = false,
   reason = "",
   reasonLabel = "Reason",
   reasonPlaceholder = "Add a clear reason for this decision.",
+  noteHelpText,
+  noteMaxLength = 4000,
   onReasonChange,
   onConfirm,
   onCancel,
@@ -26,6 +30,8 @@ export default function ConfirmationDialog({
   useDialogFocus({ open, dialogRef, initialFocusRef: cancelRef, onCancel, busy });
 
   if (!open) return null;
+  const noteVisible = showNote || requiresReason;
+  const noteIsRequired = noteRequired || requiresReason;
   const describedBy = [description ? descriptionId : "", error ? errorId : ""].filter(Boolean).join(" ") || undefined;
 
   return <>
@@ -42,17 +48,17 @@ export default function ConfirmationDialog({
           </div>
           <div className="modal-body">
             {details && <div className="crm-confirmation-details mb-3">{details}</div>}
-            {requiresReason && <div>
+            {noteVisible && <div>
               <label className="form-label fw-semibold" htmlFor={`${titleId}-reason`}>{reasonLabel}</label>
-              <textarea id={`${titleId}-reason`} className="form-control" rows="4" maxLength="4000" required
+              <textarea id={`${titleId}-reason`} className="form-control" rows="4" maxLength={noteMaxLength} required={noteIsRequired}
                 value={reason} disabled={busy} onChange={(event) => onReasonChange?.(event.target.value)} placeholder={reasonPlaceholder} />
-              <div className="form-text">This reason will be shown to the affected employee.</div>
+              <div className="form-text">{noteHelpText || (noteIsRequired ? "This reason will be shown to the affected employee." : "Optional. This note will be shown to the affected employee.")}</div>
             </div>}
             {error && <div className="alert alert-danger mb-0 mt-3" id={errorId} role="alert">{error}</div>}
           </div>
           <div className="modal-footer">
             <button className="btn btn-outline-secondary" type="button" ref={cancelRef} onClick={onCancel} disabled={busy}>Cancel</button>
-            <button className={`btn btn-${tone === "danger" ? "danger" : "success"}`} type="button" onClick={onConfirm} disabled={busy || (requiresReason && !reason.trim())}>
+            <button className={`btn btn-${tone === "danger" ? "danger" : "success"}`} type="button" onClick={onConfirm} disabled={busy || (noteIsRequired && !reason.trim())}>
               {busy ? "Processing…" : actionLabel}
             </button>
           </div>

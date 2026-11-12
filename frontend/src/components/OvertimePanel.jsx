@@ -17,7 +17,7 @@ export default function OvertimePanel({ admin = false }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState(null);
-  const [rejectionReason, setRejectionReason] = useState("");
+  const [reviewNote, setReviewNote] = useState("");
 
   const load = async () => {
     try {
@@ -51,27 +51,26 @@ export default function OvertimePanel({ admin = false }) {
   const beginReview = (item, action) => {
     if (busy) return;
     setError("");
-    setRejectionReason("");
+    setReviewNote("");
     setReviewing({ item, action });
   };
 
   const closeReview = () => {
     if (busy) return;
     setReviewing(null);
-    setRejectionReason("");
+    setReviewNote("");
   };
 
   const review = async () => {
     if (!reviewing || busy) return;
     const { item, action } = reviewing;
-    if (action === "reject" && !rejectionReason.trim()) return;
     setBusy(true);
     setError("");
     try {
-      await overtimeApi.review(item.id, action, { message: rejectionReason.trim() }, csrfToken);
+      await overtimeApi.review(item.id, action, { note: reviewNote.trim() }, csrfToken);
       setReviewing(null);
-      setRejectionReason("");
-      setMessage(action === "approve" ? "Overtime request approved." : "Overtime request rejected with feedback.");
+      setReviewNote("");
+      setMessage(action === "approve" ? "Overtime request approved." : "Overtime request rejected.");
       await load();
     } catch (requestError) {
       setError(requestError.response?.data?.detail || "Unable to review OT request.");
@@ -107,7 +106,7 @@ export default function OvertimePanel({ admin = false }) {
             <td>{new Date(item.declaredLeaveTime).toLocaleString()}</td>
             <td>{item.actualPunchOut ? new Date(item.actualPunchOut).toLocaleString() : <span className="text-warning">Waiting for punch-out</span>}</td>
             <td>{mins(item.status === "approved" ? item.approvedMinutes : item.requestedMinutes)}</td>
-            <td><span className={`badge ${item.status === "approved" ? "text-bg-success" : item.status === "rejected" ? "text-bg-danger" : "text-bg-warning"}`}>{item.status}</span>{item.rejectionMessage && <div className="small text-danger">{item.rejectionMessage}</div>}</td>
+            <td><span className={`badge ${item.status === "approved" ? "text-bg-success" : item.status === "rejected" ? "text-bg-danger" : "text-bg-warning"}`}>{item.status}</span>{item.reviewNote && <div className="small text-secondary">Note: {item.reviewNote}</div>}</td>
             {admin && <td>{item.status === "pending" && <div className="d-flex gap-1"><button className="btn btn-sm btn-success" disabled={busy || !item.actualPunchOut} type="button" onClick={() => beginReview(item, "approve")}>Approve</button><button className="btn btn-sm btn-outline-danger" disabled={busy} type="button" onClick={() => beginReview(item, "reject")}>Reject</button></div>}</td>}
           </tr>)}
           {!data.requests.length && <tr><td colSpan={admin ? 8 : 7} className="text-center text-secondary py-3">No overtime requests yet.</td></tr>}
@@ -121,11 +120,11 @@ export default function OvertimePanel({ admin = false }) {
       details={reviewItem && <><strong>{reviewItem.employeeName || reviewItem.username} · {reviewItem.workDate}</strong><div className="small text-secondary mt-1">Verified OT: {reviewItem.actualPunchOut ? mins(reviewItem.verifiedMinutes ?? reviewItem.requestedMinutes) : "Awaiting final punch-out"} · Final punch-out: {reviewItem.actualPunchOut ? new Date(reviewItem.actualPunchOut).toLocaleString() : "Unavailable"}</div></>}
       actionLabel={rejecting ? "Confirm rejection" : "Confirm approval"}
       tone={rejecting ? "danger" : "primary"}
-      requiresReason={rejecting}
-      reason={rejectionReason}
-      reasonLabel="Rejection reason"
-      reasonPlaceholder="Explain why this overtime request cannot be approved."
-      onReasonChange={(value) => { setRejectionReason(value); setError(""); }}
+      showNote
+      reason={reviewNote}
+      reasonLabel="Review note (optional)"
+      reasonPlaceholder="Add context for the employee, if helpful."
+      onReasonChange={(value) => { setReviewNote(value); setError(""); }}
       onConfirm={review}
       onCancel={closeReview}
       busy={busy}

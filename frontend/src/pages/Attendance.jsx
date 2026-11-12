@@ -698,7 +698,6 @@ function LiveApprovals({ profile, employees, refreshKey }) {
   }, [entries]);
   const review = async () => {
     if (!reviewing) return;
-    if (reviewing.action === "Rejected" && !comment.trim()) return;
     setReviewSaving(true);
     setError("");
     try { await reviewLiveTimesheetEntry(reviewing.entry.id, reviewing.action, comment.trim()); setReviewing(null); setComment(""); await load(); }
@@ -718,10 +717,10 @@ function LiveApprovals({ profile, employees, refreshKey }) {
       details={reviewing && <><strong>{reviewing.entry.employeeName || reviewing.entry.employeeId} · {reviewing.entry.date}</strong><div className="small text-secondary mt-1">{reviewing.entry.project || "—"}: {reviewing.entry.details || "—"} · {Number(reviewing.entry.totalHours || 0).toFixed(2)} hours</div></>}
       actionLabel={reviewing?.action === "Rejected" ? "Confirm rejection" : "Confirm approval"}
       tone={reviewing?.action === "Rejected" ? "danger" : "primary"}
-      requiresReason={reviewing?.action === "Rejected"}
+      showNote
       reason={comment}
-      reasonLabel="Rejection feedback"
-      reasonPlaceholder="Explain what needs to be corrected before this timesheet can be approved."
+      reasonLabel="Review note (optional)"
+      reasonPlaceholder="Add context for the employee, if helpful."
       onReasonChange={(value) => { setComment(value); setError(""); }}
       onConfirm={review}
       onCancel={closeReview}

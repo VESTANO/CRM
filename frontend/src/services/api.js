@@ -602,7 +602,10 @@ export const payrollApi = {
   calculate: (payload, csrfToken) => apiClient.post("/payroll/calculate/", payload, csrfHeaders(csrfToken)),
   create: (payload, csrfToken) => apiClient.post("/payroll/payments/", payload, csrfHeaders(csrfToken)),
   update: (paymentId, payload, csrfToken) => apiClient.patch(`/payroll/payments/${paymentId}/`, payload, csrfHeaders(csrfToken)),
-  approve: (paymentId, csrfToken) => apiClient.post(`/payroll/payments/${paymentId}/approve/`, {}, csrfHeaders(csrfToken)),
+  approve: (paymentId, payload = {}, csrfToken) => {
+    const token = typeof payload === "string" ? payload : csrfToken;
+    return apiClient.post(`/payroll/payments/${paymentId}/approve/`, typeof payload === "string" ? {} : payload, csrfHeaders(token));
+  },
   reject: (paymentId, payload, csrfToken) => apiClient.post(`/payroll/payments/${paymentId}/reject/`, payload, csrfHeaders(csrfToken)),
   payslip: (paymentId) => cachedGet(`/payroll/payments/${paymentId}/payslip/`, {}, 0),
   reports: (month = "") => cachedGet("/payroll/reports/", month ? { params: { month } } : {}, 0),

@@ -2297,6 +2297,7 @@ async function createAutomaticPayrollPayment(ctx: Context, storeId: string, body
   const net = gross - computed.lop_deduction - deduction - advanceRecovery;
   if (net < 0) fail(400, "Deductions cannot exceed calculated earnings.");
   const requestedStatus = valueString(body.status || "draft");
+  const reviewNote = valueString(body.review_note);
   if (!["draft", "submitted", "approved"].includes(requestedStatus)) fail(400, "Choose Draft, Submitted, or Approved.");
   // Direct Admin finalization is stored as submitted inside the atomic creation
   // transaction, then immediately finalized and audited before responding.
@@ -2326,7 +2327,7 @@ async function createAutomaticPayrollPayment(ctx: Context, storeId: string, body
     paid_leave_days: computed.paid_leave_days, unpaid_leave_days: computed.unpaid_leave_days,
     calculation, payment_date: valueString(body.payment_date) || null,
     payment_method: valueString(body.payment_method || "bank_transfer"),
-    reference_number: valueString(body.reference_number), notes: valueString(body.notes),
+    reference_number: valueString(body.reference_number), notes: valueString(body.notes), review_note: reviewNote,
     status, created_by: ctx.user.id,
   };
   // New installations use the atomic database function. The narrowly scoped
@@ -2350,9 +2351,9 @@ async function createAutomaticPayrollPayment(ctx: Context, storeId: string, body
   if (!atomicError) {
     if (requestedStatus !== "approved") return json(201, { payment: await payrollPaymentPayload(atomicPayment) });
     const finalizedAt = new Date().toISOString();
-    const { data: finalized, error: finalizeError } = await adminClient.from("crm_payroll_payments").update({ status: "approved", approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt, updated_at: finalizedAt }).eq("id", atomicPayment.id).select("*").single();
+    const { data: finalized, error: finalizeError } = await adminClient.from("crm_payroll_payments").update({ status: "approved", review_note: reviewNote, approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt, updated_at: finalizedAt }).eq("id", atomicPayment.id).select("*").single();
     checkDb(finalizeError);
-    await payrollAudit(ctx, storeId, "payment", finalized.id, "approved", { month: computed.month, net }, finalized.id);
+    await payrollAudit(ctx, storeId, "payment", finalized.id, "approved", { month: computed.month, net, note: reviewNote }, finalized.id);
     return json(201, { payment: await payrollPaymentPayload(finalized) });
   }
   // PostgREST reports an unavailable RPC as PGRST202. PostgreSQL returns
@@ -2384,9 +2385,9 @@ async function createAutomaticPayrollPayment(ctx: Context, storeId: string, body
   await payrollAudit(ctx, storeId, "payment", data.id, status === "submitted" ? "submitted" : "created", { month: computed.month, net, allowance_amount: allowanceAmount, overtime_hours_auto: computed.overtime_hours, overtime_hours: overtimeHours, overtime_rate: overtimeRate, sales_expense_auto_amount: computed.sales_expense_amount, sales_expense_amount: salesExpenseAmount });
   if (requestedStatus !== "approved") return json(201, { payment: await payrollPaymentPayload(data) });
   const finalizedAt = new Date().toISOString();
-  const { data: finalized, error: finalizeError } = await adminClient.from("crm_payroll_payments").update({ status: "approved", approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt, updated_at: finalizedAt }).eq("id", data.id).select("*").single();
+  const { data: finalized, error: finalizeError } = await adminClient.from("crm_payroll_payments").update({ status: "approved", review_note: reviewNote, approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt, updated_at: finalizedAt }).eq("id", data.id).select("*").single();
   checkDb(finalizeError);
-  await payrollAudit(ctx, storeId, "payment", finalized.id, "approved", { month: computed.month, net }, finalized.id);
+  await payrollAudit(ctx, storeId, "payment", finalized.id, "approved", { month: computed.month, net, note: reviewNote }, finalized.id);
   return json(201, { payment: await payrollPaymentPayload(finalized) });
 }
 
@@ -2452,7 +2453,7 @@ async function updatePayrollPayment(ctx: Context, storeId: string, paymentId: st
     paid_leave_days: returnedPayroll.paid_leave_days, unpaid_leave_days: returnedPayroll.unpaid_leave_days,
   } : {};
   const finalizedAt = status === "approved" ? new Date().toISOString() : null;
-  const finalizationValues = status === "approved" ? { approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt } : {};
+  const finalizationValues = status === "approved" ? { review_note: valueString(body.review_note), approved_by: ctx.user.id, approved_at: finalizedAt, finalized_by: ctx.user.id, finalized_at: finalizedAt } : {};
   const { data, error } = await adminClient.from("crm_payroll_payments").update({ ...refreshedValues, ...finalizationValues, allowance_amount: allowanceAmount, overtime_hours: overtimeHours, overtime_rate: overtimeRate, overtime_amount: overtimeAmount, bonus_amount: bonus, deduction_amount: deduction, advance_recovery: advanceRecovery, sales_expense_amount: salesExpense, reimbursement_amount: expenseClaimAmount + salesExpense, gross_amount: gross, net_amount: net, remaining_amount: Math.max(0, net - Number(current.paid_amount || 0)), calculation, payment_date: valueString(body.payment_date) || current.payment_date, payment_method: valueString(body.payment_method) || current.payment_method, reference_number: valueString(body.reference_number), notes: valueString(body.notes), status, updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single();
   checkDb(error);
   if (returnedPayroll) {
@@ -2499,7 +2500,7 @@ async function rejectPayrollPayment(ctx: Context, storeId: string, paymentId: st
     adminClient.from("crm_payroll_advance_repayments").delete().eq("payment_id", current.id),
   ]);
   checkDb(expenseDeleteError); checkDb(visitDeleteError); checkDb(repaymentDeleteError);
-  const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "rejected", notes: [current.notes, valueString(body.note)].filter(Boolean).join("\n"), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single();
+  const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "rejected", review_note: valueString(body.note), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single();
   checkDb(error);
   await payrollAudit(ctx, storeId, "payment", data.id, "rejected", { note: valueString(body.note) }, data.id);
   return json(200, { payment: await payrollPaymentPayload(data) });
@@ -2655,7 +2656,7 @@ async function handlePayroll(ctx: Context, method: string, parts: string[], para
     if (parts.length === 2 && method === "POST") return await createAutomaticPayrollPayment(ctx, storeId, body);
     if (parts.length === 3 && method === "PATCH") return await updatePayrollPayment(ctx, storeId, parts[2], body);
     if (parts.length === 2 && method === "POST") { requireAdmin(ctx); const computed = await calculatePayroll(ctx, storeId, valueString(body.employee_id), valueString(body.payroll_month)); const bonus = payrollAmount(body.bonus_amount, "bonus"); const otherDeduction = payrollAmount(body.deduction_amount, "deduction"); let advanceRecovery = Math.min(payrollAmount(body.advance_recovery, "advance recovery"), computed.advances.reduce((sum: number, item: any) => sum + Number(item.remaining_amount), 0)); const overtimeAmount = Math.round(computed.overtime_hours * computed.overtime_rate * 100) / 100; const gross = Number(computed.salary.basic_salary) + Number(computed.salary.allowance_amount) + overtimeAmount + computed.reimbursement_amount + bonus; const net = gross - computed.lop_deduction - otherDeduction - advanceRecovery; if (net < 0) fail(400, "Deductions cannot exceed calculated earnings."); const status = valueString(body.status || "draft"); if (!["draft", "submitted"].includes(status)) fail(400, "Choose Draft or Submitted."); const calculation = { ...computed, salary: undefined, employee: undefined, advances: undefined, reimbursement_claims: (computed.reimbursement_claims || []).map((item: any) => item.id) }; const { data, error } = await adminClient.from("crm_payroll_payments").insert({ store_id: storeId, employee_id: computed.employee.id, payroll_month: computed.start, salary_structure_id: computed.salary.id, basic_salary: computed.salary.basic_salary, allowance_amount: computed.salary.allowance_amount, gross_amount: gross, bonus_amount: bonus, overtime_hours: computed.overtime_hours, overtime_rate: computed.overtime_rate, overtime_amount: overtimeAmount, reimbursement_amount: computed.reimbursement_amount, lop_deduction: computed.lop_deduction, deduction_amount: otherDeduction, advance_recovery: advanceRecovery, net_amount: net, paid_amount: 0, remaining_amount: net, present_days: computed.present_days, absent_days: computed.absent_days, paid_leave_days: computed.paid_leave_days, unpaid_leave_days: computed.unpaid_leave_days, calculation, payment_date: valueString(body.payment_date) || null, payment_method: valueString(body.payment_method || "bank_transfer"), reference_number: valueString(body.reference_number), notes: valueString(body.notes), status, created_by: ctx.user.id }).select("*").single(); checkDb(error); for (const claim of computed.reimbursement_claims || []) { const { error: reimbursementError } = await adminClient.from("crm_payroll_expense_reimbursements").insert({ payment_id: data.id, expense_claim_id: claim.id, amount: claim.amount }); checkDb(reimbursementError); const { error: expenseError } = await adminClient.from("crm_expense_claims").update({ reimbursed_payment_id: data.id, updated_at: new Date().toISOString() }).eq("id", claim.id).is("reimbursed_payment_id", null); checkDb(expenseError); } let remainingRecovery = advanceRecovery; for (const advance of computed.advances || []) { if (remainingRecovery <= 0) break; const recovered = Math.min(remainingRecovery, Number(advance.remaining_amount)); const next = Number(advance.remaining_amount) - recovered; const { error: repaymentError } = await adminClient.from("crm_payroll_advance_repayments").insert({ payment_id: data.id, advance_id: advance.id, amount: recovered }); checkDb(repaymentError); const { error: advanceError } = await adminClient.from("crm_salary_advances").update({ remaining_amount: next, status: next <= 0 ? "closed" : "approved", updated_at: new Date().toISOString() }).eq("id", advance.id); checkDb(advanceError); remainingRecovery -= recovered; } await payrollAudit(ctx, storeId, "payment", data.id, status === "submitted" ? "submitted" : "created", { month: computed.month, net }); return json(201, { payment: await payrollPaymentPayload(data) }); }
-    if (parts.length === 4 && parts[3] === "approve" && method === "POST") { requireAdmin(ctx); const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(readError); if (!current || current.status !== "submitted") fail(400, "Only submitted payroll can be finalized."); const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "approved", approved_by: ctx.user.id, approved_at: new Date().toISOString(), finalized_by: ctx.user.id, finalized_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "payment", data.id, "approved", {}, data.id); return json(200, { payment: await payrollPaymentPayload(data) }); }
+    if (parts.length === 4 && parts[3] === "approve" && method === "POST") { requireAdmin(ctx); const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(readError); if (!current || current.status !== "submitted") fail(400, "Only submitted payroll can be finalized."); const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "approved", review_note: valueString(body.note), approved_by: ctx.user.id, approved_at: new Date().toISOString(), finalized_by: ctx.user.id, finalized_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "payment", data.id, "approved", { note: valueString(body.note) }, data.id); return json(200, { payment: await payrollPaymentPayload(data) }); }
     if (parts.length === 4 && parts[3] === "reject" && method === "POST") return await rejectPayrollPayment(ctx, storeId, parts[2], body);
     if (parts.length === 4 && parts[3] === "reject" && method === "POST") { requireSuperAdmin(ctx); const { data: current, error: readError } = await adminClient.from("crm_payroll_payments").select("*").eq("id", parts[2]).eq("store_id", storeId).maybeSingle(); checkDb(readError); if (!current || current.status !== "submitted") fail(400, "Only submitted payroll can be rejected."); const [{ data: reimbursements, error: reimbursementReadError }, { data: repayments, error: repaymentReadError }] = await Promise.all([adminClient.from("crm_payroll_expense_reimbursements").select("expense_claim_id").eq("payment_id", current.id), adminClient.from("crm_payroll_advance_repayments").select("advance_id,amount").eq("payment_id", current.id)]); checkDb(reimbursementReadError); checkDb(repaymentReadError); for (const item of reimbursements || []) { const { error } = await adminClient.from("crm_expense_claims").update({ reimbursed_payment_id: null, updated_at: new Date().toISOString() }).eq("id", item.expense_claim_id).eq("reimbursed_payment_id", current.id); checkDb(error); } for (const item of repayments || []) { const { data: advance, error: advanceReadError } = await adminClient.from("crm_salary_advances").select("remaining_amount").eq("id", item.advance_id).maybeSingle(); checkDb(advanceReadError); if (advance) { const { error } = await adminClient.from("crm_salary_advances").update({ remaining_amount: Number(advance.remaining_amount) + Number(item.amount), status: "approved", updated_at: new Date().toISOString() }).eq("id", item.advance_id); checkDb(error); } } const [{ error: reimbursementDeleteError }, { error: repaymentDeleteError }] = await Promise.all([adminClient.from("crm_payroll_expense_reimbursements").delete().eq("payment_id", current.id), adminClient.from("crm_payroll_advance_repayments").delete().eq("payment_id", current.id)]); checkDb(reimbursementDeleteError); checkDb(repaymentDeleteError); const { data, error } = await adminClient.from("crm_payroll_payments").update({ status: "rejected", notes: [current.notes, valueString(body.note)].filter(Boolean).join("\n"), updated_at: new Date().toISOString() }).eq("id", current.id).select("*").single(); checkDb(error); await payrollAudit(ctx, storeId, "payment", data.id, "rejected", { note: valueString(body.note) }, data.id); return json(200, { payment: await payrollPaymentPayload(data) }); }
     if (parts.length === 4 && parts[3] === "pay" && method === "POST") {
@@ -3234,7 +3235,7 @@ async function serializeOvertime(ctx: Context, item: any) {
     officialEndTime: String(item.official_end_time).slice(0, 5),
     declaredLeaveTime: item.declared_leave_time, actualPunchOut, verifiedMinutes,
     requestedMinutes: item.requested_minutes, approvedMinutes: item.approved_minutes,
-    status: item.status, rejectionMessage: item.rejection_message,
+    status: item.status, reviewNote: item.review_note || item.rejection_message || "",
     reviewedBy, reviewedAt: item.reviewed_at, createdAt: item.created_at,
   };
 }
@@ -3270,7 +3271,7 @@ async function handleOvertime(ctx: Context, method: string, parts: string[], bod
     checkDb(readError); if (!item) fail(404, "OT request not found.");
     if (item.status !== "pending") fail(409, "This OT request has already been reviewed.");
     const employee = await adminUserById(ctx, item.employee_id);
-    const data = await writeOvertime(ctx, id, action, { message: valueString(body.message) });
+    const data = await writeOvertime(ctx, id, action, { note: valueString(body.note || body.message) });
     return json(200, await serializeOvertime(ctx, data));
   }
   fail(404, "Overtime API endpoint not found.");
