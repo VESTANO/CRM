@@ -75,14 +75,14 @@ async function scrollUnlocked(page) {
   expect(await page.evaluate(()=>scrollY)).toBeGreaterThan(0);
 }
 for(const width of [320,360,375,390,414,768,1024,1440]) {
-  test(`${width}px task confirmation, rejection validation, focus and scrolling`,async({page})=>{
+  test(`${width}px task review note, focus and scrolling`,async({page})=>{
     await page.setViewportSize({width,height:740});
     const mutations=await fixture(page);
     await page.goto('/admin-panel/tasks');
     await page.getByRole('button',{name:'Reject task',exact:true}).click();
     const dialog=page.getByRole('dialog'); await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeDisabled();
-    await dialog.getByLabel('Rejection feedback').fill('Please add a clear photo');
+    await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeEnabled();
+    await dialog.getByLabel('Review note (optional)').fill('Please add a clear photo');
     await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeEnabled();
     await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible();
     expect(mutations.filter(r=>r.path.endsWith('/admin/tasks/1/'))).toHaveLength(0);
@@ -114,14 +114,14 @@ test('workbook file input, inspect, staged upload and commit navigation',async({
   expect(mutations.filter(r=>r.path.endsWith('/batch/'))[0].body.rows).toHaveLength(2);
   expect(mutations.filter(r=>r.path.endsWith('/commit/'))).toHaveLength(1);
 });
-test('overtime rejection requires a reason and sends it once',async({page})=>{
+test('overtime rejection accepts an optional review note and sends it once',async({page})=>{
   const mutations=await fixture(page); await page.goto('/overtime');
   await page.getByRole('button',{name:'Reject',exact:true}).click();
-  const dialog=page.getByRole('dialog'); await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeDisabled();
-  await dialog.getByLabel('Rejection reason').fill('Punch time does not match request');
+  const dialog=page.getByRole('dialog'); await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeEnabled();
   await dialog.getByRole('button',{name:'Confirm rejection'}).click();
   await expect(dialog).not.toBeVisible();
-  expect(mutations.filter(r=>r.path.includes('/overtime/1/'))).toHaveLength(1);
+  const reviews=mutations.filter(r=>r.path.includes('/overtime/1/'));
+  expect(reviews).toHaveLength(1); expect(reviews[0].body).toEqual({note:''});
 });
 test('login form, logout and expired-session route guard',async({page})=>{
   await fixture(page,{signedIn:false}); await page.goto('/login');
@@ -131,11 +131,11 @@ test('login form, logout and expired-session route guard',async({page})=>{
   await expect(page).toHaveURL(/login/);
   await page.goto('/admin-panel/tasks'); await expect(page).toHaveURL(/login/);
 });
-test('timesheet rejection dialog posts feedback through the attendance RPC',async({page})=>{
+test('timesheet rejection dialog posts its optional note through the attendance RPC',async({page})=>{
   const mutations=await fixture(page); await page.goto('/attendance/approvals');
   await page.getByRole('button',{name:'Reject',exact:true}).click();
-  const dialog=page.getByRole('dialog'); await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeDisabled();
-  await dialog.getByLabel('Rejection feedback').fill('Correct the work date');
+  const dialog=page.getByRole('dialog'); await expect(dialog.getByRole('button',{name:'Confirm rejection'})).toBeEnabled();
+  await dialog.getByLabel('Review note (optional)').fill('Correct the work date');
   await dialog.getByRole('button',{name:'Confirm rejection'}).click(); await expect(dialog).not.toBeVisible();
   expect(mutations.find(r=>r.path.endsWith('/rpc/review_timesheet_entry')).body.p_approval_comment).toBe('Correct the work date');
 });

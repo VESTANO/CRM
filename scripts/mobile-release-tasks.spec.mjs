@@ -74,8 +74,8 @@ for(const width of [320,360,375,390,414,430,768,1440])test(`${width}px task revi
   await page.keyboard.press('Escape');await expect(preview).not.toBeVisible();
   const reject=page.getByRole('button',{name:'Reject task',exact:true});if(width<=768)await touchTarget(reject,'Reject task');
   await reject.click();const dialog=page.getByRole('dialog',{name:'Reject task submission?'});await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('button',{name:'Confirm rejection',exact:true})).toBeDisabled();
-  await dialog.getByLabel('Rejection feedback').fill('Please correct this section and send a clearer photo.');
+  await expect(dialog.getByRole('button',{name:'Confirm rejection',exact:true})).toBeEnabled();
+  await dialog.getByLabel('Review note (optional)').fill('Please correct this section and send a clearer photo.');
   expect.soft(await dialog.locator('.modal-content').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Long review details fit dialog').toBe(true);
   await screenshot(page,testInfo,`review-${width}.png`);
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog).not.toBeVisible();await expect(reject).toBeFocused();
@@ -127,7 +127,7 @@ test('320px short viewport keeps photo/review controls reachable and approves on
   await close.click();
   for(let index=0;index<2;index++) {
     await page.getByRole('button',{name:'Reject task',exact:true}).click();
-    const review=page.getByRole('dialog',{name:'Reject task submission?'});await review.getByLabel('Rejection feedback').fill('Recheck this evidence.');
+    const review=page.getByRole('dialog',{name:'Reject task submission?'});await review.getByLabel('Review note (optional)').fill('Recheck this evidence.');
     const cancel=review.getByRole('button',{name:'Cancel',exact:true});await cancel.scrollIntoViewIfNeeded();
     const cancelBox=await cancel.boundingBox();expect.soft(cancelBox.y+cancelBox.height,'Review footer fits short viewport').toBeLessThanOrEqual(430);
     await cancel.click();await expect(review).not.toBeVisible();
