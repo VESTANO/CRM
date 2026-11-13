@@ -188,9 +188,11 @@ test('daily timesheet form submits work and XLSX export contains the displayed h
   await expect(dialog.getByLabel('Project',{exact:true})).toHaveValue('Display QA');
   await dialog.getByLabel('Project 2',{exact:true}).fill('Follow-up QA');
   await dialog.getByLabel('Work details 2',{exact:true}).fill('Add the next work item');
+  await dialog.getByLabel('Break hours',{exact:true}).fill('0');
+  await dialog.getByLabel('Break minutes',{exact:true}).fill('40');
   await dialog.getByRole('button',{name:'Submit 2 entries',exact:true}).click(); await expect(dialog).not.toBeVisible();
   const created=mutations.filter(r=>r.path.endsWith('/rpc/create_timesheet_entry'));
-  expect(created).toHaveLength(2); expect(created[0].body.p_project).toBe('Display QA'); expect(created[1].body.p_project).toBe('Follow-up QA');
+  expect(created).toHaveLength(2); expect(created[0].body.p_project).toBe('Display QA'); expect(created[0].body.p_break_hours).toBeCloseTo(2 / 3); expect(created[1].body.p_project).toBe('Follow-up QA');
   const downloading=page.waitForEvent('download');
   await page.getByRole('button',{name:'Download XLSX',exact:true}).click();
   const download=await downloading,stream=await download.createReadStream(),chunks=[];

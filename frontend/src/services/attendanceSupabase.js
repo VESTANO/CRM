@@ -215,7 +215,7 @@ function entryRpcValues(entry) {
     p_category: entry.category,
     p_start_time: entry.startTime,
     p_end_time: entry.endTime,
-    p_break_hours: Number(entry.breakHours || 0),
+    p_break_hours: Number(entry.breakHours || 0) + Number(entry.breakMinutes || 0) / 60,
     p_billable: entry.billable === true,
     p_work_status: entry.workStatus || "Completed",
     p_comments: entry.comments || "",

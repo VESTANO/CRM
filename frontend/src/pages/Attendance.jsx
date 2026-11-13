@@ -385,8 +385,8 @@ function TimesheetView({ profile, employees, refreshKey }) {
     finally { loadedRef.current = true; setLoading(false); setRefreshing(false); }
   }, [filters, profile]);
   useEffect(() => { load(); }, [load, refreshKey]);
-  const newEntryDraft = (date = dateInputValue(new Date())) => ({ date, category: "Project Work", project: "", details: "", startTime: profile?.shiftStartTime || "09:00", endTime: profile?.shiftEndTime || "17:30", breakHours: 0.5, workStatus: "Completed", billable: false, comments: "" });
-  const openEntry = (entry = null) => { setAdditionalDrafts([]); setDraft(entry ? { ...entry } : newEntryDraft()); };
+  const newEntryDraft = (date = dateInputValue(new Date())) => ({ date, category: "Project Work", project: "", details: "", startTime: profile?.shiftStartTime || "09:00", endTime: profile?.shiftEndTime || "17:30", breakHours: 0, breakMinutes: 30, workStatus: "Completed", billable: false, comments: "" });
+  const openEntry = (entry = null) => { setAdditionalDrafts([]); setDraft(entry ? editableTimesheetEntry(entry) : newEntryDraft()); };
   const saveEntry = async (event) => {
     event.preventDefault();
     const draftsToSave = [draft, ...additionalDrafts];
@@ -520,7 +520,8 @@ function TimesheetDraftFields({ entry, onChange, index, onRemove }) {
       <div className="col-md-2"><label className="form-label" htmlFor={`entryCategory${suffix}`}>{label("Category *")}</label><select id={`entryCategory${suffix}`} className="form-select" required value={entry.category} onChange={(event) => update("category", event.target.value)}><option>Project Work</option><option>Meeting</option><option>Administration</option><option>Training</option><option>Client Support</option><option>Research</option><option>Leave</option></select></div>
       <div className="col-md-2"><label className="form-label" htmlFor={`entryStart${suffix}`}>{label("Start")}</label><input id={`entryStart${suffix}`} className="form-control" type="time" required value={entry.startTime} onChange={(event) => update("startTime", event.target.value)} /></div>
       <div className="col-md-2"><label className="form-label" htmlFor={`entryEnd${suffix}`}>{label("End")}</label><input id={`entryEnd${suffix}`} className="form-control" type="time" required value={entry.endTime} onChange={(event) => update("endTime", event.target.value)} /></div>
-      <div className="col-md-2"><label className="form-label" htmlFor={`entryBreak${suffix}`}>{label("Break hours")}</label><input id={`entryBreak${suffix}`} className="form-control" type="number" min="0" max="8" step="0.25" value={entry.breakHours} onChange={(event) => update("breakHours", event.target.value)} /></div>
+      <div className="col-md-2"><label className="form-label" htmlFor={`entryBreakHours${suffix}`}>{label("Break hours")}</label><input id={`entryBreakHours${suffix}`} className="form-control" type="number" min="0" max="8" step="1" inputMode="numeric" value={entry.breakHours} onChange={(event) => update("breakHours", event.target.value)} /></div>
+      <div className="col-md-2"><label className="form-label" htmlFor={`entryBreakMinutes${suffix}`}>{label("Break minutes")}</label><input id={`entryBreakMinutes${suffix}`} className="form-control" type="number" min="0" max="59" step="1" inputMode="numeric" value={entry.breakMinutes ?? 0} onChange={(event) => update("breakMinutes", event.target.value)} /></div>
       <div className="col-md-2"><label className="form-label" htmlFor={`entryStatus${suffix}`}>{label("Work status")}</label><select id={`entryStatus${suffix}`} className="form-select" value={entry.workStatus} onChange={(event) => update("workStatus", event.target.value)}><option>Completed</option><option>In progress</option><option>Blocked</option></select></div>
       <div className="col-md-2 form-check mt-4 ms-2"><input id={`timesheetBillable${suffix}`} className="form-check-input" type="checkbox" checked={Boolean(entry.billable)} onChange={(event) => update("billable", event.target.checked)} /><label className="form-check-label" htmlFor={`timesheetBillable${suffix}`}>{label("Billable")}</label></div>
       <div className="col-md-6"><label className="form-label" htmlFor={`entryComments${suffix}`}>{label("Comments")}</label><input id={`entryComments${suffix}`} className="form-control" value={entry.comments || ""} onChange={(event) => update("comments", event.target.value)} /></div>
@@ -558,8 +559,19 @@ function validateTimesheetEntryTime(entry) {
   const start = toMinutes(entry.startTime), end = toMinutes(entry.endTime);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return "Enter a valid start and end time for every work entry.";
   if (end <= start) return "End time must be later than start time for every work entry.";
-  if (Number(entry.breakHours || 0) >= (end - start) / 60) return "Break hours must be shorter than the work period for every work entry.";
+  const breakHours = Number(entry.breakHours || 0), breakMinutes = Number(entry.breakMinutes || 0);
+  if (!Number.isInteger(breakHours) || breakHours < 0 || !Number.isInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 59) return "Enter whole break hours and 0–59 break minutes for every work entry.";
+  if (breakDurationHours(entry) >= (end - start) / 60) return "Break time must be shorter than the work period for every work entry.";
   return "";
+}
+
+function breakDurationHours(entry) {
+  return Number(entry.breakHours || 0) + Number(entry.breakMinutes || 0) / 60;
+}
+
+function editableTimesheetEntry(entry) {
+  const totalBreakMinutes = Math.max(0, Math.round(Number(entry.breakHours || 0) * 60));
+  return { ...entry, breakHours: Math.floor(totalBreakMinutes / 60), breakMinutes: totalBreakMinutes % 60 };
 }
 
 function SavedRangeDate({ value }) {

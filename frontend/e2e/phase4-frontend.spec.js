@@ -120,7 +120,7 @@ test('Phase 4: daily work dialog exposes all field names and contains keyboard f
   const trigger = page.getByRole('button', { name: '+ New entry', exact: true });
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: 'New work entry' });
-  for (const label of ['Date', 'Project', 'Work details', 'Category *', 'Start', 'End', 'Break hours', 'Work status', 'Comments', 'Billable']) await expect(dialog.getByLabel(label, { exact: true })).toHaveCount(1);
+  for (const label of ['Date', 'Project', 'Work details', 'Category *', 'Start', 'End', 'Break hours', 'Break minutes', 'Work status', 'Comments', 'Billable']) await expect(dialog.getByLabel(label, { exact: true })).toHaveCount(1);
   await dialog.getByLabel('Project', { exact: true }).fill('Keyboard QA');
   await dialog.getByRole('button', { name: 'Submit entry' }).focus();
   await page.keyboard.press('Tab'); await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
